@@ -35,14 +35,11 @@ jobs:
       # Run tests without updating uv.lock
       - name: Run tests
         run: uv run --frozen pytest
-      # Code coverage to codecov.io disabled
-      # allows you to publish test code coverage, and link to a README badge
-      # uncomment block below if you set up codecov - see: https://about.codecov.io/
-      # note that codecov uses coverage.xml in tests/. This is an output configured in pyproject.toml for pytest
-#      - name: Upload results to Codecov
-#        uses: codecov/codecov-action@v4
-#        with:
-#          token: ${{ secrets.CODECOV_TOKEN }}
-#          files: tests/coverage.xml
-#          fail_ci_if_error: false
-#          verbose: true
+      # Code coverage to codecov.io
+      - name: Upload results to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: tests/coverage.xml
+          fail_ci_if_error: false
+          verbose: true
