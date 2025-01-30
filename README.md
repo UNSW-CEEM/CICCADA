@@ -1,6 +1,8 @@
 # CICCADA
 
-Description goes here.
+Project CICCADA (Consumer-energy-resource integration, compliance and curtailment assessment and data analysis) is an Australian Renewable Energy Agency (ARENA) sponsored project led by Collaboration on Energy and Environmental Markets (CEEM) team at University of New South Wales (UNSW). The project collaborates with Australian Energy Market Operator (AEMO), Solar Analytics and distribution network service providers (DNSPs) Ausgrid, Energex, Ergon and SA-Power Networks (SAPN). 
+
+The project will focus on real-world operational datasets and investigate the compliance and curtailment of the Australian CER fleet including rooftop PV, battery energy storage systems (BESS) and Electric Vehicles (EVs). CER operations will be studied under normal operating conditions based on AS 4777.2.2020 and CSIP-AUS including power quality response modes (PQRM) and dynamic operating envolpes (DOEs) as well as under Emergency Backtsop Measures (EBM).
 
 ## Examples
 
