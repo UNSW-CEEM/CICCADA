@@ -1,8 +1,12 @@
 # CICCADA
 
+Description goes here.
+
+## Examples
+
 ## Contributing
 
-Interested in contributing? Check out the [contributing guidelines](CONTRIBUTING.md), which also includes steps to install `your_package` for development.
+Interested in contributing? Check out the [contributing guidelines](CONTRIBUTING.md), which also includes steps to install `CICCADA` for development.
 
 Please note that this project is released with a [Code of Conduct](CONDUCT.md). By contributing to this project, you agree to abide by its terms.
 
