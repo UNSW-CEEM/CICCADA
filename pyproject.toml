@@ -1,20 +1,16 @@
 [project]
-name = "CICCADA"
+name = "ciccada"
 version = "0.1.0"
 description = "A package for analysing compliance and curtailment of consumer energy resources."
 authors = [
     { name = "nick-gorman", email = "n.gorman305@gmail.com" },
 ]
 dependencies = [
+    "matplotlib>=3.10.0",
     "pandas>=2.2.2",
 ]
 readme = "README.md"
 requires-python = ">= 3.10"
-
-[project.optional-dependencies]
-solvers = [
-    "linopy>=0.4.2",
-]
 
 [build-system]
 requires = ["hatchling"]
@@ -30,7 +26,7 @@ dev-dependencies = [
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ispypsa"]
+packages = ["src/ciccada"]
 
 [tool.pytest.ini_options]
 # path to tests for pytest
@@ -38,10 +34,15 @@ testpaths = ["src", "tests"]
 # addopts = add options
 # --cov points pytest-cov to the src/ dir
 # --cov-branch runs branch coverage
-addopts = "-ra --doctest-modules --cov=src/ --cov-branch --cov-report xml:tests/coverage.xml --cov-report html:tests/htmlcov"
+ addopts = "-ra --doctest-modules --cov=src/ --cov-branch --cov-report xml:tests/coverage.xml --cov-report html:tests/htmlcov"
 
 [tool.ruff.lint]
 select = [
     # isort
     "I",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=6.0.0",
 ]
