@@ -1,16 +1,13 @@
 name: Continuous Integration and Deployment
 
-on: # events that trigger this workflow
-# UNCOMMENT THE LINES BELOW TO ACTIVATE THE WORKFLOW
- #push:
- #  branches:
- #    - main
- #pull_request:
- #  branches:
- #    - main
- #release:
- #  types: [created]
- #workflow_dispatch: # manual trigger
+on:
+ push:
+   branches:
+     - main
+ pull_request:
+   branches:
+     - main
+ workflow_dispatch: # manual trigger
 
 jobs:
   test:
@@ -49,36 +46,3 @@ jobs:
 #          files: tests/coverage.xml
 #          fail_ci_if_error: false
 #          verbose: true
-
-  # Third job publishes to PyPi if tests are passed and release is created
-  # To create a release, you need to create a git tag then a GitHub release
-  # See https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases
-  # To publish to PyPI, you will need PyPI account and to setup trusted publishing
-  publish:
-    if: github.event_name == 'release' && github.event.action == 'created'
-    needs: test
-    name: Upload release to PyPI
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/your-package/
-    permissions:
-      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
-    steps:
-      # Checkout repo
-      - name: Checkout
-        uses: actions/checkout@v3
-      # Install uv with cache
-      - name: Install the latest version of uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-      # Sync dependencies
-      - name: Sync dependencies
-        run: uv sync
-      # Build
-      - name: Build
-        run: uv build
-      # Publish to PyPI
-      - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
