@@ -8,6 +8,8 @@ authors = [
 dependencies = [
     "matplotlib>=3.10.0",
     "pandas>=2.2.2",
+    "pytest-cov>=6.0.0",
+    "pytest>=8.3.4",
 ]
 readme = "README.md"
 requires-python = ">= 3.10"
@@ -20,6 +22,7 @@ build-backend = "hatchling.build"
 managed = true
 dev-dependencies = [
     "pytest>=8.3.2",
+    "pytest-cov>=6.0.0",
 ]
 
 [tool.hatch.metadata]
@@ -34,15 +37,10 @@ testpaths = ["src", "tests"]
 # addopts = add options
 # --cov points pytest-cov to the src/ dir
 # --cov-branch runs branch coverage
- addopts = "-ra --doctest-modules --cov=src/ --cov-branch --cov-report xml:tests/coverage.xml --cov-report html:tests/htmlcov"
+# addopts = "-ra --doctest-modules --cov=src/ --cov-branch --cov-report xml:tests/coverage.xml --cov-report html:tests/htmlcov"
 
 [tool.ruff.lint]
 select = [
     # isort
     "I",
-]
-
-[dependency-groups]
-dev = [
-    "pytest-cov>=6.0.0",
 ]
