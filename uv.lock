@@ -7,6 +7,7 @@ resolution-markers = [
 ]
 
 [[package]]
+
 name = "cfgv"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -24,6 +25,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-cov" },
+
 ]
 
 [package.dev-dependencies]
@@ -193,6 +195,7 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a9/95/a3dbbb5028f35eafb79008e7522a75244477d2838f38cbb722248dabc2a8/cycler-0.12.1.tar.gz", hash = "sha256:88bb128f02ba341da8ef447245a9e138fae777f6a23943da4540077d3601eb1c", size = 7615 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/05/c19819d5e3d95294a6f5947fb9b9629efb316b96de511b418c53d245aae6/cycler-0.12.1-py3-none-any.whl", hash = "sha256:85cef7cff222d8644161529808465972e51340599459b8ac3ccbac5a854e0d30", size = 8321 },
+
 ]
 
 [[package]]
@@ -261,6 +264,7 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ea/e0/46f9600c39c644b54e4420f941f75fa200d9288c9ae171e5d80918b8cbb9/fonttools-4.56.0-cp313-cp313-win32.whl", hash = "sha256:d0cb73ccf7f6d7ca8d0bc7ea8ac0a5b84969a41c56ac3ac3422a24df2680546f", size = 2140927 },
     { url = "https://files.pythonhosted.org/packages/27/6d/3edda54f98a550a0473f032d8050315fbc8f1b76a0d9f3879b72ebb2cdd6/fonttools-4.56.0-cp313-cp313-win_amd64.whl", hash = "sha256:62cc1253827d1e500fde9dbe981219fea4eb000fd63402283472d38e7d8aa1c6", size = 2186709 },
     { url = "https://files.pythonhosted.org/packages/bf/ff/44934a031ce5a39125415eb405b9efb76fe7f9586b75291d66ae5cbfc4e6/fonttools-4.56.0-py3-none-any.whl", hash = "sha256:1088182f68c303b50ca4dc0c82d42083d176cba37af1937e1a976a31149d4d14", size = 1089800 },
+
 ]
 
 [[package]]
