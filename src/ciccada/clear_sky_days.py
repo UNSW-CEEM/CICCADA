@@ -13,7 +13,7 @@ def detect_clear_sky_day(ghi_df: pd.DataFrame, min_max_ghi: float) -> bool:
     Examples:
 
     >>> ghi_data = pd.DataFrame({
-    ... 'mean_ghi': [501.0, 502.0, 503.0]
+    ... 'ghi_mean': [501.0, 502.0, 503.0]
     ... })
 
     >>> detect_clear_sky_day(ghi_data, min_max_ghi=500.0)
@@ -28,7 +28,7 @@ def detect_clear_sky_day(ghi_df: pd.DataFrame, min_max_ghi: float) -> bool:
     Returns:
         (bool) : bool value if the day is clear sky day or not.
     """
-    df_daytime = ghi_df.loc[ghi_df["mean_ghi"] > 0]
-    collective_change = df_daytime["mean_ghi"].diff().abs().sum()
+    df_daytime = ghi_df.loc[ghi_df["ghi_mean"] > 0]
+    collective_change = df_daytime["ghi_mean"].diff().abs().sum()
     average_change = collective_change / len(df_daytime.index)
-    return average_change < 5 and max(ghi_df.mean_ghi) > min_max_ghi
+    return average_change < 5 and max(ghi_df.ghi_mean) > min_max_ghi
