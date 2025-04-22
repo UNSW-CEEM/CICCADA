@@ -1,0 +1,150 @@
+site_id,postcode,state,site_timezone,monitoring_hardware,inverter_manufacturer,inverter_model,inverter_ac_rating_kw,inverter_count,subarray_manufacturer,subarray_model,subarray_orientation,subarray_tilt,subarray_strings,subarray_modules_per_string,subarray_dc_rating_kw,islandable,has_battery,battery_size_make_model,limit_enabled,limit_amount,limit_applied,ac_cap_w,dc_cap_w
+S0023,5323,SA,Australia/Adelaide,SC-23,Solis,Solis-4K-2G,4,1,Hanwha SolarOne,HSL 60P6-PC-1-260,0,25,2,8,4.16,No,,,,,,4000,4160
+S0026,5048,SA,Australia/Adelaide,SC-23,Solis,Solis-3K-2G,3,1,Hanwha SolarOne,HSL 60P6-PC-1-260,0,25,1,12,3.12,,,,,,,3000,3120
+S0029,5025,SA,Australia/Adelaide,SC-23,Fronius,Fronius Symo 5.0-3-M,5,1,Hanwha SolarOne,HSL 60P6-PC-1-260,-93,25,2,10,5.2,No,,,,,,5000,5200
+S0030,5049,SA,Australia/Adelaide,SC-23,SMA,Sunny Boy SB 5000,4.6,1,Generic Module,280W,60,23,1,10,2.8,,,,,,,4600,2800
+S0031,5127,SA,Australia/Adelaide,SC-23,Delta Energy,Solar Inverter SOLIVIA 3.0 AP G3,3,1,Hanwha SolarOne,HSL 60S 4BB 260W,0,23,1,6,1.56,No,,,,,,3000,1560
+S0042,5043,SA,Australia/Adelaide,SC-23,Solis,Solis-mini-3000-4G,3,1,Hanwha SolarOne,HSL 60S 4BB 260W,-90,25,1,5,1.3,No,,,,,,3000,1300
+S0059,5061,SA,Australia/Adelaide,SC-23,Solis,Solis-3K-2G,3,1,Hanwha SolarOne,HSL 60S 4BB 260W,90,30,1,12,3.12,,,,,,,3000,3120
+S0061,5089,SA,Australia/Adelaide,SC-23,Solis,Solis-mini-2500-4G,2.5,1,Hanwha SolarOne,HSL 60S 4BB 260W,-90,25,1,10,2.6,,,,,,,2500,2600
+S0069,5164,SA,Australia/Adelaide,SC-23,Solis,Solis-3K-2G,3,1,Hanwha SolarOne,HSL 60S 4BB 260W,0,25,2,6,3.12,No,,,,,,3000,3120
+S0078,5068,SA,Australia/Adelaide,SC-23,Solis,Solis-4.6K-2G,4.6,1,Renesola,JC250M-24/Bb,0,25,1,16,4,,,,,,,4600,4000
+S0089,5352,SA,Australia/Adelaide,SC-23,Solis,Solis-mini-2000-4G,2,1,Hanwha SolarOne,HSL 60S 4BB 260W,-90,25,1,8,2.08,No,,,,,,2000,2080
+S0093,5021,SA,Australia/Adelaide,KR-63,Solis,Solis-1P4.6K-4G,4.6,1,Q Cells,Q.PRIME-G5 280,0,25,1,13,3.64,No,,,,,,4600,3640
+S0109,5116,SA,Australia/Adelaide,SC-23,Solis,Solis-mini-3000-4G,3,1,Hanwha SolarOne,HSL 60S 4BB 260W,0,25,1,6,1.56,,,,,,,3000,1560
+S0123,5024,SA,Australia/Adelaide,SC-23,Solis,Solis-4K-2G,4,1,Hanwha SolarOne,HSL 60S 4BB 260W,0,25,1,8,2.08,No,,,,,,4000,2080
+S0127,5159,SA,Australia/Adelaide,SC-23,Solis,Solis-3.6K-2G,3.6,1,Hanwha SolarOne,HSL 60P6-PC-1-260,-15,25,1,6,1.56,,,,,,,3600,1560
+S0143,5211,SA,Australia/Adelaide,SC-23,Enphase,S270-72-LN-2-AU,0.2565,9,Tindo Solar,Karra-295,-80,22,1,1,0.295,,f,,,,,256.5,295
+S0150,5035,SA,Australia/Adelaide,KR-63,Fronius,SYMO 6.0-3-M,6,2,Tindo Solar,Karra-275,-10,25,1,12,3.3,No,f,,,,,6000,3300
+S0152,5019,SA,Australia/Adelaide,SC-23,SolaX Power,X1-4.2T,4.2,1,Tindo Solar,Karra-275,-80,15,1,6,1.65,No,f,,,,,4200,1650
+S0157,5067,SA,Australia/Adelaide,SC-23,Fronius,Symo 3.0-3-M,3,1,Yingli Solar,YL260P-29b,-90,2,1,12,3.12,No,f,,,,,3000,3120
+S0159,5097,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-315,0,22,1,10,3.15,No,f,,,,,5000,3150
+S0165,5051,SA,Australia/Adelaide,KR-63,SMA,Sunny Boy 6.0,6,1,Kaneka,U-EA105,-30,16,7,8,5.88,No,f,,,,,6000,5880
+S0171,5238,SA,Australia/Adelaide,KR-63,1,1,1,1,,,,,,,,No,f,,,,,1000,0
+S0175,5169,SA,Australia/Adelaide,SC-23,Delta Energy,RPI H5A,5,1,Hanwha SolarOne,HSL 60S 4BB 260W,0,22,1,8,2.08,No,f,,,,,5000,2080
+S0178,5114,SA,Australia/Adelaide,SC-23,SolaX Power,X1-4.2T,4.2,1,Tindo Solar,Karra-275,10,12,1,13,3.575,,f,,,,,4200,3575
+S0180,5114,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-300,-90,24,1,7,2.1,No,f,,,,,5000,2100
+S0183,5171,SA,Australia/Adelaide,KR-63,SolaX Power,X3-5.0-T,5,1,Tindo Solar,Karra-270,-90,40,1,10,2.7,,f,,,,,5000,2700
+S0184,5090,SA,Australia/Adelaide,SC-23,Generic Inverter,1kW,1,1,Tindo Solar,Karra-275,-95,15,1,4,1.1,,f,,,,,1000,1100
+S0186,5290,SA,Australia/Adelaide,SC-23,SolaX Power,SL-TL3300T,3,1,Yingli Solar,YL260P-29b,1,20,1,12,3.12,No,f,,,,,3000,3120
+S0187,5162,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,-45,14,1,9,2.655,Yes,t,,,,,5000,2655
+S0193,5109,SA,Australia/Adelaide,KR-63,Fronius,Primo 5.0-1,5,1,REC,REC330NP,-90,22,2,10,6.6,No,f,,,,,5000,6600
+S0204,5115,SA,Australia/Adelaide,SC-23,Solis,Solis-mini-3000-4G,3,1,Hanwha SolarOne,HSL 60S 4BB 260W,0,25,2,6,3.12,No,f,,,,,3000,3120
+S0207,5043,SA,Australia/Adelaide,SC-23,Solis,Solis-2.5K-2G,2.5,1,Hanwha SolarOne,HSL 60S 4BB 260W,0,25,1,10,2.6,No,f,,,,,2500,2600
+S0235,5125,SA,Australia/Adelaide,KR-63,Delta Energy,H5A_221,5,1,Trina Solar,TSM330DD06M,45,25,1,9,2.97,No,f,,,,,5000,2970
+S0237,5011,SA,Australia/Adelaide,SC-23,Enphase,S230,0.2185,5,Generic Module,250W,30,22.5,1,1,0.25,,f,,,,,218.5,250
+S0255,5352,SA,Australia/Adelaide,KR-63,Solis,Solis-3K-2G,3,1,Hanwha SolarOne,HSL 60P6-PC-1-260,90,20,1,12,3.12,No,f,,,,,3000,3120
+S0268,5554,SA,Australia/Adelaide,SC-23,Fronius,Primo 5.0-1,5,1,Hanwha SolarOne,HSL 60S 4BB 260W,0,26,1,8,2.08,No,f,,t,6.58,15/03/2022 7:50,5000,2080
+S0288,5090,SA,Australia/Adelaide,KR-63,SMA,Sunny Boy SB 1700,1.55,1,Kyocera,KC 70,0,15,1,24,1.68,No,f,,,,,1550,1680
+S0290,5066,SA,Australia/Adelaide,Mixed,Generic Inverter,5kW,5,1,Yingli Solar,YL260P-35b,0,5,1,10,2.6,Yes,t,,,,,5000,2600
+S0291,5271,SA,Australia/Adelaide,SC-23,SolaX Power,X1-3.0T,3,1,Tindo Solar,Karra-275,1,22,1,11,3.025,No,f,,,,,3000,3025
+S0296,5109,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,2,Tindo Solar,Karra-280,15,25,1,9,2.52,No,f,,,,,5000,2520
+S0297,5064,SA,Australia/Adelaide,KR-63,Fronius,Symo 10.0-3-M,10,1,Trina Solar,TSM-370DD08M.08(II),0,15,2,18,13.32,No,f,,,,,10000,13320
+S0309,5290,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-275,-90,35,1,9,2.475,Yes,t,Tesla 5kw,,,,5000,2475
+S0312,5417,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,2,Tindo Solar,Karra-275,-40,12.5,1,9,2.475,,f,,,,,5000,2475
+S0324,5092,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,-45,22,1,8,2.36,Yes,t,Don't know,,,,5000,2360
+S0325,5089,SA,Australia/Adelaide,KR-63,SMA,Sunny Boy SB 5000 TL-21,4.6,1,CSUN,CSUN 250-60M,35,22,2,10,5,No,f,,,,,4600,5000
+S0331,5251,SA,Australia/Adelaide,KR-63,SMA,Sunny Tripower15000 TL,15,1,Tindo Solar,Karra-275,-30,10,1,12,3.3,No,f,,,,,15000,3300
+S0338,5095,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-270,1,7.5,1,10,2.7,Yes,t,tesla power wall 2,,,,5000,2700
+S0343,5126,SA,Australia/Adelaide,KR-63,Fronius,Fronius Symo 5.0-3-M,5,1,Tindo Solar,Karra-295,10,22.5,1,5,1.475,No,f,,,,,5000,1475
+S0351,5073,SA,Australia/Adelaide,SC-23,Zeversolar,Evershine TL5000,5,1,Jinko Solar,JKM 260M-60,-115,35,1,12,3.12,No,f,,,,,5000,3120
+S0354,5046,SA,Australia/Adelaide,SC-23,Generic Inverter,3.3kW,3.3,1,Generic Module,250W,-95,3,2,8,4,No,f,,,,,3300,4000
+S0357,5067,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,180,3,1,8,2.36,No,f,,,,,5000,2360
+S0360,5373,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-300,-90,22,1,8,2.4,Yes,t,Tesla ,,,,5000,2400
+S0361,5157,SA,Australia/Adelaide,SC-23,SMA,Sunny Mini Central 7000 TL,7,1,Renesola,JC250M-24/Bb,1,15,2,14,7,,f,,,,,7000,7000
+S0365,5321,SA,Australia/Adelaide,KR-63,Zeversolar,Evershine TL5000,5,1,Seraphim,SRP-250-6PB,-60,10,2,10,5,No,t,13 kw,,,,5000,5000
+S0368,5169,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,0,22,1,9,2.655,,f,,,,,5000,2655
+S0372,5072,SA,Australia/Adelaide,SC-23,SolaX Power,SL-TL3300T,3,1,Yingli Solar,YL260P-29b,90,24,1,6,1.56,No,f,,,,,3000,1560
+S0378,5024,SA,Australia/Adelaide,SC-23,Generic Inverter,2.58kW,2.58,1,Generic Module,260W,-10,10,1,3,0.78,Yes,t,6.0kWh Sonnen Ec0 8.2/6,,,,2580,780
+S0379,5158,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-275,0,15,1,8,2.2,No,f,,,,,5000,2200
+S0382,5290,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,2,Tindo Solar,Karra-275,5,27.5,1,9,2.475,No,f,,,,,5000,2475
+S0383,5118,SA,Australia/Adelaide,KR-63,SolaX Power,X3-5.0-T,5,1,Tindo Solar,Karra-295,-90,25,1,11,3.245,No,f,,,,,5000,3245
+S0386,5351,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,89,25,1,12,3.54,No,f,,,,,5000,3540
+S0388,5095,SA,Australia/Adelaide,SC-23,SolaX Power,X1-3.3T,3.3,1,Tindo Solar,Karra-280,20,0,1,12,3.36,No,f,,,,,3300,3360
+S0390,5090,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-315,0,22,2,7,4.41,No,f,,,,,5000,4410
+S0391,5066,SA,Australia/Adelaide,KR-63,SolaX Power,X3-5.0-T,5,1,Tindo Solar,Karra-295,0,26,1,8,2.36,No,f,,,,,5000,2360
+S0392,5044,SA,Australia/Adelaide,SC-23,Zeversolar,Zeverlution 5000,5,1,Tindo Solar,Karra-295,-90,17.5,1,17,5.015,No,f,,,,,5000,5015
+S0397,5073,SA,Australia/Adelaide,KR-63,Generic Inverter,4.999kW,4.999,1,Seraphim,SRP-330-BMB,-90,23,2,10,6.6,No,f,,,,,4999,6600
+S0399,5024,SA,Australia/Adelaide,KR-63,SMA,Sunny Boy SB 4000 TL-21,4,1,Tindo Solar,Karra-275,-10,12.5,1,8,2.2,No,f,,,,,4000,2200
+S0400,5115,SA,Australia/Adelaide,SC-23,SolaX Power,X1-2.5,2.5,1,Tindo Solar,Karra-275,15,22,1,7,1.925,,f,,,,,2500,1925
+S0404,5011,SA,Australia/Adelaide,SC-23,SolaX Power,X1-3.0T,3,1,Tindo Solar,Karra-270,85,15,1,5,1.35,No,f,,,,,3000,1350
+S0407,5038,SA,Australia/Adelaide,SC-23,SMA,Sunny Boy SB 4000 TL-21,4,1,REC,REC 250PE,24,24,1,7,1.75,,f,,,,,4000,1750
+S0416,5067,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,174,5,1,22,6.49,No,f,,,,,5000,6490
+S0422,5095,SA,Australia/Adelaide,SC-23,SolaX Power,X1-2.0,2,1,Tindo Solar,Karra-270,1,21,1,8,2.16,No,f,,,,,2000,2160
+S0423,5108,SA,Australia/Adelaide,SC-23,SMA,Sunny Boy SB 5000TL-US-22 - 240V,5,1,REC,REC 255PE,-90,22,1,12,3.06,No,f,,,,,5000,3060
+S0440,5040,SA,Australia/Adelaide,KR-63,Fronius,Fronius Symo 8.2-3-M,8.2,1,Generic Module,305W,-2,25,1,10,3.05,No,f,,,,,8200,3050
+S0451,5277,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,0,18,1,10,2.95,,f,,,,,5000,2950
+S0456,5170,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,-60,19,1,11,3.245,,f,,,,,5000,3245
+S0461,5114,SA,Australia/Adelaide,SC-23,,,,0,,,,,,,,No,f,,,,,0,0
+S0462,5211,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-275,0,22,2,9,4.95,No,f,,,,,5000,4950
+S0463,5214,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,-90,20,1,11,3.245,No,f,,t,5,8/01/2022 9:26,5000,3245
+S0466,5061,SA,Australia/Adelaide,SC-23,Zeversolar,Evershine TL5000,5,1,Generic Module,270W,-90,35,1,9,2.43,No,f,,,,,5000,2430
+S0471,5333,SA,Australia/Adelaide,KR-63,Generic Inverter,5kW,5,2,Tindo Solar,Karra-275,-60,15,1,11,3.025,No,f,,,,,5000,3025
+S0475,5090,SA,Australia/Adelaide,KR-63,Fronius,Primo 5.0-1,5,1,Jinko Solar,JKM315M-60,-90,24,1,10,3.15,No,f,,,,,5000,3150
+S0476,5158,SA,Australia/Adelaide,SC-23,SolaX Power,X1-4.2T,4.2,1,Tindo Solar,Karra-275,0,15,1,9,2.475,No,f,,,,,4200,2475
+S0477,5171,SA,Australia/Adelaide,SC-23,Generic Inverter,5.06kW,5.06,1,Generic Module,250W,10,22,1,14,3.5,No,t,6 kw,,,,5060,3500
+S0485,5540,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Generic Module,300W,0,35,1,10,3,No,f,,,,,5000,3000
+S0489,5063,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,2,Tindo Solar,Karra-275,-55,18,1,9,2.475,No,f,,,,,5000,2475
+S0490,5501,SA,Australia/Adelaide,KR-63,ABB,TRIO-7.5-TL-OUTD,7.5,1,Yingli Solar,YL260P-29b,-26,20,2,10,5.2,No,f,,,,,7500,5200
+S0491,5032,SA,Australia/Adelaide,KR-63,SolaX Power,X3-6.0-T,6,1,Tindo Solar,Karra-295,0,22,2,12,7.08,,f,,,,,6000,7080
+S0493,5343,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,-45,20,1,9,2.655,No,f,,,,,5000,2655
+S0498,5159,SA,Australia/Adelaide,KR-63,Fronius,SYMO 6.0-3-M,6,1,Generic Module,285W,80,22.5,1,10,2.85,No,f,,,,,6000,2850
+S0499,5112,SA,Australia/Adelaide,SC-23,SolaX Power,X1-2.0,2,1,Tindo Solar,Karra-295,-45,7,1,7,2.065,,f,,,,,2000,2065
+S0503,5114,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-300,0,22,1,10,3,No,f,,,,,5000,3000
+S0504,5433,SA,Australia/Adelaide,SC-23,SolaX Power,SL-TL4400T,4,1,Yingli Solar,YL260P-29b,1,20,1,14,3.64,No,f,,,,,4000,3640
+S0507,5700,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-275,95,25,1,6,1.65,No,f,,,,,5000,1650
+S0508,5097,SA,Australia/Adelaide,KR-63,Zeversolar,Eversol TLC5000,5,1,Tindo Solar,Karra-275,57,22,1,6,1.65,No,f,,,,,5000,1650
+S0509,5012,SA,Australia/Adelaide,KR-63,Fronius,Fronius Symo 6.0-3-M,6,1,Generic Module,350W,-3,22,2,9,6.3,No,f,,,,,6000,6300
+S0518,5066,SA,Australia/Adelaide,SC-23,SolaX Power,X1-3.3T,3.3,1,Tindo Solar,Karra-275,0,7,1,11,3.025,No,f,,,,,3300,3025
+S0519,5125,SA,Australia/Adelaide,SC-23,SolaX Power,SL-TL2800,2.6,1,Yingli Solar,YL260P-29b,1,20,1,8,2.08,,f,,,,,2600,2080
+S0522,5171,SA,Australia/Adelaide,KR-63,GoodWe,GW5000D-NS,5,1,Jinko Solar,JKM440M-6TL4,-90,20,1,10,4.4,No,f,,,,,5000,4400
+S0542,5062,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,0,2,1,9,2.655,No,f,,,,,5000,2655
+S0545,5011,SA,Australia/Adelaide,SC-23,Sungrow,SG5K,5,1,Jinko Solar,JKM 310M-72,1,24,2,9,5.58,No,f,,,,,5000,5580
+S0549,5139,SA,Australia/Adelaide,Mixed,Generic Inverter,4.05kW,4.05,1,Tindo Solar,Karra-295,100,25,1,9,2.655,No,f,,,,,4050,2655
+S0550,5231,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,0,22,1,8,2.36,No,f,,,,,5000,2360
+S0554,5074,SA,Australia/Adelaide,KR-63,Fronius,Fronius Symo 8.2-3-M,8.2,1,Generic Module,310W,27,22.5,1,13,4.03,No,f,,,,,8200,4030
+S0555,5032,SA,Australia/Adelaide,KR-63,Generic Inverter,6kW,6,1,Yingli Solar,YL260P-29b,1,25,1,12,3.12,No,f,,,,,6000,3120
+S0556,5098,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-275,45,25,1,9,2.475,Yes,t,Powerwall,,,,5000,2475
+S0561,5555,SA,Australia/Adelaide,SC-23,SolarEdge,SE5000,5,1,Generic Module,300W,-60,25,1,6,1.8,,f,,,,,5000,1800
+S0572,5125,SA,Australia/Adelaide,SC-23,Generic Inverter,1.5kW,1.5,1,Tindo Solar,Karra-275,-45,22,1,6,1.65,,f,,,,,1500,1650
+S0574,5037,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,90,22,1,11,3.245,No,f,,,,,5000,3245
+S0575,5069,SA,Australia/Adelaide,SC-23,SolaX Power,SL-TL3000,3,1,Yingli Solar,YL260P-29b,1,26,1,12,3.12,No,f,,,,,3000,3120
+S0576,5034,SA,Australia/Adelaide,KR-63,Fronius,Primo 5.0-1,5,1,Canadian Solar Inc. (CSI),CS6X - 285P,0,30,1,23,6.555,No,f,,t,5,21/03/2022 12:32,5000,6555
+S0586,5095,SA,Australia/Adelaide,KR-63,Generic Inverter,2.8kW,2.8,1,Generic Module,220W,20,25,2,8,3.52,No,f,,,,,2800,3520
+S0593,5171,SA,Australia/Adelaide,KR-63,SolaX Power,SL-TL4400T,4,1,Jinko Solar,JKM 250P-60,90,20,2,7,3.5,No,f,,,,,4000,3500
+S0594,5110,SA,Australia/Adelaide,KR-63,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-315,0,15,1,13,4.095,,f,,,,,5000,4095
+S0597,5523,SA,Australia/Adelaide,SC-23,SolaX Power,X1-5.0T,5,1,Tindo Solar,Karra-295,50,15,1,6,1.77,,,,,,,5000,1770
+W0002,5095,SA,Australia/Adelaide,,,,,,,,,,,,,No ,f,,,,,0,0
+W0004,5126,SA,Australia/Adelaide,,SMA,SB 5000TL-21,,,,,North Aspect,Unsure,,,4.29,No ,f,,,,,0,4290
+W0006,5158,SA,Australia/Adelaide,,,,,,,,,,,,,,f,,,,,0,0
+W0016,5087,SA,Australia/Adelaide,,Fronius,Primo,,,,,East/West,,,,6.6,No ,f,,,,,0,6600
+W0017,5000,SA,Australia/Adelaide,,,sunny boy,6,,,,north,~20,,,,No ,f,,,,,6000,0
+W0022,5251,SA,Australia/Adelaide,,Fronius,,,,,,North,22,,,9.24,,f,,,,,0,9240
+W0032,5125,SA,Australia/Adelaide,,Fronius,Primo 5kW,,,,,North,Approx 27 degrees,,,6.6,,f,,,,,0,6600
+W0039,5013,SA,Australia/Adelaide,,,,,,,,,,,,,,f,,,,,0,0
+W0040,5173,SA,Australia/Adelaide,,SMA,Sunnyboy 4kW,4,,,,North,22.5,,,,,f,,,,,4000,0
+W0046,5154,SA,Australia/Adelaide,,Enphase,IQ 7 plus,10,,,,17 degrees from true North,40 degress,,,,No ,f,,,,,10000,0
+W0052,5063,SA,Australia/Adelaide,,,,,,,,,,,,,,f,,,,,0,0
+W0055,5214,SA,Australia/Adelaide,,Fronius,Primo,,,,,East West,,,,6.6,Don't Know ,f,,,,,0,6600
+W0059,5052,SA,Australia/Adelaide,,Fronius,,,,,,North West,0.2,,,9,,f,,,,,0,9000
+W0071,5095,SA,Australia/Adelaide,,Fronius,Symo 8.2-3-M 8200 W,8.2,,,,North,,,,10.23,Yes ,t,Tesla Powerwall 2,,,,8200,10230
+W0093,5121,SA,Australia/Adelaide,,2 x GoodWe 5000 DNS,2 x GoodWe 5000 DNS,10,,,,North and West,23,,,13.32,No ,f,,,,,10000,13320
+W0115,5044,SA,,,Goodwe,"GW5048D-ES, Goodwe GW5000D-NS",9.95,,,,West and east,23o,,,8.19,Yes ,t,LG Energy 12 LV,,,,9950,8190
+W0134,5046,SA,,,Goodwe,GW5000D-NS,,,,,North and West,35 degrees,,,13.5,Yes ,t,Goodwe 10 kWH,,,,0,13500
+W0144,5167,SA,,,Delta,Delta 3kW,3,,,,,,,,3.2,,f,,,,,3000,3200
+W0160,5107,SA,,,Sungrow and Solax,SG5K-D Premium 5kw and Solax X1 Hybrid 5.0kW,10,,,,North and South,,,,12,Don't Know ,f,,,,,10000,12000
+W0161,5067,SA,,,Fronius,Primo,,,,,East and West,"East 21 degrees, West 34 degrees",,,6.6,,f,,,,,0,6600
+W0170,5008,SA,,,Huawei,SUN2000-5KTL-L1,,,Q-Cells, 17 x Q-Cells Q.Maxx-G3 390w,North,unsure but are just at the slope of the roof (ie not angled further),,,6.6,Yes ,f,,,,,0,6600
+W0188,5023,SA,,,Goodwe,GW5000D-NS and LGES-5048,,,,,"16 North, 11 South",,,,9.9,Yes ,t,LG CHEM 13 LV (13kWh),,,,0,9900
+W0197,5052,SA,,,,,,,,,,,,,,No ,f,,,,,0,0
+W0223,5162,SA,,,Goodwe,GW5000D-NS,10,,,,East 94 degrees West 275 degrees,23 degrees,,,9.75,Don't Know ,f,,,,,10000,9750
+W0224,5073,SA,,,SolarEdge,SE8250H,,,,,Flat,Flat,,,10.92,No ,f,,,,,0,10920
+W0246,5098,SA,,,Fronius,Primo 5,5,,,,North,25 degrees,,,6.6,No ,f,,,,,5000,6600
+W0248,5039,SA,,,Fronius,Primo,,,,,,,,,6.6,No ,f,,,,,0,6600
+W0252,5083,SA,,,Fronius,,8.2,,,,East/West,5 degrees,,,10.92,No ,f,,,,,8200,10920
+W0257,5032,SA,,,Goodwe,GW5000D-NS,,,,,,,,,6.6,No ,f,,,,,0,6600
+W0273,5062,SA,,,SolaX,X1-7.0T,,,Trina,24 x Trina HoneyM TSM-370DD08(11) ,12 x  E1-85    12x N2-356,23 degrees,,,8.88,Don't Know ,f,,,,,0,8880
+W0314,5011,SA,Australia/Adelaide,,Fronius,Symo,8.5,,,,North West,29.5 degrees,,,10.3,No ,f,,,,,8500,10300
+W0325,5120,SA,Australia/Adelaide,,Fronius,Symo,,,,,,,,,15,No ,t,Tesla Powerwall 13kW,,,,0,15000
+W0331,5093,SA,Australia/Adelaide,,Goodwe,GW5048D-ES,4.95,,,,,,,,6.63,Don't Know ,t,Goodwe LX U5.4L 5.4kWh,,,,4950,6630
+W0352,5097,SA,Australia/Adelaide,,LG,,5,,,,,,,,6.6,Yes ,t,10KW LG,,,,5000,6600

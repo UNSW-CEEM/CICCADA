@@ -1,0 +1,5 @@
+first_date_metadata_received,last_date_metadata_received,edp_site_id,postcode,state,site_timezone,monitoring_hardware,inverter_manufacturer,inverter_model,inverter_ac_rating_kw,inverter_count,subarray_manufacturer,subarray_model,subarray_orientation,subarray_tilt,subarray_strings,subarray_modules_per_string,subarray_dc_rating_kw,islandable,has_battery,battery_size_make_model,limit_enabled,limit_amount,limit_applied
+14/04/2022,30/06/2022,S0237,5011,SA,Australia/Adelaide,SC-23,Enphase,S230,0.2185,5,Generic Module,250W,30,22.5,1,1,0.25,,f,,,,
+14/04/2022,30/06/2022,S0404,5011,SA,Australia/Adelaide,SC-23,SolaX Power,X1-3.0T,3,1,Tindo Solar,Karra-270,85,15,1,5,1.35,No,f,,,,
+14/04/2022,30/06/2022,S0545,5011,SA,Australia/Adelaide,SC-23,Sungrow,SG5K,5,1,Jinko Solar,JKM 310M-72,1,24,2,9,5.58,No,f,,,,
+30/03/2023,30/03/2023,W0314,5011,SA,Australia/Adelaide,,Fronius,Symo,8.5,,,,North West,29.5 degrees,,,10.3,No ,f,,,,
