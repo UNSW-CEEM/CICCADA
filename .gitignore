@@ -143,3 +143,15 @@ dmypy.json
 
 # MacOS
 .DS_Store
+BOM_NCI/POA*
+BOM_NCI/2023*
+BOM_NCI/2022*
+SolA2024/*.txt
+SolA2024/*.sh
+SolA2024/rclone*
+SolA2024/project_ciccada
+BOM_NCI/*.csv
+tests/4)*
+tests/Old_repo
+tests/Figures
+tests/darth
