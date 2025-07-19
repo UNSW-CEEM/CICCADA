@@ -152,9 +152,10 @@ SolA2024/rclone*
 SolA2024/project_ciccada
 BOM_NCI/*.csv
 BOM_NCI/POA*
-BOM_NC/rclone*
+BOM_NCI/rclone*
 BOM_NCI/G-NAF/
 tests/4)*
+tests/*.csv
 tests/Old_repo/
 tests/Figures/
 tests/darth/
