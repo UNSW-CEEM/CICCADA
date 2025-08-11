@@ -10,7 +10,7 @@ def get_max_P(V, Srated=1, v1=253, v2=260):
         P = m * (V - v2) + .2*Srated
         return P
     
-def get_voltvar_Q(V, Srated=1, v1=207, v2=220, v3=240, v4=258, Q1=.44, Q4=.60):
+def get_voltvar_Q(V, P, Srated=1, v1=207, v2=220, v3=240, v4=258, Q1=.44, Q4=.60):
     if V <= v1:
         Q = Q1* Srated
     elif v1 <= V < v2:

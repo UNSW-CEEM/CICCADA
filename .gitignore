@@ -146,10 +146,12 @@ dmypy.json
 BOM_NCI/POA*
 BOM_NCI/2023*
 BOM_NCI/2022*
-SolA2024/*.txt
+SolA2024/
 SolA2024/*.sh
 SolA2024/rclone*
 SolA2024/project_ciccada
+**artifacts
+SolA2024/sola_sites.csv
 BOM_NCI/*.csv
 BOM_NCI/POA*
 BOM_NCI/rclone*
@@ -159,3 +161,4 @@ tests/*.csv
 tests/Old_repo/
 tests/Figures/
 tests/darth/
+ciccada/
