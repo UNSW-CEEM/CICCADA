@@ -362,7 +362,7 @@ class my_plot4():
                     self.axs[k+i].set_yticks([])
                 if len(lgnds_1) > 0:
                     # pass
-                    legend_vec = [g_title+self.legend_join+lgnd for g_title in self.g_titles for lgnd in lgnds_1 ]
+                    legend_vec = [str(g_title)+self.legend_join+str(lgnd) for g_title in self.g_titles for lgnd in lgnds_1 ]
                     if self.lim_legend is not None:
                         lines = self.twin_axs[k+i].get_lines()
                         lines[-1].set_label(self.lim_legend)

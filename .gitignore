@@ -67,7 +67,7 @@ db.sqlite3-journal
 # Flask stuff:
 instance/
 .webassets-cache
-
+Flask_App/
 # Scrapy stuff:
 .scrapy
 
@@ -146,12 +146,9 @@ dmypy.json
 BOM_NCI/POA*
 BOM_NCI/2023*
 BOM_NCI/2022*
-SolA2024/
-SolA2024/*.sh
-SolA2024/rclone*
-SolA2024/project_ciccada
+SolA2024_Partitioning/
+
 **artifacts
-SolA2024/sola_sites.csv
 BOM_NCI/*.csv
 BOM_NCI/POA*
 BOM_NCI/rclone*
@@ -162,3 +159,7 @@ tests/Old_repo/
 tests/Figures/
 tests/darth/
 ciccada/
+
+
+*.csv
+*.png
