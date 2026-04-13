@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pandas as pd
-
 from ciccada.clear_sky_days import detect_clear_sky_day
 
 
