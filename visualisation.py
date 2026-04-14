@@ -32,10 +32,11 @@ class my_plot4():
     def __init__(self,t0, t1, df, plt_config, ax_digit, x_label, y_labels, x_format='%a-%m-%d %H:%M', 
                  group_attr='groupid', time_attr='time', E2P_attr = None, plot_total=False, 
                  plot_total_func=['sum', 'mean'], plot_period=False,  cmap='plasma', 
-               legend_loc='center right', num_ticks=12, num_yticks=12, save_as='', figsize=[12,1], fontsize=10,color_nights=True,
+               legend_loc='center right', num_ticks=12, num_yticks=12, save_as='', figsize=[12,1], fontsize=10, color_nights=True,
               fontname = 'times new roman', kW2MW_attr = [], color_by='attribute', gridwidth=[1, 1], 
                  dpi=150, hspace= 0.25, special_legend=[], special_group=[], title_i=0, title_j=None, MW=False, same_scale=True, 
-                 step=False, show_legends=True, rotation=45, title='Date', legend_join='-', only1title=False, onlyntime=False, lim_legend=None, legend_i=None, legend_j=None, bbox_inches='tight'):
+                 step=False, show_legends=True, rotation=45, title='Date', legend_join='-', only1title=False, onlyntime=False, lim_legend=None, 
+                 legend_i=None, legend_j=None, bbox_inches='tight', show=True):
         self.t0_lc_str = t0
         self.t1_lc_str = t1
         self.t0_lc_dt = pd.to_datetime(t0, format='%Y-%m-%d %H:%M:%S%f%z')
@@ -223,8 +224,10 @@ class my_plot4():
                 
     def save_fig(self):
         if len(self.save_path)>1:
+            plt.ioff()
             self.fig.savefig(os.getcwd()+'/'+self.save_path, transparent=True, bbox_inches=self.bbox_inches, pad_inches=0, dpi=self.dpi)
             print('saved as: ', os.getcwd()+'/'+self.save_path)
+            plt.close(self.fig)
             
     def color_nights_func(self):
         for i in range(0, self.k_total, np.unique(self.plt_loc[:, 0]).shape[0]):

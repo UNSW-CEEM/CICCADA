@@ -1,0 +1,11 @@
+{
+    "databasename": "spreedata",
+    "hostserver": "54.253.60.172",
+    "remote_host": "127.0.0.1",
+    "remote_port": 5432,
+    "darth_username": "hosseinuni",
+    "ssh_username": "hosseinaws",
+    "darth_password": "hS*8glEv56!#sU",
+    "ssh_private_key_path": "/home/ubuntu/.ssh/id_rsa",
+    "ssh_private_key_password":""
+}
