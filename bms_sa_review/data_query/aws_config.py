@@ -50,36 +50,111 @@ BUCKET = "project-ciccada"
 ATHENA_OUTPUT = f"s3://{BUCKET}/athena-results/"   # where Athena stages results
 DEFAULT_DB = "solar_analytics"                     # default Glue database
 
-
-def aq(sql: str, database: str = DEFAULT_DB) -> pd.DataFrame:
-    """Run an Athena SQL query and return a pandas DataFrame.
-
-    `aq` = "Athena query". Example:
-        aq("SELECT count(*) FROM circuits")
-    """
-    return wr.athena.read_sql_query(
-        sql,
-        database=database,
-        s3_output=ATHENA_OUTPUT,
-        boto3_session=session,
-        ctas_approach=False,  
-    )
-
-
-def tables(database: str = DEFAULT_DB) -> pd.DataFrame:
-    """List the tables in a Glue database (with their columns)."""
-    return wr.catalog.tables(database=database, boto3_session=session)
-
-
+# ===========================================================================
+# CATALOG + ATHENA (SQL over registered tables)
+# ===========================================================================
 def databases() -> pd.DataFrame:
     """List all Glue databases in the account."""
     return wr.catalog.databases(boto3_session=session)
-
-
-def columns(table: str, database: str = DEFAULT_DB) -> pd.DataFrame:
-    """Show the column names and types of a single table."""
-    return wr.catalog.table(database=database, table=table,
-                            boto3_session=session)
+ 
+ 
+def tables(database: str = DEFAULT_DB) -> pd.DataFrame:
+    """List the tables in a Glue database."""
+    return wr.catalog.tables(database=database, boto3_session=session)
+ 
+ 
+def aq(sql: str, database: str = DEFAULT_DB) -> pd.DataFrame:
+    """Run an Athena SQL query and return a pandas DataFrame ('Athena query').
+ 
+    Cost note: Athena bills by DATA SCANNED. 
+    On the big telemetry table always filter on the partition columns (year, month, is_pv) 
+    and name the columns you need instead of SELECT *. Dimension tables (circuits, sites) are tiny.
+    """
+    return wr.athena.read_sql_query(
+        sql, database=database, s3_output=ATHENA_OUTPUT,
+        boto3_session=session, ctas_approach=False,
+    )
+ 
+ 
+def describe(table: str, database: str = DEFAULT_DB) -> pd.DataFrame:
+    """Show a table's columns and types. Scans no data (metadata only).
+ 
+    Works for Iceberg tables too, where the Glue column list can be empty.
+    """
+    return aq(f"DESCRIBE {table}", database=database)
+ 
+ 
+# ===========================================================================
+# STORAGE (files in S3)
+# ===========================================================================
+def s3_ls(prefix: str = "") -> pd.DataFrame:
+    """List folders and files directly under an S3 prefix in the project bucket.
+ 
+    This is the 'ground truth' view -- it works even for data that nobody has
+    registered in Glue yet. Use it to discover the layout of any new source.
+ 
+        s3_ls()                       # top level of the bucket
+        s3_ls("spark-warehouse/")     # inside a folder
+    """
+    s3 = session.client("s3")
+    rows = []
+    token = None
+    while True:
+        kw = dict(Bucket=BUCKET, Prefix=prefix, Delimiter="/")
+        if token:
+            kw["ContinuationToken"] = token
+        resp = s3.list_objects_v2(**kw)
+        for p in resp.get("CommonPrefixes", []):
+            rows.append({"type": "folder", "name": p["Prefix"], "size_mb": None})
+        for o in resp.get("Contents", []):
+            if o["Key"] == prefix:      # skip the folder placeholder object
+                continue
+            rows.append({"type": "file", "name": o["Key"],
+                         "size_mb": round(o["Size"] / 1e6, 3)})
+        if resp.get("IsTruncated"):
+            token = resp.get("NextContinuationToken")
+        else:
+            break
+    return pd.DataFrame(rows)
+ 
+ 
+# ===========================================================================
+# DUCKDB (read a Parquet file directly -- no Glue, no Athena, runs locally)
+# ===========================================================================
+_duck = None
+ 
+def _duck_con():
+    """Create a DuckDB connection wired to S3 with your current creds."""
+    global _duck
+    import duckdb
+    if _duck is None:
+        _duck = duckdb.connect()
+        _duck.sql("INSTALL httpfs; LOAD httpfs;")
+    # Refresh credentials on every call -- SSO creds expire after ~1 hour.
+    c = session.get_credentials().get_frozen_credentials()
+    _duck.sql(f"""
+        SET s3_region='{REGION}';
+        SET s3_access_key_id='{c.access_key}';
+        SET s3_secret_access_key='{c.secret_key}';
+        SET s3_session_token='{c.token}';
+    """)
+    return _duck
+ 
+ 
+def dread(s3_path: str, limit: int | None = 5) -> pd.DataFrame:
+    """Read a Parquet file (or glob) straight from S3 into a DataFrame.
+ 
+    Reads the file's OWN schema, so it sidesteps wrong/missing Glue definitions.
+    Point it at a file or a wildcard:
+ 
+        dread("s3://project/.../compliance_voltvar.parquet/*.parquet")
+ 
+    Pass limit=None to read everything (careful with big tables).
+    """
+    q = f"SELECT * FROM read_parquet('{s3_path}')"
+    if limit is not None:
+        q += f" LIMIT {limit}"
+    return _duck_con().sql(q).df()
 
 
 # ---------------------------------------------------------------------------
