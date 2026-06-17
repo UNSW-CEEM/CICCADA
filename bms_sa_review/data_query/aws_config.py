@@ -46,11 +46,9 @@ session = boto3.Session(profile_name=PROFILE, region_name=REGION)
 # Athena must stage its query results somewhere in S3. 
 # Any writable prefix in the project bucket works.
 # This folder is created automatically on first use.
-ATHENA_OUTPUT = "s3://project-ciccada/athena-results/"
-
-# The Glue database most everyday queries will hit:
-# Change if needed
-DEFAULT_DB = "solar_analytics"
+BUCKET = "project-ciccada"
+ATHENA_OUTPUT = f"s3://{BUCKET}/athena-results/"   # where Athena stages results
+DEFAULT_DB = "solar_analytics"                     # default Glue database
 
 
 def aq(sql: str, database: str = DEFAULT_DB) -> pd.DataFrame:
