@@ -160,6 +160,12 @@ tests/Figures/
 tests/darth/
 ciccada/
 
+SAPN2022_Analysis/curtailment/scripts/local_paths.py
+SAPN2022_Analysis/curtailment/outputs/
+/updated results/
+/All Results/
+*.parquet
+
 
 *.csv
 *.png
