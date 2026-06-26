@@ -3,8 +3,9 @@
 This script produces two reporting tables:
 
 - a timestamp-level flag table showing when a site sits above either its final
-  LOS threshold or its fixed OV1 working threshold
+  LOS threshold or its fixed OV1 working threshold (used for high reso curtaliment)
 - a 5-minute bucket summary of the same signals for downstream curtailment work
+  (used for 5m reso curtialment)
 
 Inputs come from three places:
 
@@ -44,7 +45,7 @@ from funcs import (
 PHASE_B_SUMMARY_PATH = Path("updated results/site_compliance/phase_b_site_summary.csv")
 SITE_THRESHOLDS_PATH = Path("updated results/site_compliance/site_thresholds.csv")
 CIRCUIT_DETAILS_PATH = Path("Nov2022/ebm_1_20221112_20221119_circuit_details.csv")
-CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH
+CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH # this is the cleaned circuit data parquet
 OUTPUT_DIR = Path("updated results/phase b info for curtailment/tier based")
 TIMESTAMP_OUTPUT_PATH = OUTPUT_DIR / "tier_based_timestamp_flags.csv"
 BUCKET_OUTPUT_PATH = OUTPUT_DIR / "tier_based_5min_buckets.csv"
@@ -315,9 +316,9 @@ def _build_bucket_frame(timestamp_df: pl.DataFrame) -> pl.DataFrame:
             pl.col("local_tstamp").dt.truncate("5m").alias("_bucket_floor")
         )
         .with_columns(
-            # The bucket label represents the end of the reporting interval, not
-            # the lower bound. Exact bucket-boundary timestamps keep their own
-            # time; all other timestamps roll forward to the bucket end.
+            # First compute the 5-minute floor, then label each row by the end
+            # of that reporting bucket. Exact boundary timestamps keep their
+            # own time; all other timestamps roll forward to the next 5-minute mark.
             pl.when(pl.col("local_tstamp") == pl.col("_bucket_floor"))
             .then(pl.col("_bucket_floor"))
             .otherwise(pl.col("_bucket_floor") + pl.duration(minutes=5))
