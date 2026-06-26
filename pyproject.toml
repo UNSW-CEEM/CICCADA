@@ -7,7 +7,10 @@ authors = [
 ]
 dependencies = [
     "matplotlib>=3.10.0",
+    "numpy>=2.2.3",
     "pandas>=2.2.2",
+    "polars>=1.41.2",
+    "pyarrow>=24.0.0",
     "pytest-cov>=6.0.0",
     "pytest>=8.3.4",
 ]

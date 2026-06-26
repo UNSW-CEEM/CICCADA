@@ -6,6 +6,8 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+DATA_DIR = REPO_ROOT / "Nov2022"
+
 import polars as pl
 
 from checkPVBehaviour import (
@@ -26,11 +28,10 @@ from plots.plots import (
 )
 from summaryStats import (
     summarize_multi_method_site_outputs,
-    summarize_site_compliance_outputs,
 )
 
 
-OUTPUT_DIR = Path("updated results/site_compliance")
+OUTPUT_DIR = REPO_ROOT / "updated results" / "site_compliance"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 PLOT_DIR = OUTPUT_DIR / "overall_site_plots"
 PLOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -38,21 +39,13 @@ THRESHOLD_PLOT_DIR = OUTPUT_DIR / "threshold_distribution_plots"
 THRESHOLD_PLOT_DIR.mkdir(parents=True, exist_ok=True)
 OV1_PLOT_DIR = OUTPUT_DIR / "ov1_assessed_site_plots"
 OV1_PLOT_DIR.mkdir(parents=True, exist_ok=True)
-FIVE_METHOD_GROUP_DIR = OUTPUT_DIR / "five_method_site_groups"
-FIVE_METHOD_GROUP_DIR.mkdir(parents=True, exist_ok=True)
-FIVE_METHOD_ALL_DIR = FIVE_METHOD_GROUP_DIR / "all_sites"
-FIVE_METHOD_ALL_DIR.mkdir(parents=True, exist_ok=True)
-FIVE_METHOD_SAME_DIR = FIVE_METHOD_GROUP_DIR / "same_behavior"
-FIVE_METHOD_SAME_DIR.mkdir(parents=True, exist_ok=True)
-FIVE_METHOD_DIFF_DIR = FIVE_METHOD_GROUP_DIR / "different_behavior"
-FIVE_METHOD_DIFF_DIR.mkdir(parents=True, exist_ok=True)
 DAY_COVERAGE_THRESHOLD = 0.80
 GENERATE_SITE_PLOTS = os.getenv("SITE_COMPLIANCE_SKIP_PLOTS", "0") != "1"
 
 
 def prepare_inputs():
-    site_details = pl.read_csv("Nov2022/ebm_1_20221112_20221119_site_details.csv")
-    circuit_details = pl.read_csv("Nov2022/ebm_1_20221112_20221119_circuit_details.csv")
+    site_details = pl.read_csv(DATA_DIR / "ebm_1_20221112_20221119_site_details.csv")
+    circuit_details = pl.read_csv(DATA_DIR / "ebm_1_20221112_20221119_circuit_details.csv")
 
     all_sites = site_details["site_id"].unique().sort()
     all_sites_2 = circuit_details["site_id"].unique().sort()
@@ -389,14 +382,7 @@ def main():
 
     if not phase_b_summary_df.is_empty():
         assessed_overall = phase_b_summary_df.filter(pl.col("overall_pass").is_not_null())
-        assessed_los = phase_b_summary_df.filter(pl.col("los_pass").is_not_null())
-        assessed_ov1 = phase_b_summary_df.filter(pl.col("ov1_pass").is_not_null())
-        unassessed = phase_b_summary_df.filter(pl.col("overall_pass").is_null())
-
         assessed_overall.write_csv(OUTPUT_DIR / "assessed_sites_overall.csv")
-        assessed_los.write_csv(OUTPUT_DIR / "assessed_sites_los.csv")
-        assessed_ov1.write_csv(OUTPUT_DIR / "assessed_sites_ov1.csv")
-        unassessed.write_csv(OUTPUT_DIR / "unassessed_sites.csv")
 
     if not phase_a_df.is_empty():
         los_threshold_stats = (
@@ -470,56 +456,10 @@ def main():
             save_path=THRESHOLD_PLOT_DIR / "ov1_threshold_lowest20_std.png",
         )
 
-    summary_outputs = summarize_site_compliance_outputs(phase_b_summary_df, thresholds_df)
-    if not summary_outputs["overall_summary"].is_empty():
-        summary_outputs["overall_summary"].write_csv(OUTPUT_DIR / "phase_b_overall_summary.csv")
-    if not summary_outputs["mechanism_summary"].is_empty():
-        summary_outputs["mechanism_summary"].write_csv(OUTPUT_DIR / "phase_b_mechanism_summary.csv")
-    if not summary_outputs["threshold_summary"].is_empty():
-        summary_outputs["threshold_summary"].write_csv(OUTPUT_DIR / "threshold_summary.csv")
-
-    multi_method_outputs = summarize_multi_method_site_outputs(
-        phase_b_summary_by_method_df,
-        thresholds_by_method_df,
-    )
-    if not multi_method_outputs["method_summary"].is_empty():
-        multi_method_outputs["method_summary"].write_csv(OUTPUT_DIR / "five_method_summary.csv")
+    multi_method_outputs = summarize_multi_method_site_outputs(phase_b_summary_by_method_df)
     if not multi_method_outputs["site_comparison"].is_empty():
         multi_method_outputs["site_comparison"].write_csv(
             OUTPUT_DIR / "five_method_site_comparison.csv"
-        )
-    if not multi_method_outputs["disagreement_sites"].is_empty():
-        multi_method_outputs["disagreement_sites"].write_csv(
-            OUTPUT_DIR / "five_method_disagreement_sites.csv"
-        )
-    if not multi_method_outputs["threshold_summary"].is_empty():
-        multi_method_outputs["threshold_summary"].write_csv(
-            OUTPUT_DIR / "five_method_threshold_summary.csv"
-        )
-    if not multi_method_outputs["site_comparison"].is_empty():
-        site_comparison_all = multi_method_outputs["site_comparison"]
-        site_comparison_all.write_csv(
-            FIVE_METHOD_ALL_DIR / "all_sites_five_method_comparison.csv"
-        )
-        site_comparison_all.filter(
-            pl.col("any_disagreement") == False
-        ).write_csv(
-            FIVE_METHOD_SAME_DIR / "sites_same_behavior_all_methods.csv"
-        )
-        site_comparison_all.filter(
-            pl.col("all_methods_unassessed") == True
-        ).write_csv(
-            FIVE_METHOD_SAME_DIR / "sites_unassessed_under_all_methods.csv"
-        )
-        site_comparison_all.filter(
-            pl.col("any_disagreement") == True
-        ).write_csv(
-            FIVE_METHOD_DIFF_DIR / "sites_different_behavior_any_method.csv"
-        )
-        site_comparison_all.filter(
-            pl.col("assessed_outcome_disagreement") == True
-        ).write_csv(
-            FIVE_METHOD_DIFF_DIR / "sites_different_assessed_outcomes.csv"
         )
 
     print("Saved outputs to", OUTPUT_DIR)

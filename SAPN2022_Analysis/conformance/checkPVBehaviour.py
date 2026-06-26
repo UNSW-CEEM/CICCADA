@@ -1027,8 +1027,6 @@ class CheckPVBehaviour:
                     "los_compliant": 0,
                     "ov1_eligible": 0,
                     "ov1_compliant": 0,
-                    "first_los_fail_ts": None,
-                    "first_ov1_fail_ts": None,
                 },
             }
 
@@ -1054,24 +1052,11 @@ class CheckPVBehaviour:
             "los_responsible", "ov1_responsible", "los_compliant", "ov1_compliant",
         ])
 
-        los_fail = (
-            detail.filter(pl.col("los_responsible") & ~pl.col("los_compliant"))
-                  .select("local_tstamp")
-                  .head(1)
-        )
-        ov1_fail = (
-            detail.filter(pl.col("ov1_responsible") & ~pl.col("ov1_compliant"))
-                  .select("local_tstamp")
-                  .head(1)
-        )
-
         summary = {
             "los_eligible": int(detail.filter(pl.col("los_responsible")).height),
             "los_compliant": int(detail.filter(pl.col("los_compliant")).height),
             "ov1_eligible": int(detail.filter(pl.col("ov1_responsible")).height),
             "ov1_compliant": int(detail.filter(pl.col("ov1_compliant")).height),
-            "first_los_fail_ts": None if los_fail.is_empty() else los_fail.item(),
-            "first_ov1_fail_ts": None if ov1_fail.is_empty() else ov1_fail.item(),
         }
 
         return {"frame": df, "detail": detail, "summary": summary}
@@ -1862,8 +1847,6 @@ def run_phase_b_for_site(
     """
     def aggregate_for_los_threshold(los_threshold_used):
         detail_frames = []
-        first_los_fail = None
-        first_ov1_fail = None
         los_eligible = 0
         los_compliant = 0
         ov1_eligible = 0
@@ -1883,10 +1866,6 @@ def run_phase_b_for_site(
             los_compliant += summary["los_compliant"]
             ov1_eligible += summary["ov1_eligible"]
             ov1_compliant += summary["ov1_compliant"]
-            if first_los_fail is None and summary["first_los_fail_ts"] is not None:
-                first_los_fail = summary["first_los_fail_ts"]
-            if first_ov1_fail is None and summary["first_ov1_fail_ts"] is not None:
-                first_ov1_fail = summary["first_ov1_fail_ts"]
 
         detail_all = pl.concat(detail_frames, how="vertical") if detail_frames else pl.DataFrame()
         los_pct = None if los_eligible == 0 else (los_compliant / los_eligible) * 100.0
@@ -1906,8 +1885,6 @@ def run_phase_b_for_site(
             "los_pass": los_pass,
             "ov1_pass": ov1_pass,
             "overall_pass": overall_pass,
-            "first_los_fail_ts": first_los_fail,
-            "first_ov1_fail_ts": first_ov1_fail,
             "los_threshold_used": los_threshold_used,
         }
 
@@ -1987,20 +1964,6 @@ def run_phase_b_for_site(
             "los_pass": chosen_result["los_pass"],
             "ov1_pass": chosen_result["ov1_pass"],
             "overall_pass": chosen_result["overall_pass"],
-            "first_los_fail_ts": chosen_result["first_los_fail_ts"],
-            "first_ov1_fail_ts": chosen_result["first_ov1_fail_ts"],
-            "los_compliance_pct_median": median_result["los_pct"],
-            "los_pass_median": median_result["los_pass"],
-            "los_threshold_median": los_threshold,
-            "los_compliance_pct_p25": None if p25_result is None else p25_result["los_pct"],
-            "los_pass_p25": None if p25_result is None else p25_result["los_pass"],
-            "los_threshold_p25": los_threshold_p25,
-            "los_compliance_pct_p10": None if p10_result is None else p10_result["los_pct"],
-            "los_pass_p10": None if p10_result is None else p10_result["los_pass"],
-            "los_threshold_p10": los_threshold_p10,
-            "los_compliance_pct_min": None if min_result is None else min_result["los_pct"],
-            "los_pass_min": None if min_result is None else min_result["los_pass"],
-            "los_threshold_min": los_threshold_min,
             "los_threshold_used": chosen_result["los_threshold_used"],
             "threshold_sensitive": threshold_sensitive,
             "pass_basis": pass_basis,
@@ -2016,20 +1979,6 @@ def run_phase_b_for_site(
             pl.col("los_pass").cast(pl.Boolean),
             pl.col("ov1_pass").cast(pl.Boolean),
             pl.col("overall_pass").cast(pl.Boolean),
-            pl.col("first_los_fail_ts").cast(pl.Datetime(time_zone="Australia/Adelaide")),
-            pl.col("first_ov1_fail_ts").cast(pl.Datetime(time_zone="Australia/Adelaide")),
-            pl.col("los_compliance_pct_median").cast(pl.Float64),
-            pl.col("los_pass_median").cast(pl.Boolean),
-            pl.col("los_threshold_median").cast(pl.Float64),
-            pl.col("los_compliance_pct_p25").cast(pl.Float64),
-            pl.col("los_pass_p25").cast(pl.Boolean),
-            pl.col("los_threshold_p25").cast(pl.Float64),
-            pl.col("los_compliance_pct_p10").cast(pl.Float64),
-            pl.col("los_pass_p10").cast(pl.Boolean),
-            pl.col("los_threshold_p10").cast(pl.Float64),
-            pl.col("los_compliance_pct_min").cast(pl.Float64),
-            pl.col("los_pass_min").cast(pl.Boolean),
-            pl.col("los_threshold_min").cast(pl.Float64),
             pl.col("los_threshold_used").cast(pl.Float64),
             pl.col("threshold_sensitive").cast(pl.Boolean),
             pl.col("pass_basis").cast(pl.Utf8),

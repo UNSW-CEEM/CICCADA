@@ -1,153 +1,12 @@
 import polars as pl
 from helperFuncs import ensure_list, add_event_date
 
-# script to sumamrise various stats from the results achieved
-# it should be the last step
-def summarize_site_compliance_outputs(
-    phase_b_summary_df: pl.DataFrame,
-    threshold_df: pl.DataFrame | None = None,
-) -> dict[str, pl.DataFrame]:
-    """
-    Summarize the new site-level Phase B outputs.
-    Returns compact tables that can be saved or inspected locally.
-    """
-    if phase_b_summary_df is None or phase_b_summary_df.is_empty():
-        empty = pl.DataFrame()
-        return {
-            "overall_summary": empty,
-            "mechanism_summary": empty,
-            "threshold_summary": empty,
-        }
-
-    total_sites = phase_b_summary_df.height
-    overall_assessed = phase_b_summary_df.filter(pl.col("overall_pass").is_not_null()).height
-    overall_compliant = phase_b_summary_df.filter(pl.col("overall_pass") == True).height
-    overall_non_compliant = phase_b_summary_df.filter(pl.col("overall_pass") == False).height
-
-    overall_summary = pl.DataFrame([{
-        "sites_total": total_sites,
-        "sites_assessed": overall_assessed,
-        "sites_unassessed": total_sites - overall_assessed,
-        "sites_compliant": overall_compliant,
-        "sites_non_compliant": overall_non_compliant,
-        "sites_threshold_sensitive": (
-            phase_b_summary_df.filter(pl.col("threshold_sensitive") == True).height
-            if "threshold_sensitive" in phase_b_summary_df.columns else None
-        ),
-        "sites_p25_override": (
-            phase_b_summary_df.filter(pl.col("pass_basis") == "p25_override").height
-            if "pass_basis" in phase_b_summary_df.columns else None
-        ),
-        "sites_p10_override": (
-            phase_b_summary_df.filter(pl.col("pass_basis") == "p10_override").height
-            if "pass_basis" in phase_b_summary_df.columns else None
-        ),
-        "sites_min_override": (
-            phase_b_summary_df.filter(pl.col("pass_basis") == "min_override").height
-            if "pass_basis" in phase_b_summary_df.columns else None
-        ),
-        "overall_compliant_pct_of_assessed": None if overall_assessed == 0 else overall_compliant / overall_assessed * 100.0,
-        "overall_non_compliant_pct_of_assessed": None if overall_assessed == 0 else overall_non_compliant / overall_assessed * 100.0,
-    }])
-
-    mechanism_rows = []
-    for mech in ["los", "ov1"]:
-        pass_col = f"{mech}_pass"
-        pct_col = f"{mech}_compliance_pct"
-        eligible_col = f"{mech}_eligible"
-        assessed = phase_b_summary_df.filter(pl.col(pass_col).is_not_null()).height
-        compliant = phase_b_summary_df.filter(pl.col(pass_col) == True).height
-        non_compliant = phase_b_summary_df.filter(pl.col(pass_col) == False).height
-        mechanism_rows.append({
-            "mechanism": mech.upper(),
-            "sites_assessed": assessed,
-            "sites_unassessed": total_sites - assessed,
-            "sites_compliant": compliant,
-            "sites_non_compliant": non_compliant,
-            "compliant_pct_of_assessed": None if assessed == 0 else compliant / assessed * 100.0,
-            "non_compliant_pct_of_assessed": None if assessed == 0 else non_compliant / assessed * 100.0,
-            "median_compliance_pct": (
-                phase_b_summary_df
-                .filter(pl.col(pct_col).is_not_null())
-                .select(pl.median(pct_col))
-                .item()
-            ) if assessed else None,
-            "mean_eligible_timestamps": (
-                phase_b_summary_df
-                .filter(pl.col(pass_col).is_not_null())
-                .select(pl.mean(eligible_col))
-                .item()
-            ) if assessed else None,
-        })
-    mechanism_summary = pl.DataFrame(mechanism_rows)
-
-    if threshold_df is None or threshold_df.is_empty():
-        threshold_summary = pl.DataFrame()
-    else:
-        threshold_summary = pl.DataFrame([{
-            "sites_with_los_threshold": threshold_df.filter(pl.col("delta_los_site").is_not_null()).height,
-            "sites_with_ov1_threshold": threshold_df.filter(pl.col("delta_ov1_site").is_not_null()).height,
-            "sites_with_both_thresholds": threshold_df.filter(
-                pl.col("delta_los_site").is_not_null() & pl.col("delta_ov1_site").is_not_null()
-            ).height,
-            "sites_with_threshold_gap_flag": threshold_df.filter(pl.col("delta_gap_flag") == True).height,
-            "median_los_anchor": threshold_df.select(pl.median("los_anchor_site")).item(),
-            "median_los_anchor_p25": threshold_df.select(pl.median("los_anchor_p25_site")).item() if "los_anchor_p25_site" in threshold_df.columns else None,
-            "median_los_anchor_p10": threshold_df.select(pl.median("los_anchor_p10_site")).item() if "los_anchor_p10_site" in threshold_df.columns else None,
-            "median_los_anchor_min": threshold_df.select(pl.median("los_anchor_min_site")).item() if "los_anchor_min_site" in threshold_df.columns else None,
-            "median_ov1_work": threshold_df.select(pl.median("ov1_work_site")).item(),
-            "median_ov1_test": threshold_df.select(pl.median("ov1_test_site")).item() if "ov1_test_site" in threshold_df.columns else None,
-        }])
-
-    return {
-        "overall_summary": overall_summary,
-        "mechanism_summary": mechanism_summary,
-        "threshold_summary": threshold_summary,
-    }
-
-
 def summarize_multi_method_site_outputs(
     phase_b_summary_by_method_df: pl.DataFrame,
-    threshold_by_method_df: pl.DataFrame | None = None,
 ) -> dict[str, pl.DataFrame]:
     if phase_b_summary_by_method_df is None or phase_b_summary_by_method_df.is_empty():
         empty = pl.DataFrame()
-        return {
-            "method_summary": empty,
-            "site_comparison": empty,
-            "disagreement_sites": empty,
-            "threshold_summary": empty,
-        }
-
-    method_summary = (
-        phase_b_summary_by_method_df
-        .group_by(["method_key", "method_label"])
-        .agg([
-            pl.len().alias("sites_total"),
-            pl.col("overall_pass").is_not_null().sum().alias("sites_assessed"),
-            (pl.col("overall_pass") == True).sum().alias("sites_compliant"),
-            (pl.col("overall_pass") == False).sum().alias("sites_non_compliant"),
-            pl.col("los_pass").is_not_null().sum().alias("sites_assessed_los"),
-            (pl.col("los_pass") == True).sum().alias("sites_compliant_los"),
-            (pl.col("los_pass") == False).sum().alias("sites_non_compliant_los"),
-            pl.col("ov1_pass").is_not_null().sum().alias("sites_assessed_ov1"),
-            (pl.col("ov1_pass") == True).sum().alias("sites_compliant_ov1"),
-            (pl.col("ov1_pass") == False).sum().alias("sites_non_compliant_ov1"),
-            pl.median("los_threshold_used").alias("median_los_threshold_used"),
-        ])
-        .with_columns([
-            (pl.col("sites_total") - pl.col("sites_assessed")).alias("sites_unassessed"),
-            pl.when(pl.col("sites_assessed") > 0)
-            .then(pl.col("sites_compliant") / pl.col("sites_assessed") * 100.0)
-            .otherwise(None)
-            .alias("overall_compliant_pct_of_assessed"),
-            pl.when(pl.col("sites_assessed") > 0)
-            .then(pl.col("sites_non_compliant") / pl.col("sites_assessed") * 100.0)
-            .otherwise(None)
-            .alias("overall_non_compliant_pct_of_assessed"),
-        ])
-        .sort("method_key")
-    )
+        return {"site_comparison": empty}
 
     comparison = (
         phase_b_summary_by_method_df
@@ -212,28 +71,7 @@ def summarize_multi_method_site_outputs(
         )
         .alias("all_methods_unassessed"),
     ])
-    disagreement_sites = comparison.filter(pl.col("any_disagreement") == True)
-
-    if threshold_by_method_df is None or threshold_by_method_df.is_empty():
-        threshold_summary = pl.DataFrame()
-    else:
-        threshold_summary = (
-            threshold_by_method_df
-            .group_by(["method_key", "method_label"])
-            .agg([
-                pl.median("los_anchor_site").alias("median_los_anchor"),
-                pl.median("ov1_anchor_site").alias("median_ov1_anchor"),
-                pl.col("threshold_selection_basis").n_unique().alias("selection_basis_count"),
-            ])
-            .sort("method_key")
-        )
-
-    return {
-        "method_summary": method_summary,
-        "site_comparison": comparison,
-        "disagreement_sites": disagreement_sites,
-        "threshold_summary": threshold_summary,
-    }
+    return {"site_comparison": comparison}
 
 
 def statsLos(complianceLOSResultAll, sitesWithOverVoltage, uniqueLosSites):

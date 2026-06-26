@@ -12,9 +12,12 @@ from checkData import checkDupes
     do not add scripts to inspect data
 '''
 
-RAW_SITE_DATA_PATH = "Nov2022/ebm_1_20221112_20221119_data_processed_sa"
-CLEANED_SITE_DATA_PATH = "Nov2022/ebm_1_20221112_20221119_data_cleaned_sa"
-CIRCUIT_DETAILS_PATH = "Nov2022/ebm_1_20221112_20221119_circuit_details.csv"
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "Nov2022"
+
+RAW_SITE_DATA_PATH = str(DATA_DIR / "ebm_1_20221112_20221119_data_processed_sa")
+CLEANED_SITE_DATA_PATH = str(DATA_DIR / "ebm_1_20221112_20221119_data_cleaned_sa")
+CIRCUIT_DETAILS_PATH = str(DATA_DIR / "ebm_1_20221112_20221119_circuit_details.csv")
 
 def convertPowerToKw(allData, convert=False):
     allData = allData.with_columns((pl.col("power") / (100*1000)).alias("power"))
