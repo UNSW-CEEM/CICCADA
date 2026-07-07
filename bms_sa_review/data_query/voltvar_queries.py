@@ -287,3 +287,122 @@ def fetch_day_data(site_id, date_str, aq_func, database):
         ORDER BY m.t_stamp
     """
     return aq_func(sql, database=database)
+
+# ═════════════════════════════════════════════════════════════
+# Fleet denominators: eligible and all-timestamp context
+# ═════════════════════════════════════════════════════════════
+ 
+def fetch_eligible_context_for_year(year, apply_ghi_filter, params, has_ghi,
+                                    aq_func, database):
+    """
+    Eligible denominator for one year.
+ 
+    Same eligibility conditions as Method A (voltage band, peak-hour,
+    optional GHI clear-sky) but WITHOUT Q < 0 or apparent-power-at-limit
+    filters.  Returns one row per site with interval count and potential
+    generation kWh.
+    """
+    P = params
+    _limit_col = "s_99" if P["USE_S99"] else "ac_capacity_kw"
+ 
+    phase_cte, phase_join, phase_where = _build_phase_fragments(P["PHASE_FILTER"])
+    ghi_join, ghi_filter = _build_ghi_fragments(
+        apply_ghi_filter, has_ghi, P["GHI_CS_RATIO_MIN"]
+    )
+ 
+    sql = f"""
+        WITH site_meta AS (
+            SELECT DISTINCT site_id, circuit_id, circuit_polarity,
+                   ac_capacity_kw, {_limit_col} AS s_limit
+            FROM meta_up23c
+            WHERE is_pv = True
+              AND {_limit_col} > 0
+              AND ac_capacity_kw > 0
+              AND ac_capacity_kw <= {P['MAX_AC_CAPACITY_KW']}
+        ){phase_cte},
+        d AS (
+            SELECT t.circuit_id, t.t_stamp, sm.site_id, t.voltage
+            FROM ts t
+            JOIN site_meta sm ON t.circuit_id = sm.circuit_id
+            {phase_join}
+            WHERE t.year = {year}
+              AND t.is_pv = True
+              AND t.voltage > {P['V_LOW']}
+              AND t.voltage < {P['V_HIGH']}
+              {phase_where}
+        ),
+        site_interval AS (
+            SELECT d.site_id, d.t_stamp, max(d.voltage) AS V_max
+            FROM d
+            {ghi_join}
+            WHERE hour(d.t_stamp + interval '10' hour)
+                  BETWEEN {P['PEAK_HOUR_START']} AND {P['PEAK_HOUR_END']}
+              {ghi_filter}
+            GROUP BY d.site_id, d.t_stamp
+        )
+        SELECT
+            {year} AS year,
+            si.site_id,
+            count(*) AS n_eligible_intervals,
+            round(
+                sum(coalesce(u.uncurtailed_P, 0)) * {AS4777['INTERVAL_H']}, 3
+            ) AS eligible_potential_kWh
+        FROM site_interval si
+        LEFT JOIN all_uncurtailedpv u
+          ON u.site_id = si.site_id AND u.t_stamp = si.t_stamp
+        GROUP BY si.site_id
+    """
+    return aq_func(sql, database=database)
+ 
+ 
+def fetch_all_timestamp_context_for_year(year, params, aq_func, database):
+    """
+    All-timestamp denominator for one year.
+ 
+    Same site/phase/limit filters as Method A but WITHOUT voltage band,
+    peak-hour, GHI, Q, or apparent-power filters.  Represents all observed
+    PV site-timestamps for the comparable fleet in a given year.
+    """
+    P = params
+    _limit_col = "s_99" if P["USE_S99"] else "ac_capacity_kw"
+ 
+    phase_cte, phase_join, phase_where = _build_phase_fragments(P["PHASE_FILTER"])
+ 
+    sql = f"""
+        WITH site_meta AS (
+            SELECT DISTINCT site_id, circuit_id, circuit_polarity,
+                   ac_capacity_kw, {_limit_col} AS s_limit
+            FROM meta_up23c
+            WHERE is_pv = True
+              AND ac_capacity_kw > 0
+              AND ac_capacity_kw <= {P['MAX_AC_CAPACITY_KW']}
+              AND {_limit_col} > 0
+        ){phase_cte},
+        d AS (
+            SELECT t.circuit_id, t.t_stamp, sm.site_id
+            FROM ts t
+            JOIN site_meta sm ON t.circuit_id = sm.circuit_id
+            {phase_join}
+            WHERE t.year = {year}
+              AND t.is_pv = True
+              {phase_where}
+        ),
+        site_interval AS (
+            SELECT d.site_id, d.t_stamp
+            FROM d
+            GROUP BY d.site_id, d.t_stamp
+        )
+        SELECT
+            {year} AS year,
+            si.site_id,
+            count(*) AS n_all_intervals,
+            round(
+                sum(coalesce(u.uncurtailed_P, 0)) * {AS4777['INTERVAL_H']}, 3
+            ) AS all_potential_kWh
+        FROM site_interval si
+        LEFT JOIN all_uncurtailedpv u
+          ON u.site_id = si.site_id AND u.t_stamp = si.t_stamp
+        GROUP BY si.site_id
+    """
+    return aq_func(sql, database=database)
+ 
