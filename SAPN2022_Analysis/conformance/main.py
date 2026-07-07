@@ -6,19 +6,14 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-DATA_DIR = REPO_ROOT / "Nov2022"
-
 import polars as pl
 
 from checkPVBehaviour import (
-    PHASE_B_METHOD_SPECS,
-    CheckPVBehaviour,
     run_phase_a_for_site,
     run_phase_b_for_site,
 )
 from funcs import (
     loadCleanedSiteData,
-    mapCircuitDataToSite,
     ratedCapacityOfPV,
 )
 from plots.plots import (
@@ -26,35 +21,31 @@ from plots.plots import (
     plot_site_threshold_distribution,
     plot_site_threshold_distribution_extremes,
 )
+from prepare_site_day_inputs import (
+    DAY_COVERAGE_THRESHOLD,
+    collect_site_days,
+)
 from summaryStats import (
     summarize_multi_method_site_outputs,
 )
 
 
+DATA_DIR = REPO_ROOT / "Nov2022"
 OUTPUT_DIR = REPO_ROOT / "updated results" / "site_compliance"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 PLOT_DIR = OUTPUT_DIR / "overall_site_plots"
 PLOT_DIR.mkdir(parents=True, exist_ok=True)
 THRESHOLD_PLOT_DIR = OUTPUT_DIR / "threshold_distribution_plots"
 THRESHOLD_PLOT_DIR.mkdir(parents=True, exist_ok=True)
-OV1_PLOT_DIR = OUTPUT_DIR / "ov1_assessed_site_plots"
-OV1_PLOT_DIR.mkdir(parents=True, exist_ok=True)
-DAY_COVERAGE_THRESHOLD = 0.80
 GENERATE_SITE_PLOTS = os.getenv("SITE_COMPLIANCE_SKIP_PLOTS", "0") != "1"
 
-
-def prepare_inputs():
-    site_details = pl.read_csv(DATA_DIR / "ebm_1_20221112_20221119_site_details.csv")
-    circuit_details = pl.read_csv(DATA_DIR / "ebm_1_20221112_20221119_circuit_details.csv")
-
-    all_sites = site_details["site_id"].unique().sort()
-    all_sites_2 = circuit_details["site_id"].unique().sort()
-    if not (all_sites == all_sites_2).all():
-        raise ValueError("Num Sites not Consistent")
-
-    all_data = loadCleanedSiteData()
-
-    return site_details, circuit_details, all_data
+# Available Phase B methods: default, original, tier_based, old_sweep, blended.
+# Keep the primary method in the run list below.
+PRIMARY_PHASE_B_METHOD = "tier_based"
+PHASE_B_METHODS_TO_RUN = ["default", "original", "tier_based", "old_sweep", "blended"]
+PRIMARY_SITE_THRESHOLDS_NAME = f"site_thresholds_{PRIMARY_PHASE_B_METHOD}.csv"
+PRIMARY_PHASE_B_SUMMARY_NAME = f"phase_b_site_summary_{PRIMARY_PHASE_B_METHOD}.csv"
+PRIMARY_PHASE_B_DETAIL_NAME = f"phase_b_timestamp_detail_{PRIMARY_PHASE_B_METHOD}.csv"
 
 
 def build_site_selection_tables(site_details, circuit_details):
@@ -84,42 +75,19 @@ def build_site_selection_tables(site_details, circuit_details):
     return site_metadata_rows, pv_site_net_counts
 
 
-def collect_site_days(site_number, circuit_details, all_data, days_to_check):
-    day_behaviours = []
-    pv_circuits = []
-
-    for day in days_to_check:
-        start_day = pl.datetime(2022, 11, day, 6, 0, 0, time_zone="Australia/Adelaide")
-        end_day = pl.datetime(2022, 11, day, 18, 0, 0, time_zone="Australia/Adelaide")
-
-        has_data, wide, pv_circuit_nos = mapCircuitDataToSite(
-            all_data, circuit_details, site_number, start_day, end_day
-        )
-        if not has_data:
-            continue
-
-        pv_circuits = pv_circuit_nos
-        behaviour = CheckPVBehaviour(wide, volCol="voltage_valid")
-        day_behaviours.append(
-            {
-                "day": day,
-                "behaviour": behaviour,
-                "eligibility": behaviour.day_eligibility_summary(
-                    coverage_threshold=DAY_COVERAGE_THRESHOLD
-                ),
-            }
-        )
-
-    return day_behaviours, pv_circuits
-
-
 def main():
-    site_details, circuit_details, all_data = prepare_inputs()
+    # Load runtime inputs for the conformance run.
+    site_details = pl.read_csv(DATA_DIR / "ebm_1_20221112_20221119_site_details.csv")
+    circuit_details = pl.read_csv(DATA_DIR / "ebm_1_20221112_20221119_circuit_details.csv")
+    all_data = loadCleanedSiteData()
+
+    # Build site-level lookup tables used by the initial filters.
     site_metadata_rows, pv_site_net_counts = build_site_selection_tables(
         site_details, circuit_details
     )
     days_to_check = [13, 14, 15, 16, 17, 19]
 
+    # Keep only sites that appear in both cleaned timeseries data and circuit metadata.
     sites_with_circuit_data = (
         all_data.select("c_id")
         .unique()
@@ -151,6 +119,7 @@ def main():
     excluded_day_rows = []
 
     for idx, site_number in enumerate(sites_with_circuit_data, start=1):
+        # Apply the site-level conformance filters before any day-level work.
         metadata_row_count = site_metadata_rows.get(site_number, 0)
         pv_site_net_count = pv_site_net_counts.get(site_number, 0)
 
@@ -166,14 +135,14 @@ def main():
             skipped_more_than_3.append(site_number)
             continue
 
-        day_behaviours, pv_circuits = collect_site_days(
-            site_number, circuit_details, all_data, days_to_check
-        )
+        # Build the per-day behaviour objects used by Phase A and Phase B.
+        day_behaviours = collect_site_days(site_number, circuit_details, all_data, days_to_check)
 
         if not day_behaviours:
             skipped_no_day_data.append(site_number)
             continue
 
+        # Keep only days that pass the shared day-level coverage gate.
         eligible_day_behaviours = []
         for day_info in day_behaviours:
             day_eligibility = day_info["eligibility"]
@@ -204,68 +173,59 @@ def main():
             day_behaviours=eligible_day_behaviours,
         )
 
+        # Run Phase A once per site to build the candidate threshold inputs.
         phase_a = run_phase_a_for_site(site_number, eligible_day_behaviours, p_rated)
-        thresholds = phase_a["thresholds"]
-        phase_b = run_phase_b_for_site(
-            site_number,
-            eligible_day_behaviours,
-            p_rated,
-            los_threshold=thresholds["los_anchor_site"],
-            los_threshold_p25=thresholds["los_anchor_p25_site"],
-            los_threshold_p10=thresholds["los_anchor_p10_site"],
-            los_threshold_min=thresholds["los_anchor_min_site"],
-            ov1_work_threshold=thresholds["ov1_work_site"],
-        )
-        method_thresholds = phase_a["method_thresholds"]
 
-        threshold_rows.append(phase_a["thresholds_row"])
-        threshold_rows_by_method.extend(phase_a["method_threshold_rows"].values())
         if not phase_a["records"].is_empty():
             phase_a_records.append(phase_a["records"])
         if not phase_a["brackets"].is_empty():
             bracket_rows.append(phase_a["brackets"])
-        phase_b_summary_rows.append(phase_b["summary_row"])
-        if not phase_b["detail"].is_empty():
-            phase_b_detail_rows.append(phase_b["detail"])
 
-        for method_key, method_label in PHASE_B_METHOD_SPECS:
-            if method_key == "tier_based":
-                method_phase_b = phase_b
-            else:
-                method_profile = method_thresholds[method_key]
-                method_phase_b = run_phase_b_for_site(
-                    site_number,
-                    eligible_day_behaviours,
-                    p_rated,
-                    los_threshold=method_profile["los_anchor_site"],
-                    los_threshold_p25=method_profile["los_anchor_p25_site"],
-                    los_threshold_p10=method_profile["los_anchor_p10_site"],
-                    los_threshold_min=method_profile["los_anchor_min_site"],
-                    ov1_work_threshold=method_profile["ov1_work_site"],
-                )
-
+        # Run each selected Phase B method once and keep the configured primary result.
+        primary_phase_b = None
+        for method_key in PHASE_B_METHODS_TO_RUN:
+            method_phase_b = run_phase_b_for_site(
+                site_number,
+                eligible_day_behaviours,
+                p_rated,
+                raw_thresholds=phase_a["raw_thresholds"],
+                confidence_info=phase_a["confidence_info"],
+                phase_b_method=method_key,
+            )
+            threshold_rows_by_method.append(
+                method_phase_b["threshold_row"].with_columns([
+                    pl.lit(method_key).alias("method_key"),
+                ])
+            )
             phase_b_summary_rows_by_method.append(
                 method_phase_b["summary_row"].with_columns([
                     pl.lit(method_key).alias("method_key"),
-                    pl.lit(method_label).alias("method_label"),
                 ])
             )
             if not method_phase_b["detail"].is_empty():
                 phase_b_detail_rows_by_method.append(
                     method_phase_b["detail"].with_columns([
                         pl.lit(method_key).alias("method_key"),
-                        pl.lit(method_label).alias("method_label"),
                     ])
                 )
+            if method_key == PRIMARY_PHASE_B_METHOD:
+                primary_phase_b = method_phase_b
 
-        summary = phase_b["summary_row"].to_dicts()[0]
+        # Use the configured primary method for the main outputs and per-site plots.
+        primary_thresholds = primary_phase_b["threshold_row"].to_dicts()[0]
+        threshold_rows.append(primary_phase_b["threshold_row"])
+        phase_b_summary_rows.append(primary_phase_b["summary_row"])
+        if not primary_phase_b["detail"].is_empty():
+            phase_b_detail_rows.append(primary_phase_b["detail"])
+
+        summary = primary_phase_b["summary_row"].to_dicts()[0]
         if GENERATE_SITE_PLOTS and summary["overall_pass"] is not None:
             plot_folder = "compliant" if summary["overall_pass"] is True else "non_compliant"
             for day_info in eligible_day_behaviours:
                 day_plot = day_info["behaviour"].phase_b_day(
                     p_rated,
                     los_threshold=summary["los_threshold_used"],
-                    ov1_work_threshold=thresholds["ov1_work_site"],
+                    ov1_work_threshold=primary_thresholds["ov1_work_site"],
                 )
                 plot_path = (
                     PLOT_DIR
@@ -278,50 +238,11 @@ def main():
                     day_info["day"],
                     p_rated=p_rated,
                     los_threshold=summary["los_threshold_used"],
-                    los_threshold_p25=thresholds["los_anchor_p25_site"],
-                    los_threshold_p10=thresholds["los_anchor_p10_site"],
-                    los_threshold_min=thresholds["los_anchor_min_site"],
-                    ov1_threshold=thresholds["ov1_test_site"],
-                    delta_los_site=thresholds["delta_los_site"],
-                    delta_los_p25_site=thresholds["delta_los_p25_site"],
-                    delta_los_p10_site=thresholds["delta_los_p10_site"],
-                    delta_los_min_site=thresholds["delta_los_min_site"],
-                    delta_ov1_site=thresholds["delta_ov1_site"],
-                    ov1_basis=thresholds["ov1_basis"],
+                    ov1_threshold=primary_thresholds["ov1_test_site"],
                     overall_pass=summary["overall_pass"],
-                    pass_basis=summary["pass_basis"],
                     day_summary=day_plot["summary"],
                     save_path=plot_path,
                 )
-                if summary["ov1_eligible"] > 0:
-                    ov1_plot_path = (
-                        OV1_PLOT_DIR
-                        / plot_folder
-                        / f"Site_{site_number}_Day_{day_info['day']}_{plot_folder}_ov1_focus.png"
-                    )
-                    plot_site_compliance_day(
-                        day_plot["frame"],
-                        site_number,
-                        day_info["day"],
-                        p_rated=p_rated,
-                        los_threshold=summary["los_threshold_used"],
-                        los_threshold_p25=thresholds["los_anchor_p25_site"],
-                        los_threshold_p10=thresholds["los_anchor_p10_site"],
-                        los_threshold_min=thresholds["los_anchor_min_site"],
-                        ov1_threshold=thresholds["ov1_test_site"],
-                        delta_los_site=thresholds["delta_los_site"],
-                        delta_los_p25_site=thresholds["delta_los_p25_site"],
-                        delta_los_p10_site=thresholds["delta_los_p10_site"],
-                        delta_los_min_site=thresholds["delta_los_min_site"],
-                        delta_ov1_site=thresholds["delta_ov1_site"],
-                        ov1_basis=thresholds["ov1_basis"],
-                        overall_pass=summary["overall_pass"],
-                        pass_basis=summary["pass_basis"],
-                        day_summary=day_plot["summary"],
-                        force_draw_los_threshold=True,
-                        force_draw_ov1_threshold=True,
-                        save_path=ov1_plot_path,
-                    )
 
         print(
             f"[{idx}/{len(sites_with_circuit_data)}] site {site_number} "
@@ -329,6 +250,7 @@ def main():
             f"PASS={summary['overall_pass']}"
         )
 
+    # Write the primary and by-method outputs collected across all assessed sites.
     thresholds_df = pl.concat(threshold_rows, how="vertical") if threshold_rows else pl.DataFrame()
     thresholds_by_method_df = (
         pl.concat(threshold_rows_by_method, how="vertical")
@@ -351,12 +273,12 @@ def main():
         if phase_b_detail_rows_by_method else pl.DataFrame()
     )
 
-    thresholds_df.write_csv(OUTPUT_DIR / "site_thresholds.csv")
+    thresholds_df.write_csv(OUTPUT_DIR / PRIMARY_SITE_THRESHOLDS_NAME)
     thresholds_by_method_df.write_csv(OUTPUT_DIR / "site_thresholds_by_method.csv")
     phase_a_df.write_csv(OUTPUT_DIR / "phase_a_trip_attribution.csv")
     brackets_df.write_csv(OUTPUT_DIR / "phase_a_brackets.csv")
-    phase_b_summary_df.write_csv(OUTPUT_DIR / "phase_b_site_summary.csv")
-    phase_b_detail_df.write_csv(OUTPUT_DIR / "phase_b_timestamp_detail.csv")
+    phase_b_summary_df.write_csv(OUTPUT_DIR / PRIMARY_PHASE_B_SUMMARY_NAME)
+    phase_b_detail_df.write_csv(OUTPUT_DIR / PRIMARY_PHASE_B_DETAIL_NAME)
     phase_b_summary_by_method_df.write_csv(OUTPUT_DIR / "phase_b_site_summary_by_method.csv")
     phase_b_detail_by_method_df.write_csv(OUTPUT_DIR / "phase_b_timestamp_detail_by_method.csv")
     excluded_site_days_df = (
@@ -380,6 +302,7 @@ def main():
     )
     excluded_site_days_df.write_csv(OUTPUT_DIR / "excluded_site_days.csv")
 
+    # Export the summary tables used by downstream inspection and plotting scripts.
     if not phase_b_summary_df.is_empty():
         assessed_overall = phase_b_summary_df.filter(pl.col("overall_pass").is_not_null())
         assessed_overall.write_csv(OUTPUT_DIR / "assessed_sites_overall.csv")

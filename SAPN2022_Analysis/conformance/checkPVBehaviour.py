@@ -4,14 +4,6 @@ import polars as pl
 from neverReconnectedEvents import analyze_never_reconnected_events
 
 
-PHASE_B_METHOD_SPECS = (
-    ("default", "Default"),
-    ("original", "Original"),
-    ("tier_based", "Tier based"),
-    ("old_sweep", "Old sweep"),
-    ("blended", "Blended"),
-)
-
 class CheckPVBehaviour:
     def __init__(self, circuitData, volCol = None, minSamplesPercentage = None,
                  timeWindowForClassification = 60, vDrop = None, powerMeasError = None,
@@ -1263,7 +1255,7 @@ def _evaluate_phase_b_profile_for_selection(
     *,
     tau=0.3,
 ):
-    phase_b = run_phase_b_for_site(
+    phase_b = _run_phase_b_with_thresholds(
         site_id,
         day_behaviours,
         PRated,
@@ -1428,55 +1420,6 @@ def _select_legacy_sweep_threshold_profile_for_phase_b(
     return _profile_with_selection_metadata(best_profile, best_basis, best_score)
 
 
-def _build_method_threshold_profiles_for_phase_b(
-    site_id,
-    day_behaviours,
-    PRated,
-    raw_thresholds,
-    confidence_info,
-    *,
-    tau=0.3,
-    ov1_floor_offset=0.5,
-):
-    return {
-        "default": _profile_with_selection_metadata(
-            _default_threshold_profile(tau=tau, ov1_floor_offset=ov1_floor_offset),
-            "default",
-        ),
-        "original": _profile_with_selection_metadata(
-            _raw_threshold_profile(raw_thresholds, tau=tau, ov1_floor_offset=ov1_floor_offset),
-            "original",
-        ),
-        "tier_based": _select_confidence_threshold_profile_for_phase_b(
-            site_id,
-            day_behaviours,
-            PRated,
-            raw_thresholds,
-            confidence_info,
-            high_profile_name="learned",
-            tau=tau,
-            ov1_floor_offset=ov1_floor_offset,
-        ),
-        "old_sweep": _select_legacy_sweep_threshold_profile_for_phase_b(
-            site_id,
-            day_behaviours,
-            PRated,
-            tau=tau,
-            ov1_floor_offset=ov1_floor_offset,
-        ),
-        "blended": _select_confidence_threshold_profile_for_phase_b(
-            site_id,
-            day_behaviours,
-            PRated,
-            raw_thresholds,
-            confidence_info,
-            high_profile_name="blended",
-            tau=tau,
-            ov1_floor_offset=ov1_floor_offset,
-        ),
-    }
-
-
 def _thresholds_row_from_threshold_dict(
     site_id,
     thresholds,
@@ -1484,7 +1427,6 @@ def _thresholds_row_from_threshold_dict(
     confidence_info,
     *,
     method_key=None,
-    method_label=None,
 ):
     row = {
         "site_id": site_id,
@@ -1532,8 +1474,6 @@ def _thresholds_row_from_threshold_dict(
     }
     if method_key is not None:
         row["method_key"] = method_key
-    if method_label is not None:
-        row["method_label"] = method_label
 
     return (
         pl.DataFrame([row])
@@ -1581,7 +1521,6 @@ def _thresholds_row_from_threshold_dict(
             pl.col("selection_score_min_pct").cast(pl.Float64),
             pl.col("selection_score_mean_pct").cast(pl.Float64),
             *([pl.col("method_key").cast(pl.Utf8)] if method_key is not None else []),
-            *([pl.col("method_label").cast(pl.Utf8)] if method_label is not None else []),
         ])
     )
 
@@ -1698,49 +1637,6 @@ def run_phase_a_for_site(
     Run Phase A across all available days for one site and learn site thresholds
     from the disconnect-edge records.
     """
-    thresholds = {
-        "los_anchor_site": 258.0,
-        "los_anchor_p25_site": 258.0,
-        "los_anchor_p10_site": 258.0,
-        "los_anchor_min_site": 258.0,
-        "ov1_anchor_site": 265.0,
-        "ov1_work_site": 265.0,
-        "ov1_floor_site": 264.5,
-        "ov1_test_site": 264.7,
-        "delta_los_site": None,
-        "delta_los_p25_site": None,
-        "delta_los_p10_site": None,
-        "delta_los_min_site": None,
-        "delta_ov1_site": None,
-        "delta_gap_v": None,
-        "ov1_basis": "default",
-        "ov1_event_count": 0,
-        "ov1_reclassified_count": 0,
-        "los_removed_by_ov1_count": 0,
-        "raw_delta_los_site": None,
-        "raw_delta_los_p25_site": None,
-        "raw_delta_los_p10_site": None,
-        "raw_delta_los_min_site": None,
-        "raw_delta_ov1_site": None,
-        "raw_los_anchor_site": 258.0,
-        "raw_los_anchor_p25_site": 258.0,
-        "raw_los_anchor_p10_site": 258.0,
-        "raw_los_anchor_min_site": 258.0,
-        "raw_ov1_anchor_site": 265.0,
-        "raw_ov1_basis": "default",
-        "raw_delta_gap_v": None,
-        "threshold_confidence_tier": "low",
-        "confidence_primary_mech": None,
-        "confidence_event_count": 0,
-        "confidence_drop20_count": 0,
-        "confidence_drop10_count": 0,
-        "confidence_spread_v": None,
-        "threshold_selection_basis": "low_default",
-        "selection_score_rank": None,
-        "selection_score_min_pct": None,
-        "selection_score_mean_pct": None,
-    }
-
     last_records = pl.DataFrame()
     last_brackets = pl.DataFrame()
     phase_a_days = []
@@ -1767,69 +1663,71 @@ def run_phase_a_for_site(
         ov1_floor_offset=delta_lower_daily_cap,
     )
     confidence_info = _threshold_confidence_from_records(last_records)
-    method_thresholds = _build_method_threshold_profiles_for_phase_b(
-        site_id,
-        day_behaviours,
-        PRated,
-        raw_thresholds,
-        confidence_info,
-        tau=tau,
-        ov1_floor_offset=delta_lower_daily_cap,
-    )
-    selected_thresholds = method_thresholds["tier_based"]
-    thresholds = {
-        **thresholds,
-        **selected_thresholds,
-        **confidence_info,
-        "raw_delta_los_site": raw_thresholds["delta_los_site"],
-        "raw_delta_los_p25_site": raw_thresholds["delta_los_p25_site"],
-        "raw_delta_los_p10_site": raw_thresholds["delta_los_p10_site"],
-        "raw_delta_los_min_site": raw_thresholds["delta_los_min_site"],
-        "raw_delta_ov1_site": raw_thresholds["delta_ov1_site"],
-        "raw_los_anchor_site": raw_thresholds["los_anchor_site"],
-        "raw_los_anchor_p25_site": raw_thresholds["los_anchor_p25_site"],
-        "raw_los_anchor_p10_site": raw_thresholds["los_anchor_p10_site"],
-        "raw_los_anchor_min_site": raw_thresholds["los_anchor_min_site"],
-        "raw_ov1_anchor_site": raw_thresholds["ov1_anchor_site"],
-        "raw_ov1_basis": raw_thresholds["ov1_basis"],
-        "raw_delta_gap_v": raw_thresholds["delta_gap_v"],
-        "ov1_event_count": raw_thresholds["ov1_event_count"],
-        "ov1_reclassified_count": raw_thresholds["ov1_reclassified_count"],
-        "los_removed_by_ov1_count": raw_thresholds["los_removed_by_ov1_count"],
-    }
-    thresholds_row = _thresholds_row_from_threshold_dict(
-        site_id,
-        thresholds,
-        raw_thresholds,
-        confidence_info,
-    )
-    method_threshold_rows = {
-        method_key: _thresholds_row_from_threshold_dict(
-            site_id,
-            method_thresholds[method_key],
-            raw_thresholds,
-            confidence_info,
-            method_key=method_key,
-            method_label=method_label,
-        )
-        for method_key, method_label in PHASE_B_METHOD_SPECS
-        if method_key in method_thresholds
-    }
 
     return {
-        "thresholds": thresholds,
-        "thresholds_row": thresholds_row,
         "raw_thresholds": raw_thresholds,
         "confidence_info": confidence_info,
-        "method_thresholds": method_thresholds,
-        "method_threshold_rows": method_threshold_rows,
         "records": last_records,
         "brackets": last_brackets,
         "day_outputs": phase_a_days,
     }
 
 
-def run_phase_b_for_site(
+def _select_phase_b_threshold_profile_for_method(
+    site_id,
+    day_behaviours,
+    PRated,
+    raw_thresholds,
+    confidence_info,
+    *,
+    phase_b_method="tier_based",
+    tau=0.3,
+    ov1_floor_offset=0.5,
+):
+    if phase_b_method == "default":
+        return _profile_with_selection_metadata(
+            _default_threshold_profile(tau=tau, ov1_floor_offset=ov1_floor_offset),
+            "default",
+        )
+    if phase_b_method == "original":
+        return _profile_with_selection_metadata(
+            _raw_threshold_profile(raw_thresholds, tau=tau, ov1_floor_offset=ov1_floor_offset),
+            "original",
+        )
+    if phase_b_method == "tier_based":
+        return _select_confidence_threshold_profile_for_phase_b(
+            site_id,
+            day_behaviours,
+            PRated,
+            raw_thresholds,
+            confidence_info,
+            high_profile_name="learned",
+            tau=tau,
+            ov1_floor_offset=ov1_floor_offset,
+        )
+    if phase_b_method == "old_sweep":
+        return _select_legacy_sweep_threshold_profile_for_phase_b(
+            site_id,
+            day_behaviours,
+            PRated,
+            tau=tau,
+            ov1_floor_offset=ov1_floor_offset,
+        )
+    if phase_b_method == "blended":
+        return _select_confidence_threshold_profile_for_phase_b(
+            site_id,
+            day_behaviours,
+            PRated,
+            raw_thresholds,
+            confidence_info,
+            high_profile_name="blended",
+            tau=tau,
+            ov1_floor_offset=ov1_floor_offset,
+        )
+    raise KeyError(f"Unknown Phase B method: {phase_b_method}")
+
+
+def _run_phase_b_with_thresholds(
     site_id,
     day_behaviours,
     PRated,
@@ -1986,6 +1884,59 @@ def run_phase_b_for_site(
     )
 
     return {"detail": chosen_result["detail"], "summary_row": summary_row}
+
+
+def run_phase_b_for_site(
+    site_id,
+    day_behaviours,
+    PRated,
+    *,
+    raw_thresholds,
+    confidence_info,
+    phase_b_method="tier_based",
+    tau=0.3,
+    compliance_threshold_pct=90.0,
+    ov1_floor_offset=None,
+):
+    """
+    Run Phase B for one selected method using the thresholds learned in Phase A.
+    """
+    if ov1_floor_offset is None:
+        ov1_floor_offset = float(raw_thresholds["ov1_anchor_site"]) - float(raw_thresholds["ov1_floor_site"])
+
+    selected_thresholds = _select_phase_b_threshold_profile_for_method(
+        site_id,
+        day_behaviours,
+        PRated,
+        raw_thresholds,
+        confidence_info,
+        phase_b_method=phase_b_method,
+        tau=tau,
+        ov1_floor_offset=ov1_floor_offset,
+    )
+    threshold_row = _thresholds_row_from_threshold_dict(
+        site_id,
+        selected_thresholds,
+        raw_thresholds,
+        confidence_info,
+    )
+    phase_b = _run_phase_b_with_thresholds(
+        site_id,
+        day_behaviours,
+        PRated,
+        los_threshold=selected_thresholds["los_anchor_site"],
+        los_threshold_p25=selected_thresholds["los_anchor_p25_site"],
+        los_threshold_p10=selected_thresholds["los_anchor_p10_site"],
+        los_threshold_min=selected_thresholds["los_anchor_min_site"],
+        ov1_work_threshold=selected_thresholds["ov1_work_site"],
+        tau=tau,
+        compliance_threshold_pct=compliance_threshold_pct,
+    )
+    return {
+        "detail": phase_b["detail"],
+        "summary_row": phase_b["summary_row"],
+        "threshold_row": threshold_row,
+    }
 
 
 def check_vw_endpoints(

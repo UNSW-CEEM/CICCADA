@@ -485,14 +485,6 @@ def site_day_voltage_stats(df_events: pl.DataFrame) -> tuple[pl.DataFrame, pl.Da
                            - 'rec_after_stats (min,max,median,std,counts)'
                          Each struct has fields: min, max, median, std, counts
     """
-    # Helper: derive event_date
-    def add_event_date(df: pl.DataFrame) -> pl.DataFrame:
-        return df.with_columns(pl.col("t_last_event").dt.date().alias("event_date"))
-
-    # Helper for list-robust explode
-    def ensure_list(col: str) -> pl.Expr:
-        return pl.when(pl.col(col).is_null()).then(pl.lit([])).otherwise(pl.col(col))
-
     df = add_event_date(df_events)
 
     # ---------- Disconnection: first per event ----------
@@ -692,10 +684,6 @@ def site_voltage_stats(df_events: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFr
         'rec_after_stats (min,max,median,std,counts)'
       Each struct contains fields: min, max, median, std, counts
     """
-    # Helper: robust list
-    def ensure_list(col: str) -> pl.Expr:
-        return pl.when(pl.col(col).is_null()).then(pl.lit([])).otherwise(pl.col(col))
-
     # ---------- Disconnection: first per event ----------
     disc_first = (
         df_events

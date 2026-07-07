@@ -9,14 +9,14 @@ This script produces two reporting tables:
 
 Inputs come from three places:
 
-- ``phase_b_site_summary.csv`` for the assessed site list and the final
+- ``phase_b_site_summary_tier_based.csv`` for the assessed site list and the final
   ``los_threshold_used`` chosen by the Phase B LOS override ladder
-- ``site_thresholds.csv`` for ``ov1_work_site`` because the Phase B summary does
+- ``site_thresholds_tier_based.csv`` for ``ov1_work_site`` because the Phase B summary does
   not repeat the fixed OV1 threshold value
 - the cleaned metrology parquet plus ``circuit_details.csv`` so site-level
   power and voltage can be rebuilt from the underlying circuit data
 
-Important difference from ``phase_b_timestamp_detail.csv``:
+Important difference from ``phase_b_timestamp_detail_tier_based.csv``:
 
 - this script does *not* read that file
 - it rebuilds the timestamp flags directly from cleaned metrology
@@ -42,8 +42,8 @@ from funcs import (
 )
 
 
-PHASE_B_SUMMARY_PATH = Path("updated results/site_compliance/phase_b_site_summary.csv")
-SITE_THRESHOLDS_PATH = Path("updated results/site_compliance/site_thresholds.csv")
+PHASE_B_SUMMARY_PATH = Path("updated results/site_compliance/phase_b_site_summary_tier_based.csv")
+SITE_THRESHOLDS_PATH = Path("updated results/site_compliance/site_thresholds_tier_based.csv")
 CIRCUIT_DETAILS_PATH = Path("Nov2022/ebm_1_20221112_20221119_circuit_details.csv")
 CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH # this is the cleaned circuit data parquet
 OUTPUT_DIR = Path("updated results/phase b info for curtailment/tier based")

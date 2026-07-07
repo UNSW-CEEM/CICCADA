@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import MultipleLocator
+from matplotlib.patches import Patch
 from pathlib import Path
 import datetime as dt
 import zoneinfo
@@ -8,27 +9,72 @@ import polars as pl
 import numpy as np
 from helperFuncs import split_nonmixed_groups
 
-METHOD_DISPLAY_LABEL_MAP = {
-    "Default thresholds": "Default",
-    "Original Phase A raw": "Original",
-    "Current confidence-tier": "Tier based",
-    "Old sweep method": "Old sweep",
-    "High -> blended": "Blended",
-    "default": "Default",
-    "original_raw": "Original",
-    "original": "Original",
-    "confidence_tier": "Tier based",
-    "tier_based": "Tier based",
-    "old_sweep": "Old sweep",
-    "high_blended": "Blended",
-    "blended": "Blended",
+PLOT_COLORS = {
+    "power_total": "#2e7d32",
+    "power_channels": ["#2e7d32", "#2e7d32", "#2e7d32", "#2e7d32"],
+    "voltage_inst": "#b45309",
+    "voltage_avg": "#1a1a1a",
+    "threshold_los": "#1a1a1a",
+    "threshold_ov1": "#c62828",
+    "grid": "#ebebeb",
+    "shade": "#7c3aed",
 }
 
 
-def _normalize_method_display_label(method_label):
-    if method_label is None:
-        return None
-    return METHOD_DISPLAY_LABEL_MAP.get(method_label, method_label)
+def _true_mask_spans(timestamps, mask):
+    if not timestamps or not mask or len(timestamps) != len(mask):
+        return []
+
+    if len(timestamps) == 1:
+        half_width = dt.timedelta(seconds=2.5)
+        if mask[0]:
+            return [(timestamps[0] - half_width, timestamps[0] + half_width)]
+        return []
+
+    boundaries = [timestamps[0] - ((timestamps[1] - timestamps[0]) / 2)]
+    for idx in range(1, len(timestamps)):
+        boundaries.append(timestamps[idx - 1] + ((timestamps[idx] - timestamps[idx - 1]) / 2))
+    boundaries.append(timestamps[-1] + ((timestamps[-1] - timestamps[-2]) / 2))
+
+    spans = []
+    run_start = None
+    for idx, is_active in enumerate(mask):
+        if is_active and run_start is None:
+            run_start = idx
+        if run_start is not None and (not is_active or idx == len(mask) - 1):
+            run_end = idx if is_active and idx == len(mask) - 1 else idx - 1
+            spans.append((boundaries[run_start], boundaries[run_end + 1]))
+            run_start = None
+    return spans
+
+
+def _power_trace_label(power_cols, idx=None):
+    if len(power_cols) == 1:
+        return "Power"
+    if idx is None:
+        return "Power"
+    return f"Power {idx}"
+
+
+def _format_plot_date(day_label):
+    try:
+        return dt.date(2022, 11, int(day_label)).strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return str(day_label)
+
+
+def _day_status_label(day_compliant_ts, day_eligible_ts, threshold_pct=90.0):
+    if day_eligible_ts is None or day_compliant_ts is None:
+        return "unassessed", None
+
+    day_eligible_ts = int(day_eligible_ts)
+    day_compliant_ts = int(day_compliant_ts)
+    if day_eligible_ts <= 0:
+        return "unassessed", None
+
+    day_pct = (float(day_compliant_ts) / float(day_eligible_ts)) * 100.0
+    day_status = "conformant" if day_pct >= threshold_pct else "non-conformant"
+    return day_status, day_pct
 
 # LOS Plots
 def plotLosDataForSite(df, siteNumber, tz_name="Australia/Adelaide", 
@@ -290,41 +336,18 @@ def plot_site_compliance_day(
     *,
     p_rated: float,
     los_threshold: float | None,
-    los_threshold_p25: float | None = None,
-    los_threshold_p10: float | None = None,
-    los_threshold_min: float | None = None,
     ov1_threshold: float | None,
-    delta_los_site: float | None,
-    delta_los_p25_site: float | None = None,
-    delta_los_p10_site: float | None = None,
-    delta_los_min_site: float | None = None,
-    delta_ov1_site: float | None,
-    ov1_basis: str | None = None,
     overall_pass,
-    pass_basis: str | None = None,
     day_summary: dict | None = None,
-    force_draw_los_threshold: bool = False,
-    force_draw_ov1_threshold: bool = False,
-    compliance_threshold_pct: float = 90.0,
-    tz_name: str = "Australia/Adelaide",
-    method_label: str | None = None,
     save_path: str | Path | None = None,
 ):
     """
-    Plot a site-day using the combined compliance view:
-      - top: per-channel power + site voltages
-      - bottom: total site power + site voltages
-    Voltage overlays:
-      - V10m,avg
-      - Vinst,max
-      - LOS threshold used for Phase B
-      - OV1 threshold used for Phase B
-      - if neither threshold is learned, show default/fallback tested references
+    Plot a single site-day using a shared two-panel compliance layout.
     """
     if df.is_empty():
         return
 
-    tz = zoneinfo.ZoneInfo(tz_name)
+    tz = zoneinfo.ZoneInfo("Australia/Adelaide")
     power_cols = [
         c for c in df.columns
         if c.startswith("power")
@@ -341,76 +364,118 @@ def plot_site_compliance_day(
     x = plot_df["local_tstamp"].to_list()
     v10m_vals = plot_df["v10m_avg"].to_list() if "v10m_avg" in plot_df.columns else [None] * plot_df.height
     vinst_vals = plot_df["vinst_max"].to_list() if "vinst_max" in plot_df.columns else [None] * plot_df.height
+    event_active = None
+    if {"los_responsible", "ov1_responsible"}.issubset(set(plot_df.columns)):
+        event_active = (
+            plot_df["los_responsible"].fill_null(False).cast(pl.Boolean)
+            | plot_df["ov1_responsible"].fill_null(False).cast(pl.Boolean)
+        ).to_numpy()
+    is_single_phase = len(power_cols) == 1
 
-    fig, (ax_top, ax_bottom) = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
+    if is_single_phase:
+        fig, ax_main = plt.subplots(1, 1, figsize=(14, 5.5), sharex=True)
+        plot_power_axes = [ax_main]
+        voltage_axes = [ax_main.twinx()]
+        title_axis = ax_main
+        bottom_axis = ax_main
+    else:
+        fig, (ax_top, ax_bottom) = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
+        plot_power_axes = [ax_top, ax_bottom]
+        voltage_axes = [ax_top.twinx(), ax_bottom.twinx()]
+        title_axis = ax_top
+        bottom_axis = ax_bottom
+    fig.patch.set_facecolor("white")
 
-    ax_top_v = ax_top.twinx()
-    ax_bottom_v = ax_bottom.twinx()
+    for axis in plot_power_axes:
+        axis.set_facecolor("white")
+        if event_active is not None and bool(np.any(event_active)):
+            axis.fill_between(
+                x,
+                0,
+                1,
+                where=event_active,
+                transform=axis.get_xaxis_transform(),
+                color=PLOT_COLORS["shade"],
+                alpha=0.18,
+                zorder=0,
+                linewidth=0,
+            )
 
-    for idx, power_col in enumerate(power_cols, start=1):
-        ax_top.plot(x, plot_df[power_col].to_list(), linewidth=1.4, label=f"Power {idx}")
+    if is_single_phase:
+        ax_main.plot(
+            x,
+            plot_df[power_cols[0]].to_list(),
+            color=PLOT_COLORS["power_channels"][0],
+            linewidth=1.25,
+            alpha=0.95,
+            zorder=4,
+            label=_power_trace_label(power_cols),
+        )
+    else:
+        for idx, power_col in enumerate(power_cols, start=1):
+            ax_top.plot(
+                x,
+                plot_df[power_col].to_list(),
+                color=PLOT_COLORS["power_channels"][(idx - 1) % len(PLOT_COLORS["power_channels"])],
+                linewidth=1.25,
+                alpha=0.95,
+                zorder=4,
+                label=_power_trace_label(power_cols, idx),
+            )
 
-    ax_bottom.plot(x, plot_df["site_power"].to_list(), color="tab:blue", linewidth=1.8, label="Total Power")
+        ax_bottom.plot(
+            x,
+            plot_df["site_power"].to_list(),
+            color=PLOT_COLORS["power_total"],
+            linewidth=2.2,
+            zorder=4,
+            label="Total Power",
+        )
 
-    for v_ax in [ax_top_v, ax_bottom_v]:
+    for v_ax in voltage_axes:
         v_ax.plot(
             x,
             vinst_vals,
-            color="tab:red",
+            color=PLOT_COLORS["voltage_inst"],
             linestyle="-",
-            linewidth=0.9,
-            alpha=0.55,
+            linewidth=1.2,
+            alpha=0.85,
             zorder=2,
-            label="Vinst,max",
+            label="Vinst(max)",
         )
         v_ax.plot(
             x,
             v10m_vals,
-            color="#111111",
+            color=PLOT_COLORS["voltage_avg"],
             linestyle="--",
-            linewidth=2.1,
+            linewidth=1.9,
             zorder=3,
-            label="V10m,avg",
+            label="V10m rolling avg",
         )
 
     thresholds_to_draw = []
-    if los_threshold is not None and (delta_los_site is not None or force_draw_los_threshold):
-        if pass_basis == "min_override":
-            los_label = "LOS threshold (min override)"
-        elif pass_basis == "p10_override":
-            los_label = "LOS threshold (p10 override)"
-        elif pass_basis == "p25_override":
-            los_label = "LOS threshold (p25 override)"
-        elif delta_los_site is not None:
-            los_label = "LOS threshold"
-        else:
-            los_label = "LOS ref 258 V (default)"
-        if "258 V" not in los_label:
-            los_label = f"{los_label} ({float(los_threshold):.3f} V)"
-        thresholds_to_draw.append((los_label, los_threshold, "#2ca02c", ":"))
-    if ov1_threshold is not None and (delta_ov1_site is not None or force_draw_ov1_threshold):
-        if ov1_basis == "ov1_records":
-            ov1_label = "OV1 threshold (tested)"
-        elif ov1_basis == "blended":
-            ov1_label = "OV1 threshold (blended, tested)"
-        elif ov1_basis == "los_fallback":
-            ov1_label = "OV1 threshold (LOS fallback, tested)"
-        else:
-            ov1_label = "OV1 threshold (default, tested)"
-        thresholds_to_draw.append((ov1_label, ov1_threshold, "#ff7f0e", "-."))
-    if not thresholds_to_draw:
-        thresholds_to_draw = [
-            ("LOS ref 258 V (no Phase A threshold)", 258.0, "#2ca02c", ":"),
-            ("OV1 threshold (default, tested)", 264.7, "#ff7f0e", "-."),
-        ]
+    if los_threshold is not None:
+        thresholds_to_draw.append((
+            f"LOS threshold: {float(los_threshold):.1f} V",
+            los_threshold,
+            PLOT_COLORS["threshold_los"],
+            ":",
+        ))
+    if ov1_threshold is not None:
+        thresholds_to_draw.append((
+            f"OV1 threshold: {float(ov1_threshold):.1f} V",
+            ov1_threshold,
+            PLOT_COLORS["threshold_ov1"],
+            "-.",
+        ))
 
-    for v_ax in [ax_top_v, ax_bottom_v]:
+    for v_ax in voltage_axes:
         for label, value, color, style in thresholds_to_draw:
-            v_ax.axhline(value, color=color, linestyle=style, linewidth=1.4, alpha=0.9, label=label)
+            v_ax.axhline(value, color=color, linestyle=style, linewidth=1.5, alpha=0.95, label=label)
 
     overall_label = (
-        "Compliant" if overall_pass is True else
-        "Non-compliant" if overall_pass is False else
+        "Conformant" if overall_pass is True else
+        "Non-conformant" if overall_pass is False else
         "Unassessed"
     )
     if day_summary is None:
@@ -423,35 +488,34 @@ def plot_site_compliance_day(
         total_eligible = los_eligible + ov1_eligible
         total_compliant = los_compliant + ov1_compliant
         if total_eligible == 0:
-            day_label_text = "Day: no eligible timestamps"
+            day_label_text = "No eligible timestamps"
         else:
             day_pct = (total_compliant / total_eligible) * 100.0
-            day_is_compliant = day_pct >= compliance_threshold_pct
-            day_pct_text = f"{day_pct:.1f}%"
-            if day_is_compliant:
-                day_label_text = (
-                    f"Day: compliant "
-                    f"({day_pct_text}; LOS {los_compliant}/{los_eligible}, OV1 {ov1_compliant}/{ov1_eligible})"
-                )
-            else:
-                day_label_text = (
-                    f"Day: non-compliant "
-                    f"({day_pct_text}; LOS {los_compliant}/{los_eligible}, OV1 {ov1_compliant}/{ov1_eligible})"
-                )
+            day_state = "Day pass" if day_pct >= 90.0 else "Day fail"
+            day_label_text = (
+                f"{day_state} {day_pct:.1f}% | LOS {los_compliant}/{los_eligible} | "
+                f"OV1 {ov1_compliant}/{ov1_eligible}"
+            )
 
-    basis_text = "" if pass_basis in (None, "median", "unassessed") else f" | Basis: {pass_basis}"
-    method_label = _normalize_method_display_label(method_label)
-    method_text = "" if not method_label else f" | Method: {method_label}"
-    title = f"Site: {site_number} Day: {day_label} — Site overall: {overall_label}{basis_text}{method_text} | {day_label_text}"
+    plot_date = _format_plot_date(day_label)
+    title = f"Site example | Date: {plot_date} | {overall_label}"
+    if day_label_text:
+        title = f"{title}\n{day_label_text}"
 
-    ax_top.set_title(title)
-    ax_top.set_ylabel("Per-channel Power (kW)")
-    ax_bottom.set_ylabel("Total Power (kW)")
-    ax_bottom.set_xlabel("Time")
+    title_axis.set_title(title, pad=12)
+    if is_single_phase:
+        ax_main.set_ylabel("Power (kW)")
+        ax_main.set_xlabel("Time")
+    else:
+        ax_top.set_ylabel("Per-channel Power (kW)")
+        ax_bottom.set_ylabel("Total Power (kW)")
+        ax_bottom.set_xlabel("Time")
 
-    for p_ax in [ax_top, ax_bottom]:
+    for p_ax in plot_power_axes:
         p_ax.set_ylim(0, max(0.1, float(p_rated)))
-        p_ax.grid(True, alpha=0.25)
+        p_ax.grid(True, color=PLOT_COLORS["grid"], linewidth=0.8, alpha=0.9)
+        p_ax.spines["top"].set_visible(False)
+        p_ax.spines["right"].set_visible(False)
 
     all_voltage_vals = [v for v in [*v10m_vals, *vinst_vals] if v is not None]
     for _, value, _, _ in thresholds_to_draw:
@@ -463,31 +527,46 @@ def plot_site_compliance_day(
     else:
         v_min, v_max = 248.0, 268.0
 
-    for v_ax in [ax_top_v, ax_bottom_v]:
+    for v_ax in voltage_axes:
         v_ax.set_ylabel("Voltage (V)")
         v_ax.set_ylim(v_min, v_max)
         v_ax.yaxis.set_major_locator(MultipleLocator(2.0))
         v_ax.yaxis.set_minor_locator(MultipleLocator(1.0))
-        v_ax.grid(True, which="major", axis="y", alpha=0.18)
+        v_ax.grid(True, which="major", axis="y", color=PLOT_COLORS["grid"], alpha=0.35)
+        v_ax.spines["top"].set_visible(False)
 
     day_start = dt.datetime(2022, 11, int(day_label), 6, 0, 0, tzinfo=tz)
     day_end = dt.datetime(2022, 11, int(day_label), 18, 0, 0, tzinfo=tz)
-    ax_bottom.set_xlim(day_start, day_end)
-    ax_bottom.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 30], tz=tz))
-    ax_bottom.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=tz))
+    bottom_axis.set_xlim(day_start, day_end)
+    bottom_axis.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 30], tz=tz))
+    bottom_axis.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=tz))
 
-    top_lines, top_labels = ax_top.get_legend_handles_labels()
-    top_v_lines, top_v_labels = ax_top_v.get_legend_handles_labels()
-    ax_top.legend(top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2)
+    if is_single_phase:
+        lines, labels = ax_main.get_legend_handles_labels()
+        v_lines, v_labels = voltage_axes[0].get_legend_handles_labels()
+        if event_active is not None and bool(np.any(event_active)):
+            v_lines = v_lines + [Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")]
+            v_labels = v_labels + ["EVM event"]
+        ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
+    else:
+        top_lines, top_labels = ax_top.get_legend_handles_labels()
+        top_v_lines, top_v_labels = voltage_axes[0].get_legend_handles_labels()
+        if event_active is not None and bool(np.any(event_active)):
+            top_v_lines = top_v_lines + [Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")]
+            top_v_labels = top_v_labels + ["EVM event"]
+        ax_top.legend(top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2)
 
-    bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
-    bottom_v_lines, bottom_v_labels = ax_bottom_v.get_legend_handles_labels()
-    ax_bottom.legend(
-        bottom_lines + bottom_v_lines,
-        bottom_labels + bottom_v_labels,
-        loc="upper left",
-        ncol=2,
-    )
+        bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
+        bottom_v_lines, bottom_v_labels = voltage_axes[1].get_legend_handles_labels()
+        if event_active is not None and bool(np.any(event_active)):
+            bottom_v_lines = bottom_v_lines + [Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")]
+            bottom_v_labels = bottom_v_labels + ["EVM event"]
+        ax_bottom.legend(
+            bottom_lines + bottom_v_lines,
+            bottom_labels + bottom_v_labels,
+            loc="upper left",
+            ncol=2,
+        )
 
     fig.autofmt_xdate()
     plt.tight_layout()
@@ -502,19 +581,21 @@ def plot_site_compliance_day(
         plt.close(fig)
 
 
-def plot_three_method_threshold_overlay_day(
+def plot_method_threshold_overlay_day(
     df: pl.DataFrame,
     site_number,
     day_label,
     *,
     p_rated: float,
     method_thresholds: list[dict],
+    method_event_overlays: list[dict] | None = None,
+    comparison_event_mask: list[bool] | None = None,
     tz_name: str = "Australia/Adelaide",
     save_path: str | Path | None = None,
 ):
     """
-    Plot a site-day using the standard two-panel compliance style, but overlay
-    LOS thresholds for multiple methods on the same voltage axis.
+    Plot a site-day using the comparison overlay layout and multi-method LOS
+    thresholds on the same voltage axis.
 
     Expected method_thresholds entries:
       - label
@@ -553,25 +634,101 @@ def plot_three_method_threshold_overlay_day(
         [None] * plot_df.height
     )
 
-    fig, (ax_top, ax_bottom) = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
-    ax_top_v = ax_top.twinx()
-    ax_bottom_v = ax_bottom.twinx()
+    overlay_spans = []
+    if method_event_overlays is not None:
+        for overlay_info in method_event_overlays:
+            event_mask = overlay_info.get("event_mask")
+            if event_mask is None:
+                continue
+            if len(event_mask) != len(x):
+                raise ValueError("method_event_overlays mask length does not match plot frame length")
+            event_spans = _true_mask_spans(x, event_mask)
+            if not event_spans:
+                continue
+            overlay_spans.append({
+                "label": overlay_info.get("label", "Method"),
+                "color": overlay_info.get("color", PLOT_COLORS["shade"]),
+                "alpha": float(overlay_info.get("alpha", 0.12)),
+                "spans": event_spans,
+            })
+    else:
+        event_active = comparison_event_mask
+        if event_active is None and {"los_responsible", "ov1_responsible"}.issubset(set(plot_df.columns)):
+            event_active = (
+                plot_df["los_responsible"].fill_null(False).cast(pl.Boolean)
+                | plot_df["ov1_responsible"].fill_null(False).cast(pl.Boolean)
+            ).to_list()
+        if event_active is not None and len(event_active) != len(x):
+            raise ValueError("comparison_event_mask length does not match plot frame length")
+        event_spans = _true_mask_spans(x, event_active) if event_active is not None else []
+        if event_spans:
+            overlay_spans.append({
+                "label": "EVM event",
+                "color": PLOT_COLORS["shade"],
+                "alpha": 0.22,
+                "spans": event_spans,
+            })
+    is_single_phase = len(power_cols) == 1
 
-    for idx, power_col in enumerate(power_cols, start=1):
-        ax_top.plot(x, plot_df[power_col].to_list(), linewidth=1.4, label=f"Power {idx}")
+    if is_single_phase:
+        fig, ax_main = plt.subplots(1, 1, figsize=(14, 5.5), sharex=True)
+        plot_power_axes = [ax_main]
+        voltage_axes = [ax_main.twinx()]
+        title_axis = ax_main
+        bottom_axis = ax_main
+    else:
+        fig, (ax_top, ax_bottom) = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
+        plot_power_axes = [ax_top, ax_bottom]
+        voltage_axes = [ax_top.twinx(), ax_bottom.twinx()]
+        title_axis = ax_top
+        bottom_axis = ax_bottom
 
-    ax_bottom.plot(x, plot_df["site_power"].to_list(), color="tab:blue", linewidth=1.8, label="Total Power")
+    for axis in plot_power_axes:
+        for overlay_info in overlay_spans:
+            for span_start, span_end in overlay_info["spans"]:
+                axis.axvspan(
+                    span_start,
+                    span_end,
+                    color=overlay_info["color"],
+                    alpha=overlay_info["alpha"],
+                    zorder=0,
+                    linewidth=0,
+                )
 
-    threshold_groups: dict[float, list[dict]] = {}
-    for method_info in method_thresholds:
-        key = round(float(method_info["los_threshold"]), 6)
-        threshold_groups.setdefault(key, []).append(method_info)
+    if is_single_phase:
+        ax_main.plot(
+            x,
+            plot_df[power_cols[0]].to_list(),
+            color=PLOT_COLORS["power_channels"][0],
+            linewidth=1.4,
+            zorder=4,
+            label=_power_trace_label(power_cols),
+        )
+    else:
+        for idx, power_col in enumerate(power_cols, start=1):
+            ax_top.plot(
+                x,
+                plot_df[power_col].to_list(),
+                color=PLOT_COLORS["power_channels"][(idx - 1) % len(PLOT_COLORS["power_channels"])],
+                linewidth=1.4,
+                zorder=4,
+                label=_power_trace_label(power_cols, idx),
+            )
 
-    for v_ax in [ax_top_v, ax_bottom_v]:
+        ax_bottom.plot(
+            x,
+            plot_df["site_power"].to_list(),
+            color=PLOT_COLORS["power_total"],
+            linewidth=1.8,
+            zorder=4,
+            label="Total Power",
+        )
+
+    for v_ax in voltage_axes:
         v_ax.plot(
             x,
             vinst_vals,
-            color="tab:red",
+            color=PLOT_COLORS["voltage_inst"],
             linestyle="-",
             linewidth=0.9,
             alpha=0.55,
@@ -581,52 +738,57 @@ def plot_three_method_threshold_overlay_day(
         v_ax.plot(
             x,
             v10m_vals,
-            color="#111111",
+            color=PLOT_COLORS["voltage_avg"],
             linestyle="--",
             linewidth=2.1,
             zorder=3,
             label="V10m,avg",
         )
-        for threshold_key, grouped_methods in threshold_groups.items():
-            threshold_value = float(grouped_methods[0]["los_threshold"])
-            if len(grouped_methods) == 1:
-                line_color = grouped_methods[0]["color"]
-                line_label = f'{grouped_methods[0]["label"]} LOS {threshold_value:.3f} V'
-            else:
-                joined_labels = " / ".join(m["label"] for m in grouped_methods)
-                line_color = "#7f7f7f"
-                line_label = f"{joined_labels} LOS {threshold_value:.3f} V"
+        for method_info in method_thresholds:
+            threshold_value = float(method_info["los_threshold"])
             v_ax.axhline(
                 threshold_value,
-                color=line_color,
+                color=method_info["color"],
                 linestyle=":",
                 linewidth=1.4,
                 alpha=0.9,
                 zorder=1,
-                label=line_label,
+                label=f'{method_info["label"]} LOS {threshold_value:.3f} V',
             )
 
     method_status_parts = []
     for method_info in method_thresholds:
-        compliant_ts = method_info.get("compliant_timestamps")
-        eligible_ts = method_info.get("eligible_timestamps")
-        if compliant_ts is not None and eligible_ts is not None:
+        day_eligible_ts = method_info.get("day_eligible_timestamps")
+        day_compliant_ts = method_info.get("day_compliant_timestamps")
+        day_status, day_pct = _day_status_label(day_compliant_ts, day_eligible_ts)
+        if day_pct is not None:
             method_status_parts.append(
-                f'{method_info["label"]}: {method_info["status"]} ({int(compliant_ts)}/{int(eligible_ts)} ts)'
+                f'{method_info["label"]}: site {method_info["status"]} | '
+                f'day {day_status} {day_pct:.1f}% '
+                f'({int(day_compliant_ts)}/{int(day_eligible_ts)} ts)'
             )
         else:
-            method_status_parts.append(f'{method_info["label"]}: {method_info["status"]}')
+            method_status_parts.append(
+                f'{method_info["label"]}: site {method_info["status"]} | day {day_status}'
+            )
     method_status_text = " | ".join(method_status_parts)
-    title = f"Site: {site_number} Day: {day_label}\n{method_status_text}"
+    plot_date = _format_plot_date(day_label)
+    title = f"Site example | Date: {plot_date}"
+    if method_status_text:
+        title = f"{title}\n{method_status_text}"
 
-    ax_top.set_title(title)
-    ax_top.set_ylabel("Per-channel Power (kW)")
-    ax_bottom.set_ylabel("Total Power (kW)")
-    ax_bottom.set_xlabel("Time")
+    title_axis.set_title(title)
+    if is_single_phase:
+        ax_main.set_ylabel("Power (kW)")
+        ax_main.set_xlabel("Time")
+    else:
+        ax_top.set_ylabel("Per-channel Power (kW)")
+        ax_bottom.set_ylabel("Total Power (kW)")
+        ax_bottom.set_xlabel("Time")
 
-    for p_ax in [ax_top, ax_bottom]:
+    for p_ax in plot_power_axes:
         p_ax.set_ylim(0, max(0.1, float(p_rated)))
-        p_ax.grid(True, alpha=0.25)
+        p_ax.grid(True, color=PLOT_COLORS["grid"], alpha=0.35)
 
     all_voltage_vals = [v for v in [*v10m_vals, *vinst_vals] if v is not None]
     for method_info in method_thresholds:
@@ -637,31 +799,54 @@ def plot_three_method_threshold_overlay_day(
     else:
         v_min, v_max = 248.0, 268.0
 
-    for v_ax in [ax_top_v, ax_bottom_v]:
+    for v_ax in voltage_axes:
         v_ax.set_ylabel("Voltage (V)")
         v_ax.set_ylim(v_min, v_max)
         v_ax.yaxis.set_major_locator(MultipleLocator(2.0))
         v_ax.yaxis.set_minor_locator(MultipleLocator(1.0))
-        v_ax.grid(True, which="major", axis="y", alpha=0.18)
+        v_ax.grid(True, which="major", axis="y", color=PLOT_COLORS["grid"], alpha=0.35)
 
     day_start = dt.datetime(2022, 11, int(day_label), 6, 0, 0, tzinfo=tz)
     day_end = dt.datetime(2022, 11, int(day_label), 18, 0, 0, tzinfo=tz)
-    ax_bottom.set_xlim(day_start, day_end)
-    ax_bottom.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 30], tz=tz))
-    ax_bottom.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=tz))
+    bottom_axis.set_xlim(day_start, day_end)
+    bottom_axis.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 30], tz=tz))
+    bottom_axis.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=tz))
 
-    top_lines, top_labels = ax_top.get_legend_handles_labels()
-    top_v_lines, top_v_labels = ax_top_v.get_legend_handles_labels()
-    ax_top.legend(top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2)
+    if is_single_phase:
+        lines, labels = ax_main.get_legend_handles_labels()
+        v_lines, v_labels = voltage_axes[0].get_legend_handles_labels()
+        if overlay_spans:
+            v_lines = v_lines + [
+                Patch(facecolor=overlay_info["color"], alpha=overlay_info["alpha"], edgecolor="none")
+                for overlay_info in overlay_spans
+            ]
+            v_labels = v_labels + [f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans]
+        ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
+    else:
+        top_lines, top_labels = ax_top.get_legend_handles_labels()
+        top_v_lines, top_v_labels = voltage_axes[0].get_legend_handles_labels()
+        if overlay_spans:
+            top_v_lines = top_v_lines + [
+                Patch(facecolor=overlay_info["color"], alpha=overlay_info["alpha"], edgecolor="none")
+                for overlay_info in overlay_spans
+            ]
+            top_v_labels = top_v_labels + [f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans]
+        ax_top.legend(top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2)
 
-    bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
-    bottom_v_lines, bottom_v_labels = ax_bottom_v.get_legend_handles_labels()
-    ax_bottom.legend(
-        bottom_lines + bottom_v_lines,
-        bottom_labels + bottom_v_labels,
-        loc="upper left",
-        ncol=2,
-    )
+        bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
+        bottom_v_lines, bottom_v_labels = voltage_axes[1].get_legend_handles_labels()
+        if overlay_spans:
+            bottom_v_lines = bottom_v_lines + [
+                Patch(facecolor=overlay_info["color"], alpha=overlay_info["alpha"], edgecolor="none")
+                for overlay_info in overlay_spans
+            ]
+            bottom_v_labels = bottom_v_labels + [f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans]
+        ax_bottom.legend(
+            bottom_lines + bottom_v_lines,
+            bottom_labels + bottom_v_labels,
+            loc="upper left",
+            ncol=2,
+        )
 
     fig.autofmt_xdate()
     plt.tight_layout()
@@ -674,6 +859,32 @@ def plot_three_method_threshold_overlay_day(
     else:
         plt.show()
         plt.close(fig)
+
+
+def plot_three_method_threshold_overlay_day(
+    df: pl.DataFrame,
+    site_number,
+    day_label,
+    *,
+    p_rated: float,
+    method_thresholds: list[dict],
+    comparison_event_mask: list[bool] | None = None,
+    tz_name: str = "Australia/Adelaide",
+    save_path: str | Path | None = None,
+):
+    """
+    Backwards-compatible alias for the generalized multi-method overlay plot.
+    """
+    plot_method_threshold_overlay_day(
+        df,
+        site_number,
+        day_label,
+        p_rated=p_rated,
+        method_thresholds=method_thresholds,
+        comparison_event_mask=comparison_event_mask,
+        tz_name=tz_name,
+        save_path=save_path,
+    )
 
 
 def plot_site_threshold_distribution(
