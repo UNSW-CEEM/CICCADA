@@ -1,5 +1,5 @@
 """
-voltvar_queries.py — Athena SQL queries for Volt-VAr curtailment analysis.
+Athena SQL queries for Volt-VAr curtailment analysis.
 
 All functions take explicit arguments for:
   - params:    the PARAMS dict (analysis-specific, changes per notebook run)
@@ -34,7 +34,7 @@ def _build_phase_fragments(phase_filter):
     return phase_cte, phase_join, phase_where
 
 
-# ── Helper: build GHI clear-sky SQL fragments ────────────────
+# Helper: build GHI clear-sky SQL fragments
 def _build_ghi_fragments(apply_ghi_filter, has_ghi, ghi_cs_ratio_min):
     """
     Return (ghi_join, ghi_filter) SQL fragments for the clear-sky filter.
@@ -156,5 +156,134 @@ def fetch_method_a(year, apply_ghi_filter, params, has_ghi, aq_func, database):
             )                                     AS est_curtailed_kWh
         FROM flagged
         GROUP BY site_id
+    """
+    return aq_func(sql, database=database)
+
+# ═════════════════════════════════════════════════════════════
+# Method B: Counterfactual quantification (single site, single year)
+# ═════════════════════════════════════════════════════════════
+ 
+def fetch_method_b_site_year(year, site_id, params, aq_func, database):
+    """
+    Run Method B counterfactual query for one site and one year.
+ 
+    Returns interval-level rows with P_meas, Q_meas, P_potential,
+    P_max_given_Q, and varcurt_kW.
+ 
+    Parameters
+    ----------
+    year : int
+    site_id : int
+    params : dict
+    aq_func : callable
+    database : str
+ 
+    Returns
+    -------
+    pd.DataFrame
+        One row per qualifying 5-min interval.
+    """
+    P = params
+    _limit_col = "s_99" if P["USE_S99"] else "ac_capacity_kw"
+ 
+    sql = f"""
+        WITH site_meta AS (
+            SELECT DISTINCT site_id, circuit_id, circuit_polarity,
+                   ac_capacity_kw, {_limit_col} AS s_limit
+            FROM meta_up23c
+            WHERE is_pv = True
+            AND site_id = {site_id}
+            AND ac_capacity_kw > 0
+            AND ac_capacity_kw <= {P['MAX_AC_CAPACITY_KW']}
+        ),
+        meas AS (
+            SELECT
+                sm.site_id, t.t_stamp,
+                max(sm.s_limit)                                        AS s_limit,
+                max(sm.ac_capacity_kw)                                 AS ac_capacity_kw,
+                max(t.voltage)                                         AS V_max,
+                sum(t.power * sm.circuit_polarity / 1000.0)            AS P_meas_kW,
+                sum(t.energy_reactive * sm.circuit_polarity/1000.0*12) AS Q_meas_kvar
+            FROM ts t
+            JOIN site_meta sm ON t.circuit_id = sm.circuit_id
+            WHERE t.year = {year} AND t.is_pv = True
+              AND t.voltage > {P['V_LOW']} AND t.voltage < {P['V_HIGH']}
+              AND hour(t.t_stamp + interval '10' hour)
+                  BETWEEN {P['PEAK_HOUR_START']} AND {P['PEAK_HOUR_END']}
+            GROUP BY sm.site_id, t.t_stamp
+        ),
+        pot AS (
+            SELECT site_id, t_stamp, uncurtailed_P AS P_potential_kW
+            FROM all_uncurtailedpv
+            WHERE site_id = {site_id}
+        )
+        SELECT
+            m.t_stamp, m.V_max, m.s_limit, m.ac_capacity_kw,
+            m.P_meas_kW, m.Q_meas_kvar,
+            p.P_potential_kW,
+            sqrt(greatest(
+                m.s_limit*m.s_limit - m.Q_meas_kvar*m.Q_meas_kvar, 0
+            )) AS P_max_given_Q,
+            greatest(0,
+                p.P_potential_kW
+                - sqrt(greatest(
+                    m.s_limit*m.s_limit - m.Q_meas_kvar*m.Q_meas_kvar, 0
+                ))
+            ) AS varcurt_kW
+        FROM meas m
+        JOIN pot p ON m.t_stamp = p.t_stamp
+        WHERE m.Q_meas_kvar < 0
+        ORDER BY m.t_stamp
+    """
+    return aq_func(sql, database=database)
+ 
+# ═════════════════════════════════════════════════════════════
+# Day-level data fetch (for single-day plots)
+# ═════════════════════════════════════════════════════════════
+ 
+def fetch_day_data(site_id, date_str, aq_func, database):
+    """
+    Fetch one full day of telemetry + counterfactual for a single site.
+ 
+    Parameters
+    ----------
+    site_id : int
+    date_str : str
+        Format 'YYYY-MM-DD'.
+    aq_func : callable
+    database : str
+ 
+    Returns
+    -------
+    pd.DataFrame
+        Columns: t_stamp, V, P_kW, Q_kvar, P_potential_kW.
+        Empty DataFrame if no data found.
+    """
+    year  = int(date_str.split("-")[0])
+    month = int(date_str.split("-")[1])
+ 
+    sql = f"""
+        WITH site_meta AS (
+            SELECT DISTINCT circuit_id, circuit_polarity
+            FROM meta_up23c WHERE is_pv = True AND site_id = {site_id}
+        ),
+        meas AS (
+            SELECT
+                t.t_stamp,
+                max(t.voltage)                                           AS V,
+                sum(t.power * sm.circuit_polarity / 1000.0)              AS P_kW,
+                sum(t.energy_reactive * sm.circuit_polarity / 1000.0*12) AS Q_kvar
+            FROM ts t
+            JOIN site_meta sm ON t.circuit_id = sm.circuit_id
+            WHERE t.year = {year} AND t.month = {month} AND t.is_pv = True
+              AND date(t.t_stamp + interval '10' hour) = date '{date_str}'
+            GROUP BY t.t_stamp
+        )
+        SELECT m.t_stamp, m.V, m.P_kW, m.Q_kvar,
+               u.uncurtailed_P AS P_potential_kW
+        FROM meas m
+        LEFT JOIN all_uncurtailedpv u
+          ON u.site_id = {site_id} AND u.t_stamp = m.t_stamp
+        ORDER BY m.t_stamp
     """
     return aq_func(sql, database=database)
