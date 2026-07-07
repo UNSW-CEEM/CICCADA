@@ -280,3 +280,66 @@ def plot_apparent_power_circle(varcurt_df, site_id, s_limit, params):
     cbar.ax.tick_params(labelsize=7)
 
     plt.show()
+
+
+
+# ═════════════════════════════════════════════════════════════
+# Concentration / Lorenz curve
+# ═════════════════════════════════════════════════════════════
+
+def plot_concentration_curve(curt_rank, concentration, total_kwh,
+                             title="Volt-VAr curtailment concentration across sites"):
+    """
+    Cumulative contribution plot showing how curtailment is distributed
+    across affected sites.
+
+    Parameters
+    ----------
+    curt_rank : pd.DataFrame
+        Output of voltvar_metrics.compute_concentration().
+        Must contain: share_of_affected_sites_pct, cum_share_pct.
+    concentration : dict
+        {percentile: cumulative_share_pct} from compute_concentration().
+    total_kwh : float
+        Total estimated curtailment across positive sites.
+    title : str
+    """
+    if curt_rank.empty:
+        print("No sites with positive estimated curtailment.")
+        return
+
+    n_affected = len(curt_rank)
+
+    fig, ax = plt.subplots(figsize=(8.5, 5.2), dpi=140)
+
+    ax.plot(
+        curt_rank["share_of_affected_sites_pct"],
+        curt_rank["cum_share_pct"],
+        lw=2.4,
+    )
+    ax.plot([0, 100], [0, 100], ls="--", lw=1, alpha=0.5)
+
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    ax.set_xlabel("Share of affected sites, ranked by estimated curtailed energy (%)")
+    ax.set_ylabel("Cumulative share of estimated curtailed energy (%)")
+    ax.set_title(title, weight="bold")
+    ax.grid(True, alpha=0.35)
+
+    # Annotate thresholds
+    for x, y in concentration.items():
+        ax.axvline(x, ls=":", lw=0.9, alpha=0.7)
+        ax.axhline(y, ls=":", lw=0.9, alpha=0.7)
+        ax.text(x + 1, y + 2, f"Top {x}% = {y:.1f}%", fontsize=9, va="bottom")
+
+    ax.text(
+        0.98, 0.05,
+        f"Affected sites: {n_affected:,}\n"
+        f"Total estimated curtailment: {total_kwh:,.0f} kWh",
+        transform=ax.transAxes, ha="right", va="bottom", fontsize=9,
+        bbox=dict(boxstyle="round,pad=0.35", facecolor="white",
+                  edgecolor="lightgrey", alpha=0.95),
+    )
+
+    plt.tight_layout()
+    plt.show()

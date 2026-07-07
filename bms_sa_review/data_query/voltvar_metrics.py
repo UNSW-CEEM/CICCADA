@@ -243,3 +243,178 @@ def compute_fleet_summary(candidates, all_context_by_site_year,
         "median_intervals_per_affected_site": candidates["n_flagged_intervals"].median(),
     }
 
+# ═════════════════════════════════════════════════════════════
+# Concentration / Lorenz analysis
+# ═════════════════════════════════════════════════════════════
+ 
+def compute_concentration(df, metric_col, percentiles=(1, 5, 10, 20, 50)):
+    """
+    Rank sites by a metric and compute cumulative concentration.
+ 
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain `metric_col`. Only rows with metric_col > 0 are used.
+    metric_col : str
+        Column to rank and cumulate (e.g. 'est_curtailed_kWh').
+    percentiles : tuple of int
+        Site-share thresholds to interpolate (e.g. top 1%, 5%, ...).
+ 
+    Returns
+    -------
+    ranked : pd.DataFrame
+        Sorted descending, with columns: site_rank,
+        share_of_affected_sites_pct, cum_share_pct.
+    concentration : dict
+        {percentile: cumulative_share} for each requested threshold.
+    total : float
+        Sum of metric_col across all positive sites.
+    """
+    positive = df[df[metric_col].fillna(0) > 0].copy()
+    positive = positive.sort_values(metric_col, ascending=False).reset_index(drop=True)
+ 
+    if positive.empty:
+        return pd.DataFrame(), {}, 0.0
+ 
+    total = positive[metric_col].sum()
+    positive["site_rank"] = np.arange(1, len(positive) + 1)
+    positive["share_of_affected_sites_pct"] = (
+        positive["site_rank"] / len(positive) * 100
+    )
+    positive["cum_share_pct"] = (
+        positive[metric_col].cumsum() / total * 100
+    )
+ 
+    concentration = {}
+    for p in percentiles:
+        concentration[p] = float(np.interp(
+            p,
+            positive["share_of_affected_sites_pct"],
+            positive["cum_share_pct"],
+        ))
+ 
+    return positive, concentration, total
+ 
+ 
+# ═════════════════════════════════════════════════════════════
+# Site-level distribution (cross-year, one row per site)
+# ═════════════════════════════════════════════════════════════
+ 
+def compute_site_distribution(candidates, eligible_context_by_site_year,
+                              all_context_by_site_year):
+    """
+    Build a site-level table merging all/eligible denominators with
+    Method A numerators, aggregated across all years.
+ 
+    Returns
+    -------
+    pd.DataFrame
+        One row per site_id with interval counts, kWh, percentages,
+        and an 'affected' boolean.
+    """
+    interval_h = AS4777["INTERVAL_H"]
+ 
+    eligible_site = (
+        eligible_context_by_site_year
+        .groupby("site_id", as_index=False)
+        .agg(
+            eligible_intervals=("n_eligible_intervals", "sum"),
+            eligible_potential_kWh=("eligible_potential_kWh", "sum"),
+        )
+    )
+ 
+    all_site = (
+        all_context_by_site_year
+        .groupby("site_id", as_index=False)
+        .agg(
+            all_intervals=("n_all_intervals", "sum"),
+            all_potential_kWh=("all_potential_kWh", "sum"),
+        )
+    )
+ 
+    candidate_site = (
+        candidates
+        .groupby("site_id", as_index=False)
+        .agg(
+            flagged_intervals=("n_flagged_intervals", "sum"),
+            est_curtailed_kWh=("est_curtailed_kWh", "sum"),
+        )
+    )
+ 
+    df = (
+        all_site
+        .merge(eligible_site, on="site_id", how="left")
+        .merge(candidate_site, on="site_id", how="left")
+    )
+ 
+    for col in ["flagged_intervals", "est_curtailed_kWh",
+                "eligible_intervals", "eligible_potential_kWh"]:
+        df[col] = df[col].fillna(0)
+ 
+    df["flagged_hours"] = df["flagged_intervals"] * interval_h
+    df["affected"]      = df["flagged_intervals"] > 0
+ 
+    df["pct_eligible_timestamps_flagged"]  = _safe_pct(df["flagged_intervals"], df["eligible_intervals"])
+    df["pct_all_timestamps_flagged"]       = _safe_pct(df["flagged_intervals"], df["all_intervals"])
+    df["pct_eligible_potential_curtailed"] = _safe_pct(df["est_curtailed_kWh"], df["eligible_potential_kWh"])
+    df["pct_all_potential_curtailed"]      = _safe_pct(df["est_curtailed_kWh"], df["all_potential_kWh"])
+ 
+    df["avg_est_curtailed_kW_when_flagged"] = np.where(
+        df["flagged_intervals"] > 0,
+        df["est_curtailed_kWh"] / (df["flagged_intervals"] * interval_h),
+        np.nan,
+    )
+ 
+    return df
+ 
+ 
+# ═════════════════════════════════════════════════════════════
+# Concentration / Lorenz analysis
+# ═════════════════════════════════════════════════════════════
+ 
+def compute_concentration(site_dist, metric_col="est_curtailed_kWh",
+                          percentiles=(1, 5, 10, 20, 50)):
+    """
+    Rank sites by a metric and compute cumulative concentration.
+ 
+    Parameters
+    ----------
+    site_dist : pd.DataFrame
+        Output of compute_site_distribution.
+    metric_col : str
+    percentiles : tuple of int
+        Percentile thresholds to interpolate (e.g. top 1%, 5%, ...).
+ 
+    Returns
+    -------
+    curt_rank : pd.DataFrame
+        Ranked sites with cumulative share columns.
+    concentration : dict
+        {percentile: cumulative_share_pct} for each requested threshold.
+    total : float
+        Total value of metric_col across positive sites.
+    """
+    positive = site_dist[site_dist[metric_col].fillna(0) > 0].copy()
+    positive = positive.sort_values(metric_col, ascending=False).reset_index(drop=True)
+ 
+    if positive.empty:
+        return pd.DataFrame(), {}, 0.0
+ 
+    positive["site_rank"] = np.arange(1, len(positive) + 1)
+    positive["share_of_affected_sites_pct"] = (
+        positive["site_rank"] / len(positive) * 100
+    )
+ 
+    total = positive[metric_col].sum()
+    positive["cum_value"]     = positive[metric_col].cumsum()
+    positive["cum_share_pct"] = positive["cum_value"] / total * 100
+ 
+    concentration = {}
+    for p in percentiles:
+        concentration[p] = float(np.interp(
+            p,
+            positive["share_of_affected_sites_pct"],
+            positive["cum_share_pct"],
+        ))
+ 
+    return positive, concentration, total
