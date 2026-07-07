@@ -287,7 +287,9 @@ def plot_apparent_power_circle(varcurt_df, site_id, s_limit, params):
 # Concentration / Lorenz curve
 # ═════════════════════════════════════════════════════════════
 
-def plot_concentration_curve(curt_rank, concentration, total_kwh,
+def plot_concentration_curve(curt_rank, 
+                             concentration, 
+                             total_kwh,
                              title="Volt-VAr curtailment concentration across sites"):
     """
     Cumulative contribution plot showing how curtailment is distributed
