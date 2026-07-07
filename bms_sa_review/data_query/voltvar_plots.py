@@ -49,7 +49,7 @@ def plot_varcurt_day(day_df,
         print(f"No data for site {site_id} on {date_str}.")
         return
 
-    # ── Derived columns ──────────────────────────────────────
+    # Derived columns
     df = day_df.copy()
     df["t"] = (pd.to_datetime(df["t_stamp"])
                .dt.tz_localize("UTC").dt.tz_convert(FIXED_OFFSET)
@@ -84,7 +84,7 @@ def plot_varcurt_day(day_df,
         0,
     )
 
-    # ── Plot ─────────────────────────────────────────────────
+    # Plot
     fig, axes = plt.subplots(
         2, 1, figsize=(12, 7.5), dpi=130, sharex=True,
         gridspec_kw={"height_ratios": [1.3, 2]},
@@ -101,7 +101,7 @@ def plot_varcurt_day(day_df,
             color="#7c3aed", alpha=0.06, linewidth=0, zorder=0,
         )
 
-    # ── Top panel: voltage ───────────────────────────────────
+    # Top panel: voltage
     ax = axes[0]
     v_line,     = ax.plot(df["t"], df["V"], color=C_V, lw=1.4, label="Measured voltage")
     v_low_line  = ax.axhline(V_LOW,  color=C_V, lw=0.7, ls=":",  alpha=0.6,
@@ -119,7 +119,7 @@ def plot_varcurt_day(day_df,
         fontsize=7.5, loc="upper left", framealpha=0.92,
     )
 
-    # ── Bottom panel: power ──────────────────────────────────
+    # Bottom panel: power
     ax = axes[1]
     curt_label = ("Volt-VAr curtailment (peak-hour only)"
                   if restrict_to_peak_hours else
@@ -149,7 +149,7 @@ def plot_varcurt_day(day_df,
     ax.xaxis.set_major_locator(mdates.HourLocator(interval=2))
     fig.autofmt_xdate(rotation=0, ha="center")
 
-    # ── Title and totals ─────────────────────────────────────
+    # Title and totals
     total_kwh        = (df["varcurt_kW"]        * AS4777["INTERVAL_H"]).sum()
     total_kwh_allday = (df["varcurt_kW_allday"] * AS4777["INTERVAL_H"]).sum()
 
@@ -207,7 +207,7 @@ def plot_apparent_power_circle(varcurt_df, site_id, s_limit, params):
     low_v    = varcurt["V_max"] < 240
     normal_v = ~low_v
 
-    # ── Figure layout ────────────────────────────────────────
+    # Figure layout
     fig = plt.figure(figsize=(7.5, 8.6), dpi=120)
     ax  = fig.add_axes([0.12, 0.12, 0.75, 0.80])
     cax = fig.add_axes([0.75, 0.35, 0.020, 0.30])
