@@ -1,8 +1,6 @@
 """
-build_all_uncurtailedpv.py  —  Stage 1, step 4 of 4
+Data calc-write pipeline: Stage 1. Step 4 of 4
 ===================================================
-
-Clean rewrite of Hossein's `Write_All_uncartailedPV.ipynb`.
 
 WHAT IT DOES
 ------------
@@ -11,21 +9,6 @@ counterfactual "what this site would have generated without curtailment":
 
         P_norm_est = P_norm_cs * (a + b * GHI/GHI_cs)   [floored at actual]
         uncurtailed_P = P_norm_est * S_99
-
-This `all_uncurtailedpv{SUFFIX}` table is what your notebook 03 (Method B and
-the eligible/all denominators) joins to. It is the single most important
-Stage-1 output for the curtailment paper.
-
-FIXES BAKED IN
---------------
-  * R6 — caps uncurtailed_P at ac_capacity_kw (nameplate) as a sanity bound.
-         Hossein's model produced impossible outliers (e.g. 591 kW on a 17 kW
-         site). The counterfactual cannot exceed the inverter's rated capacity.
-         The number of intervals hit by the cap is reported by validate() so you
-         can quote it in the paper.
-
-  * Keeps Hossein's conservative floor: the estimate is never below the actual
-    measured power (you can't be curtailed to MORE than your potential).
 
 READS
 -----
@@ -43,6 +26,7 @@ from build_structured_data import TABLE_SUFFIX
 SD    = f"structured_data{TABLE_SUFFIX}"
 MODEL = f"pv_ghi_norm_model{TABLE_SUFFIX}"
 TARGET = f"all_uncurtailedpv{TABLE_SUFFIX}"
+WAREHOUSE = "Trino-Warehouse/solar_analytics"
 
 TIME_BIN_MIN = 5
 
@@ -59,14 +43,13 @@ def create_table(aq, database):
             P_kw          DOUBLE,
             GHI           DOUBLE,
             n_train       BIGINT,
-            capped        BOOLEAN,     -- R6: TRUE where the nameplate cap bit
+            capped        BOOLEAN,
             year_p        INT,
             month_p       INT
         )
-        WITH (
-            format = 'PARQUET',
-            partitioning = ARRAY['year_p', 'month_p']
-        )
+        PARTITIONED BY (year_p, month_p)
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET}/'
+        TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
     return f"Created empty {TARGET}"
 
@@ -155,3 +138,4 @@ def validate(aq, database):
     print("R6 nameplate cap impact:")
     print(cap.to_string(index=False))
     return below, cap
+

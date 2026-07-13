@@ -1,7 +1,5 @@
 """
-build_structured_data.py
-
-Data pipeline: Stage 1. Step 1 of 4
+Data calc-write pipeline: Stage 1. Step 1 of 4
 =================================================
 
 WHAT IT DOES
@@ -19,15 +17,12 @@ DELIBERATELY NOT CHANGED HERE
 -----------------------------
   * Storage partition columns `year`/`month` stay UTC-derived (year(t_stamp),
     month(t_stamp)) so this table stays ALIGNED with `ts` (which is partitioned
-    on UTC year/month). The AEST fixes (R3/R9) belong in the Stage-2 conformance
-    *reporting* grain, not in this storage table. `actual_day`/`actual_tod`
-    remain AEST-correct exactly as Hossein had them.
+    on UTC year/month). 
 
 SAFE-BY-DEFAULT
 ---------------
 Writes to a table named `structured_data{TABLE_SUFFIX}` (default suffix
-"_v2") so Hossein's original `structured_data` is never overwritten. This
-matches the project convention of writing to parallel review tables.
+"_v2") so original `structured_data` is NOT overwritten.
 
 USAGE (from the orchestrator notebook)
 --------------------------------------
@@ -40,10 +35,10 @@ USAGE (from the orchestrator notebook)
 
 TABLE_SUFFIX = "_v2"      # change to "" only if you deliberately want to overwrite
 TARGET = f"structured_data{TABLE_SUFFIX}"
-
+WAREHOUSE = "Trino-Warehouse/solar_analytics"
 
 # ---------------------------------------------------------------------------
-# DDL — create the empty target table (Iceberg, partitioned by year/month)
+# DDL create the empty target table (Iceberg, partitioned by year/month)
 # ---------------------------------------------------------------------------
 def create_table(aq, database):
     """Drop & recreate the empty target table. Run once before loading."""
@@ -53,7 +48,7 @@ def create_table(aq, database):
             site_id       BIGINT,
             t_stamp       TIMESTAMP,
             actual_day    DATE,
-            actual_tod    TIME,
+            actual_tod    STRING,
             V             DOUBLE,
             Q_kvar_norm   DOUBLE,
             P_kw_norm     DOUBLE,
@@ -61,7 +56,7 @@ def create_table(aq, database):
             GHI           DOUBLE,
             cloud_type    INT,
             cs_day        DATE,
-            cs_tod        TIME,
+            cs_tod        STRING,
             P_kw_norm_cs  DOUBLE,
             GHI_cs        DOUBLE,
             cloud_type_cs INT,
@@ -69,23 +64,19 @@ def create_table(aq, database):
             year          INT,
             month         INT
         )
-        WITH (
-            format = 'PARQUET',
-            partitioning = ARRAY['year', 'month']
-        )
+        PARTITIONED BY (year, month)
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET}/'
+        TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
     return f"Created empty {TARGET}"
 
 
 # ---------------------------------------------------------------------------
-# The heavy INSERT — one (year, month-set, site-slice) at a time
+# INSERT one (year, month-set, site-slice) at a time
 # ---------------------------------------------------------------------------
 def _insert_sql(year, month_filter, part_filter, meta_filter):
     """
     Build the INSERT ... SELECT statement for one slice.
-
-    The clear-sky logic is faithful to Hossein's original; the only functional
-    changes are the two FIX markers below.
     """
     return f"""
     INSERT INTO {TARGET}
@@ -219,17 +210,19 @@ def _insert_sql(year, month_filter, part_filter, meta_filter):
     assembled AS (
         SELECT
             d.site_id, d.t_stamp,
-            date_trunc('day', d.t_stamp + interval '10' hour) AS actual_day,
-            CAST(date_trunc('minute', d.t_stamp + interval '10' hour)
+            CAST(date_trunc('day', d.t_stamp + interval '10' hour) AS DATE) AS actual_day,
+            CAST(CAST(date_trunc('minute', d.t_stamp + interval '10' hour)
                  - interval '1' minute * (minute(d.t_stamp + interval '10' hour) % 5)
-                 AS TIME) AS actual_tod,
+                 AS TIME) AS VARCHAR) AS actual_tod,
             d.V, d.Q_kvar_norm, d.P_kw_norm,
             sqrt(pow(d.Q_kvar_norm, 2) + pow(d.P_kw_norm, 2)) AS S_norm,
             GHI, cloud_type,
-            ncs.cs_day, ncs.cs_tod, ncs.P_kw_norm_cs, ncs.GHI_cs, ncs.cloud_type_cs,
+            CAST(ncs.cs_day AS DATE) AS cs_day,
+            CAST(ncs.cs_tod AS VARCHAR) AS cs_tod,
+            ncs.P_kw_norm_cs, ncs.GHI_cs, ncs.cloud_type_cs,
             d.S_99,
-            year(d.t_stamp)  AS year,     -- UTC partition, aligned with `ts` (intentional)
-            month(d.t_stamp) AS month
+            CAST(year(d.t_stamp) AS INT)  AS year,
+            CAST(month(d.t_stamp) AS INT) AS month
         FROM data d
         JOIN (SELECT DISTINCT site_id, n_lat, n_long FROM meta_up23c WHERE {meta_filter}) m
           ON d.site_id = m.site_id
@@ -252,17 +245,15 @@ def _insert_sql(year, month_filter, part_filter, meta_filter):
 
 def run_slice(aq, database, year, months, n_parts=8, parts=None):
     """
-    Load one slice at a time so you can test cheaply before a full run.
+    Load one slice at a time
 
     Parameters
     ----------
-    year   : int          — calendar year in `ts`
-    months : list[int]    — e.g. [1] for Jan only (test), or range(1,13) for full year
-    n_parts: int          — how many site-slices to split into (mod site_id)
-    parts  : list[int]    — which slices to run, e.g. [0] to test one slice;
-                            None means all parts 0..n_parts-1
-
-    FIX R2 lives in `meta_filter` below.
+    year   : int          calendar year in `ts`
+    months : list[int]    e.g. [1] for Jan only (test), or range(1,13) for full year
+    n_parts: int          how many site-slices to split into (mod site_id)
+    parts  : list[int]    which slices to run, e.g. [0] to test one slice;
+                          None means all parts 0..n_parts-1
     """
     if parts is None:
         parts = list(range(n_parts))
@@ -282,7 +273,7 @@ def run_slice(aq, database, year, months, n_parts=8, parts=None):
 
 
 def validate(aq, database):
-    """Quick sanity checks after loading."""
+    """sanity checks after loading."""
     n_sites = aq(f"SELECT count(DISTINCT site_id) AS n FROM {TARGET}", database=database)
     v_stats = aq(f"""
         SELECT round(min(V),1) AS v_min, round(avg(V),1) AS v_avg,

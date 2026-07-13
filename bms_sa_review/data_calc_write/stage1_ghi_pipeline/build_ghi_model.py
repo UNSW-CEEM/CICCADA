@@ -1,8 +1,6 @@
 """
-build_ghi_model.py  —  Stage 1, step 3 of 4
+Data calc-write pipeline: Stage 1. Step 3 of 4
 ===========================================
-
-Clean rewrite of Hossein's `model_ghi_norm.ipynb`.
 
 WHAT IT DOES
 ------------
@@ -14,16 +12,13 @@ power from irradiance:
 with the constraint a = 1 - b (on a clear-sky day both ratios are 1, so the
 line passes through (1, 1)). One (a, b, n) triple per (site_id, tod_bin).
 
-This is the AUTHORITATIVE specification: regressor is the RATIO GHI/GHI_cs, in
-5-minute time-of-day bins. (The milestone report's "raw GHI / 30-min bins"
-description was a mis-read of Hossein's split_days copy-paste; this rewrite
-makes the intended spec explicit and single-sourced.)
+Regressor is the RATIO GHI/GHI_cs, in 5-minute time-of-day bins. 
 
 READS
 -----
 `structured_data{SUFFIX}` + `split_days{SUFFIX}` (train days only).
 
-TRAINING FILTER (unchanged from Hossein — it is well-constructed)
+TRAINING FILTER
 -----------------------------------------------------------------
     P_kw_norm_cs > 0.2   exclude dawn/dusk (reference too small)
     GHI > 50             exclude low-light noise
@@ -43,6 +38,7 @@ from build_structured_data import TABLE_SUFFIX
 SD    = f"structured_data{TABLE_SUFFIX}"
 SPLIT = f"split_days{TABLE_SUFFIX}"
 TARGET = f"pv_ghi_norm_model{TABLE_SUFFIX}"
+WAREHOUSE = "Trino-Warehouse/solar_analytics"
 
 TIME_BIN_MIN = 5   # 5-minute time-of-day bins (authoritative)
 
@@ -52,20 +48,20 @@ def create_table(aq, database):
     aq(f"""
         CREATE TABLE {TARGET} (
             site_id BIGINT,
-            tod_bin TIME,
+            tod_bin STRING,
             a       DOUBLE,
             b       DOUBLE,
             n       BIGINT
         )
-        WITH (format = 'PARQUET')
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET}/'
+        TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
     return f"Created empty {TARGET}"
 
 
 def run_year(aq, database, year, n_parts=1, parts=None):
     """
-    Fit the model for one year. Usually cheap enough to run in one shot
-    (n_parts=1), but the slice args are here if you need them.
+    Fit the model for one year.
     """
     if parts is None:
         parts = list(range(n_parts))

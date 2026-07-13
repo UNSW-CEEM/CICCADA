@@ -1,29 +1,20 @@
 """
-build_split_days.py  —  Stage 1, step 2 of 4
+Data calc-write pipeline: Stage 1. Step 2 of 4
 ============================================
-
-Clean rewrite of Hossein's `split_days.ipynb`.
 
 WHAT IT DOES
 ------------
 Assigns each site-day to 'train' (80%) or 'val' (20%), randomly WITHIN each
-site (so no site leaks across the split). The GHI model in step 3 trains only
-on 'train' days and can be validated on 'val' days.
+site (so no site leaks across the split). 
+
+The GHI model in step 3 trains only on 'train' days and can be validated on 'val' days.
 
 READS
 -----
-`structured_data{SUFFIX}` (built in step 1) — NOT raw ts. This is a
-simplification vs Hossein, who rebuilt the whole clear-sky chain here. Reading
-the already-built structured table is cheaper and guarantees the split is over
-exactly the same rows the model will see.
+`structured_data{SUFFIX}` (built in step 1), NOT raw ts. 
 
-NOTE ON HOSSEIN'S BUG
----------------------
-Hossein's split_days used `time_bin_interval = '30'` and `GHI AS x` (raw GHI),
-which differed from the model notebook. It was harmless (the split is per-day,
-independent of x), but it was the source of the "30-min raw GHI" confusion in
-the milestone report. This rewrite removes that inconsistency entirely — the
-split here depends only on which days qualify, nothing else.
+This is a simplification. Reading the already-built structured table is cheaper and guarantees the split is over
+exactly the same rows the model will see.
 
 SAFE-BY-DEFAULT
 ---------------
@@ -34,8 +25,10 @@ from build_structured_data import TABLE_SUFFIX  # reuse the same suffix
 
 SOURCE = f"structured_data{TABLE_SUFFIX}"
 TARGET = f"split_days{TABLE_SUFFIX}"
+WAREHOUSE = "Trino-Warehouse/solar_analytics"
 
 TRAIN_FRAC = 0.8
+
 
 
 def create_table(aq, database):
@@ -44,9 +37,10 @@ def create_table(aq, database):
         CREATE TABLE {TARGET} (
             site_id    BIGINT,
             actual_day DATE,
-            day_type   VARCHAR
+            day_type   STRING
         )
-        WITH (format = 'PARQUET')
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET}/'
+        TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
     return f"Created empty {TARGET}"
 
@@ -54,8 +48,6 @@ def create_table(aq, database):
 def run(aq, database):
     """
     Build the split over ALL sites/days present in structured_data{SUFFIX}.
-    Cheap enough to run in one shot (operates on the already-aggregated table).
-
     The eligibility filter mirrors the model's training filter so the split is
     over the model-eligible population:
         P_kw_norm_cs > 0.2, GHI > 50, P_kw_norm > 0.05,
@@ -92,3 +84,4 @@ def validate(aq, database):
     print("Train / val split:")
     print(counts.to_string(index=False))
     return counts
+
