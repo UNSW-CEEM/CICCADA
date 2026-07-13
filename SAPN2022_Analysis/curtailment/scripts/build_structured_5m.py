@@ -28,7 +28,7 @@ from pathlib import Path
 
 import polars as pl
 
-import funcs_from_SAPN2022updated as sapn_funcs
+import site_metrology_helpers as sapn_funcs
 from path_config import require_local_path
 from structured_data_shared_params import (
     BOM_CLEAR_SKY_CANDIDATES,
@@ -450,7 +450,6 @@ def run(
     )
     validation_raw = sapn_funcs.prepare_sapn_metrology(
         sapn_validation_data_path,
-        sapn_pv_circuits,
         validation_start,
         validation_end,
     )

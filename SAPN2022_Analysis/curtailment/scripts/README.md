@@ -21,7 +21,7 @@ This folder contains the local SAPN2022 curtailment workflow and a few small sup
 
 ## Supporting scripts used by the pipeline
 
-- `funcs_from_SAPN2022updated.py`: Shared helpers for metrology cleaning, polarity handling, duplicate cleanup, and site-level aggregation.
+- `site_metrology_helpers.py`: Curtailment-specific wrapper helpers for SAPN/EVM metrology preparation and site-level aggregation, built on shared conformance cleaning utilities.
 - `sapn2022_metrics_5m_data_checks.py`: Shared uniqueness and join-coverage checks used by the 5-minute metrics and plotting scripts.
 - `prepare_confidence_tier_site_cohort.py`: Writes the `confidence_tier_site_ids.csv` cohort consumed by the build scripts.
 - `parquet2csv.py`: Small manual utility for exporting selected parquet outputs to CSV.

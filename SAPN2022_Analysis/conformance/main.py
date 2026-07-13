@@ -237,7 +237,7 @@ def main():
                     site_number,
                     day_info["day"],
                     p_rated=p_rated,
-                    los_threshold=summary["los_threshold_used"],
+                    lso_threshold=summary["los_threshold_used"],
                     ov1_threshold=primary_thresholds["ov1_test_site"],
                     overall_pass=summary["overall_pass"],
                     day_summary=day_plot["summary"],
@@ -338,12 +338,12 @@ def main():
 
         plot_site_threshold_distribution(
             los_threshold_stats,
-            title="LOS Thresholds Across Assessed Sites — Min / Median / Max (Std on right)",
+            title="LSO Thresholds Across Assessed Sites — Min / Median / Max (Std on right)",
             save_path=THRESHOLD_PLOT_DIR / "los_threshold_distribution.png",
         )
         plot_site_threshold_distribution_extremes(
             los_threshold_stats,
-            title="LOS Thresholds — Highest 20 Std Sites (n_events >= 3)",
+            title="LSO Thresholds — Highest 20 Std Sites (n_events >= 3)",
             highest_std=True,
             min_events=3,
             n_sites=20,
@@ -351,7 +351,7 @@ def main():
         )
         plot_site_threshold_distribution_extremes(
             los_threshold_stats,
-            title="LOS Thresholds — Lowest 20 Std Sites (n_events >= 3)",
+            title="LSO Thresholds — Lowest 20 Std Sites (n_events >= 3)",
             highest_std=False,
             min_events=3,
             n_sites=20,

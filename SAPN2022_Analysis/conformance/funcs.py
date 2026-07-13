@@ -1,9 +1,6 @@
 import math
 from pathlib import Path
 
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-import numpy as np
 import polars as pl
 
 from checkData import checkDupes

@@ -14,7 +14,7 @@ PLOT_COLORS = {
     "power_channels": ["#2e7d32", "#2e7d32", "#2e7d32", "#2e7d32"],
     "voltage_inst": "#b45309",
     "voltage_avg": "#1a1a1a",
-    "threshold_los": "#1a1a1a",
+    "threshold_lso": "#1a1a1a",
     "threshold_ov1": "#c62828",
     "grid": "#ebebeb",
     "shade": "#7c3aed",
@@ -76,8 +76,8 @@ def _day_status_label(day_compliant_ts, day_eligible_ts, threshold_pct=90.0):
     day_status = "conformant" if day_pct >= threshold_pct else "non-conformant"
     return day_status, day_pct
 
-# LOS Plots
-def plotLosDataForSite(df, siteNumber, tz_name="Australia/Adelaide", 
+# LSO Plots
+def plotLsoDataForSite(df, siteNumber, tz_name="Australia/Adelaide", 
                        savePlot = False, pathFolder = None, vPlot = None, pPlot = None,
                        behavior=None):
     """ Plot power and vmean_rolling_10m using local_tstamp column 
@@ -155,9 +155,9 @@ def plotLosDataForSite(df, siteNumber, tz_name="Australia/Adelaide",
             day = df["local_tstamp"][0].day
             if behavior == None:
                 # Save the figure to a file
-                path = 'updated results/LOS/site level/'+pathFolder+'/Site:{} Power vs Vmean 10-min Day: {}'.format(siteNumber, day)
+                path = 'updated results/LSO/site level/'+pathFolder+'/Site:{} Power vs Vmean 10-min Day: {}'.format(siteNumber, day)
             else:
-                path = 'updated results/LOS/site level/'+pathFolder+'/Site:{} Power vs Vmean 10-min Day: {} {}'.format(siteNumber, day, behavior)
+                path = 'updated results/LSO/site level/'+pathFolder+'/Site:{} Power vs Vmean 10-min Day: {} {}'.format(siteNumber, day, behavior)
             plt.savefig(path) # Saves as a PNG file
     plt.close()
 
@@ -335,7 +335,7 @@ def plot_site_compliance_day(
     day_label,
     *,
     p_rated: float,
-    los_threshold: float | None,
+    lso_threshold: float | None,
     ov1_threshold: float | None,
     overall_pass,
     day_summary: dict | None = None,
@@ -454,11 +454,11 @@ def plot_site_compliance_day(
         )
 
     thresholds_to_draw = []
-    if los_threshold is not None:
+    if lso_threshold is not None:
         thresholds_to_draw.append((
-            f"LOS threshold: {float(los_threshold):.1f} V",
-            los_threshold,
-            PLOT_COLORS["threshold_los"],
+            f"LSO threshold: {float(lso_threshold):.1f} V",
+            lso_threshold,
+            PLOT_COLORS["threshold_lso"],
             ":",
         ))
     if ov1_threshold is not None:
@@ -481,19 +481,19 @@ def plot_site_compliance_day(
     if day_summary is None:
         day_label_text = "Day status unavailable"
     else:
-        los_eligible = int(day_summary.get("los_eligible", 0) or 0)
-        los_compliant = int(day_summary.get("los_compliant", 0) or 0)
+        lso_eligible = int(day_summary.get("los_eligible", 0) or 0)
+        lso_compliant = int(day_summary.get("los_compliant", 0) or 0)
         ov1_eligible = int(day_summary.get("ov1_eligible", 0) or 0)
         ov1_compliant = int(day_summary.get("ov1_compliant", 0) or 0)
-        total_eligible = los_eligible + ov1_eligible
-        total_compliant = los_compliant + ov1_compliant
+        total_eligible = lso_eligible + ov1_eligible
+        total_compliant = lso_compliant + ov1_compliant
         if total_eligible == 0:
             day_label_text = "No eligible timestamps"
         else:
             day_pct = (total_compliant / total_eligible) * 100.0
             day_state = "Day pass" if day_pct >= 90.0 else "Day fail"
             day_label_text = (
-                f"{day_state} {day_pct:.1f}% | LOS {los_compliant}/{los_eligible} | "
+                f"{day_state} {day_pct:.1f}% | LSO {lso_compliant}/{lso_eligible} | "
                 f"OV1 {ov1_compliant}/{ov1_eligible}"
             )
 
@@ -594,12 +594,12 @@ def plot_method_threshold_overlay_day(
     save_path: str | Path | None = None,
 ):
     """
-    Plot a site-day using the comparison overlay layout and multi-method LOS
+    Plot a site-day using the comparison overlay layout and multi-method LSO
     thresholds on the same voltage axis.
 
     Expected method_thresholds entries:
       - label
-      - los_threshold
+      - lso_threshold
       - status
       - color
     """
@@ -745,7 +745,7 @@ def plot_method_threshold_overlay_day(
             label="V10m,avg",
         )
         for method_info in method_thresholds:
-            threshold_value = float(method_info["los_threshold"])
+            threshold_value = float(method_info["lso_threshold"])
             v_ax.axhline(
                 threshold_value,
                 color=method_info["color"],
@@ -753,7 +753,7 @@ def plot_method_threshold_overlay_day(
                 linewidth=1.4,
                 alpha=0.9,
                 zorder=1,
-                label=f'{method_info["label"]} LOS {threshold_value:.3f} V',
+                label=f'{method_info["label"]} LSO {threshold_value:.3f} V',
             )
 
     method_status_parts = []
@@ -792,7 +792,7 @@ def plot_method_threshold_overlay_day(
 
     all_voltage_vals = [v for v in [*v10m_vals, *vinst_vals] if v is not None]
     for method_info in method_thresholds:
-        all_voltage_vals.append(float(method_info["los_threshold"]))
+        all_voltage_vals.append(float(method_info["lso_threshold"]))
     if all_voltage_vals:
         v_min = np.floor((min(all_voltage_vals) - 1.0) / 2.0) * 2.0
         v_max = np.ceil((max(all_voltage_vals) + 1.0) / 2.0) * 2.0
