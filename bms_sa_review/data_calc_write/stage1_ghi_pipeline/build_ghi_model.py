@@ -1,0 +1,128 @@
+"""
+build_ghi_model.py  —  Stage 1, step 3 of 4
+===========================================
+
+Clean rewrite of Hossein's `model_ghi_norm.ipynb`.
+
+WHAT IT DOES
+------------
+Fits a per-site, per-time-of-day linear regression that predicts normalised
+power from irradiance:
+
+        P_norm / P_norm_cs  =  a  +  b * (GHI / GHI_cs)
+
+with the constraint a = 1 - b (on a clear-sky day both ratios are 1, so the
+line passes through (1, 1)). One (a, b, n) triple per (site_id, tod_bin).
+
+This is the AUTHORITATIVE specification: regressor is the RATIO GHI/GHI_cs, in
+5-minute time-of-day bins. (The milestone report's "raw GHI / 30-min bins"
+description was a mis-read of Hossein's split_days copy-paste; this rewrite
+makes the intended spec explicit and single-sourced.)
+
+READS
+-----
+`structured_data{SUFFIX}` + `split_days{SUFFIX}` (train days only).
+
+TRAINING FILTER (unchanged from Hossein — it is well-constructed)
+-----------------------------------------------------------------
+    P_kw_norm_cs > 0.2   exclude dawn/dusk (reference too small)
+    GHI > 50             exclude low-light noise
+    P_kw_norm > 0.05     exclude near-zero generation
+    P_kw_norm <= P_kw_norm_cs   quality gate
+    V <= 253             exclude the Volt-Watt active zone
+    (P_kw_norm >= 1 OR S_norm < 1.001)  exclude V-VAr-curtailed intervals
+                         (inverter at full output OR not at the S-limit)
+
+SAFE-BY-DEFAULT
+---------------
+Writes to `pv_ghi_norm_model{SUFFIX}` (default "_v2").
+"""
+
+from build_structured_data import TABLE_SUFFIX
+
+SD    = f"structured_data{TABLE_SUFFIX}"
+SPLIT = f"split_days{TABLE_SUFFIX}"
+TARGET = f"pv_ghi_norm_model{TABLE_SUFFIX}"
+
+TIME_BIN_MIN = 5   # 5-minute time-of-day bins (authoritative)
+
+
+def create_table(aq, database):
+    aq(f"DROP TABLE IF EXISTS {TARGET}", database=database)
+    aq(f"""
+        CREATE TABLE {TARGET} (
+            site_id BIGINT,
+            tod_bin TIME,
+            a       DOUBLE,
+            b       DOUBLE,
+            n       BIGINT
+        )
+        WITH (format = 'PARQUET')
+    """, database=database)
+    return f"Created empty {TARGET}"
+
+
+def run_year(aq, database, year, n_parts=1, parts=None):
+    """
+    Fit the model for one year. Usually cheap enough to run in one shot
+    (n_parts=1), but the slice args are here if you need them.
+    """
+    if parts is None:
+        parts = list(range(n_parts))
+
+    results = []
+    for part in parts:
+        part_filter = f"site_id % {n_parts} = {part}"
+        aq(f"""
+            INSERT INTO {TARGET}
+            WITH train_val_data AS (
+                SELECT
+                    site_id, actual_day, t_stamp,
+                    CAST(date_trunc('minute', t_stamp + interval '10' hour)
+                         - interval '1' minute * (minute(t_stamp + interval '10' hour) % {TIME_BIN_MIN})
+                         AS TIME) AS tod_bin,
+                    GHI / GHI_cs AS x,
+                    P_kw_norm / NULLIF(P_kw_norm_cs, 0.0) AS y
+                FROM {SD}
+                WHERE P_kw_norm_cs > 0.2 AND GHI > 50 AND P_kw_norm > 0.05
+                  AND P_kw_norm <= P_kw_norm_cs
+                  AND V <= 253 AND (P_kw_norm >= 1 OR S_norm < 1.001)
+                  AND year = {year} AND {part_filter}
+            ),
+            train_data AS (
+                SELECT t.*
+                FROM train_val_data t
+                JOIN {SPLIT} s ON t.site_id = s.site_id AND t.actual_day = s.actual_day
+                WHERE s.day_type = 'train'
+            ),
+            model AS (
+                SELECT site_id, tod_bin,
+                       (1 - regr_slope(y, x)) AS a,   -- a = 1 - b  (line through (1,1))
+                       regr_slope(y, x)       AS b,
+                       count(*)               AS n
+                FROM train_data
+                GROUP BY site_id, tod_bin
+            )
+            SELECT * FROM model
+        """, database=database)
+        results.append(f"fitted year={year} part={part}/{n_parts}")
+        print(results[-1])
+    return results
+
+
+def validate(aq, database):
+    n = aq(f"SELECT count(DISTINCT site_id) AS n_sites, count(*) AS n_rows FROM {TARGET}",
+           database=database)
+    print(f"Model rows: {int(n['n_rows'].iloc[0]):,}  "
+          f"across {int(n['n_sites'].iloc[0]):,} sites")
+    # A few example fits
+    sample = aq(f"""
+        SELECT site_id, tod_bin, round(a,3) AS a, round(b,3) AS b, n
+        FROM {TARGET}
+        WHERE n > 20
+        ORDER BY site_id, tod_bin
+        LIMIT 8
+    """, database=database)
+    print("Sample fits (expect a+b near 1.0):")
+    print(sample.to_string(index=False))
+    return n, sample

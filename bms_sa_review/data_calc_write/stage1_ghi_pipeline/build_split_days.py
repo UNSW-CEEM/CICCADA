@@ -1,0 +1,94 @@
+"""
+build_split_days.py  —  Stage 1, step 2 of 4
+============================================
+
+Clean rewrite of Hossein's `split_days.ipynb`.
+
+WHAT IT DOES
+------------
+Assigns each site-day to 'train' (80%) or 'val' (20%), randomly WITHIN each
+site (so no site leaks across the split). The GHI model in step 3 trains only
+on 'train' days and can be validated on 'val' days.
+
+READS
+-----
+`structured_data{SUFFIX}` (built in step 1) — NOT raw ts. This is a
+simplification vs Hossein, who rebuilt the whole clear-sky chain here. Reading
+the already-built structured table is cheaper and guarantees the split is over
+exactly the same rows the model will see.
+
+NOTE ON HOSSEIN'S BUG
+---------------------
+Hossein's split_days used `time_bin_interval = '30'` and `GHI AS x` (raw GHI),
+which differed from the model notebook. It was harmless (the split is per-day,
+independent of x), but it was the source of the "30-min raw GHI" confusion in
+the milestone report. This rewrite removes that inconsistency entirely — the
+split here depends only on which days qualify, nothing else.
+
+SAFE-BY-DEFAULT
+---------------
+Writes to `split_days{SUFFIX}` (default "_v2").
+"""
+
+from build_structured_data import TABLE_SUFFIX  # reuse the same suffix
+
+SOURCE = f"structured_data{TABLE_SUFFIX}"
+TARGET = f"split_days{TABLE_SUFFIX}"
+
+TRAIN_FRAC = 0.8
+
+
+def create_table(aq, database):
+    aq(f"DROP TABLE IF EXISTS {TARGET}", database=database)
+    aq(f"""
+        CREATE TABLE {TARGET} (
+            site_id    BIGINT,
+            actual_day DATE,
+            day_type   VARCHAR
+        )
+        WITH (format = 'PARQUET')
+    """, database=database)
+    return f"Created empty {TARGET}"
+
+
+def run(aq, database):
+    """
+    Build the split over ALL sites/days present in structured_data{SUFFIX}.
+    Cheap enough to run in one shot (operates on the already-aggregated table).
+
+    The eligibility filter mirrors the model's training filter so the split is
+    over the model-eligible population:
+        P_kw_norm_cs > 0.2, GHI > 50, P_kw_norm > 0.05,
+        V <= 253, (P_kw_norm >= 1 OR S_norm < 1.001)
+    """
+    aq(f"""
+        INSERT INTO {TARGET}
+        WITH eligible AS (
+            SELECT DISTINCT site_id, actual_day
+            FROM {SOURCE}
+            WHERE P_kw_norm_cs > 0.2 AND GHI > 50 AND P_kw_norm > 0.05
+              AND V <= 253 AND (P_kw_norm >= 1 OR S_norm < 1.001)
+        ),
+        ranked AS (
+            SELECT site_id, actual_day,
+                   row_number() OVER (PARTITION BY site_id ORDER BY random()) AS rn,
+                   count(*)    OVER (PARTITION BY site_id)                     AS total_days
+            FROM eligible
+        )
+        SELECT site_id, actual_day,
+               CASE WHEN rn <= {TRAIN_FRAC} * total_days THEN 'train' ELSE 'val' END AS day_type
+        FROM ranked
+    """, database=database)
+    return f"Populated {TARGET}"
+
+
+def validate(aq, database):
+    counts = aq(f"""
+        SELECT day_type, count(*) AS n_site_days, count(DISTINCT site_id) AS n_sites
+        FROM {TARGET}
+        GROUP BY day_type
+        ORDER BY day_type
+    """, database=database)
+    print("Train / val split:")
+    print(counts.to_string(index=False))
+    return counts

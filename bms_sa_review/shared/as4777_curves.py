@@ -1,41 +1,17 @@
 """
-as4777_curves.py  —  Single source of truth for AS/NZS 4777.2:2020 (Australia A)
-================================================================================
+Source of truth for AS/NZS 4777.2:2020 (Only Australia A for now)
+==============================================================================
 
-Why this file exists
---------------------
-Before this module, the Volt-VAr curve, the Volt-Watt curve and the inverter
-capability curve were each re-implemented FOUR times across the codebase
-(Hossein's `Volt-Var-Trino.ipynb` in both Python and SQL, `voltvar_plots.py`,
-`02_conformance`'s `get_max_P`, and `03`'s inline `_vvar_required`). Any change
-had to be made in four places, and they had already drifted apart.
-
-This module gives ONE authoritative implementation, exposed two ways:
-
-  * Python functions  (for plotting, validation, per-row pandas work)
-  * SQL-string generators  (for the Athena table-builders in data_calc_write)
-
-Both read their set-points from `ciccada_config.AS4777`, so there is exactly
-one place where the numbers live.
-
-Issues from the review that this file addresses
------------------------------------------------
-  * R10 — capability curve can use S_99 (empirical) instead of ac_capacity_kw
-          (nameplate) as the apparent-power circle radius. See `q_cap_absorbing`.
-  * R11 — removes the "curve re-implemented 4x" duplication (readability /
-          single-source-of-truth).
-
-Sign convention (generator convention, AS/NZS 4777.2 Fig 3.2)
-------------------------------------------------------------
-  +Q = supplying / injecting reactive (capacitive, leading)
-  -Q = absorbing / consuming reactive (inductive, lagging)
-  In the 240-253 V band the standard REQUIRES Q < 0 (absorbing).
+Sign convention (generator convention, AS/NZS 4777.2 Fig 3.2):
+  +Q = supplying / injecting reactive
+  -Q = absorbing / consuming reactive
+  In the 240-258 V band the standard REQUIRES Q < 0 (absorbing).
 """
 
 from ciccada_config import AS4777
 
 # ---------------------------------------------------------------------------
-# Pull set-points once, so the whole module refers to a single dict.
+# Pull set-points once
 # ---------------------------------------------------------------------------
 _VV = AS4777["VVAR"]      # V1..V4, Q1, Q4
 _VW = AS4777["VW"]        # V1, V2, P2
@@ -59,7 +35,8 @@ def vvar_required_q(v, s_rated,
         V3 < V < V4 (240-258)  :  linear ramp 0 -> -q4    (absorbing)
         V >= V4 (258)          :  -q4 * s_rated           (full absorb)
 
-    Returns a float. Negative = absorbing.
+    Returns a float. 
+    Negative = absorbing.
     """
     if v <= v1:
         return q1 * s_rated
@@ -82,9 +59,6 @@ def vvar_required_q_sql(v_col, s_col,
     SQL CASE expression (as a string) that computes the same required-Q curve
     inside an Athena/Trino query. `v_col` and `s_col` are the column names to
     plug in (e.g. 'V' and 'ac_capacity_kw').
-
-    Kept algebraically identical to the Python version above so a spot-check in
-    the test notebook will match to floating-point precision.
     """
     return f"""
         CASE
@@ -108,8 +82,8 @@ def vw_max_p(v, s_rated, v1=_VW["V1"], v2=_VW["V2"], p2=_VW["P2"]):
         V1 < V < V2 (253-260)  :  linear ramp 100% -> p2 (20%)
         V >= V2 (260)          :  p2 * s_rated          (20% floor)
 
-    Note: the 4% tolerance is NOT included here — add it separately with
-    `add_tol_kw()` so the tolerance handling is explicit and auditable.
+    Note: the 4% tolerance is NOT included here.
+    To be added separately with `add_tol_kw()` so the tolerance handling is explicit and auditable.
     """
     if v <= v1:
         return s_rated
@@ -137,20 +111,14 @@ def q_cap_absorbing(p, s_rated):
     """
     Maximum reactive power the inverter CAN absorb given it is currently
     producing active power `p`, respecting the apparent-power circle of radius
-    `s_rated`. Returns a negative number (absorbing) or 0.
+    `s_rated`. 
+    
+    Returns a negative number (absorbing) or 0.
 
         |P| < 0.2*S        : 0            (too little P to require VAr support)
         0.2 <= |P| <= 0.6  : -0.44*S      (fixed pf floor region)
         0.6 <  |P| <= 0.8  : -sqrt((|P|/0.8)^2 - |P|^2)   (pf=0.8 arc)
         |P| > 0.8          : -sqrt(S^2 - |P|^2)           (full S-circle)
-
-    *** R10 fix ***
-    Pass `s_rated = S_99` (empirical) rather than nameplate to get the physically
-    correct capability for the ~6,500 sites where S_99 > ac_capacity_kw. The
-    capability curve answers "what CAN this inverter do", and S_99 is the best
-    empirical answer. (The REQUIRED-Q curve, by contrast, should still use
-    nameplate, because the standard defines requirements as fractions of rated
-    capacity.)
     """
     import math
     ap = abs(p)
