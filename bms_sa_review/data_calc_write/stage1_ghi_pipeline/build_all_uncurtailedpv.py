@@ -64,8 +64,6 @@ def run_year(aq, database, year, mape_csv_path, n_parts=3, parts=None):
     """
     Apply the model for one year. `mape_csv_path` points at your local
     mape<50_sites.csv quality-gate file.
-
-    FIX R6 (nameplate cap) is applied in the final SELECT.
     """
     if parts is None:
         parts = list(range(n_parts))
@@ -73,15 +71,15 @@ def run_year(aq, database, year, mape_csv_path, n_parts=3, parts=None):
     acceptable = _acceptable_sites_csv(mape_csv_path)
     results = []
     for part in parts:
-        part_filter = f"site_id % {n_parts} = {part}"
+        part_filter = f"sd.site_id % {n_parts} = {part}"
         aq(f"""
             INSERT INTO {TARGET}
             WITH eligible AS (
                 SELECT
                     sd.site_id, sd.actual_day, sd.t_stamp,
-                    CAST(date_trunc('minute', sd.t_stamp + interval '10' hour)
-                         - interval '1' minute * (minute(sd.t_stamp + interval '10' hour) % {TIME_BIN_MIN})
-                         AS TIME) AS tod_bin,
+                    CAST(CAST(date_trunc('minute', t_stamp + interval '10' hour)
+                        - interval '1' minute * (minute(t_stamp + interval '10' hour) % {TIME_BIN_MIN})
+                        AS TIME) AS VARCHAR) AS tod_bin,
                     sd.GHI / sd.GHI_cs AS x,
                     sd.P_kw_norm, sd.P_kw_norm_cs, sd.S_99,
                     m.ac_capacity_kw
@@ -107,14 +105,13 @@ def run_year(aq, database, year, mape_csv_path, n_parts=3, parts=None):
             )
             SELECT
                 site_id, t_stamp,
-                year(t_stamp)  AS year,
-                month(t_stamp) AS month,
-                -- FIX R6: cap the counterfactual at nameplate
+                CAST(year(t_stamp) AS INT)  AS year,
+                CAST(month(t_stamp) AS INT) AS month,
                 least(uncurtailed_P_raw, ac_capacity_kw) AS uncurtailed_P,
                 P_kw, GHI, n_train,
                 (uncurtailed_P_raw > ac_capacity_kw)     AS capped,
-                year(t_stamp)  AS year_p,
-                month(t_stamp) AS month_p
+                CAST(year(t_stamp) AS INT)  AS year_p,
+                CAST(month(t_stamp) AS INT) AS month_p
             FROM applied
             WHERE uncurtailed_P_raw IS NOT NULL
         """, database=database)

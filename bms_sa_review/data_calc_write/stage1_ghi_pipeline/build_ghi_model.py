@@ -74,9 +74,9 @@ def run_year(aq, database, year, n_parts=1, parts=None):
             WITH train_val_data AS (
                 SELECT
                     site_id, actual_day, t_stamp,
-                    CAST(date_trunc('minute', t_stamp + interval '10' hour)
-                         - interval '1' minute * (minute(t_stamp + interval '10' hour) % {TIME_BIN_MIN})
-                         AS TIME) AS tod_bin,
+                    CAST(CAST(date_trunc('minute', t_stamp + interval '10' hour)
+                                        - interval '1' minute * (minute(t_stamp + interval '10' hour) % {TIME_BIN_MIN})
+                                        AS TIME) AS VARCHAR) AS tod_bin,
                     GHI / GHI_cs AS x,
                     P_kw_norm / NULLIF(P_kw_norm_cs, 0.0) AS y
                 FROM {SD}

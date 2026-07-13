@@ -263,7 +263,6 @@ def run_slice(aq, database, year, months, n_parts=8, parts=None):
         for part in parts:
             month_filter = f"month = {month}"
             part_filter  = f"site_id % {n_parts} = {part}"
-            # FIX R2: exclude flex-export sites (matches the GHI-model cohort)
             meta_filter  = f"is_pv = True AND flex_export_detected = False AND {part_filter}"
             sql = _insert_sql(year, month_filter, part_filter, meta_filter)
             aq(sql, database=database)
