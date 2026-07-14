@@ -145,9 +145,14 @@ def site_agg_cte(partitions, utc_start, utc_end, part_filter,
             max(m.s_99)            AS S_99             -- empirical: drives the CAPABILITY curve 
         FROM ts
         JOIN (
-            SELECT DISTINCT site_id, circuit_id, circuit_polarity, ac_capacity_kw, s_99
+            SELECT circuit_id,
+                max(site_id)          AS site_id,
+                max(circuit_polarity) AS circuit_polarity,
+                max(ac_capacity_kw)   AS ac_capacity_kw,
+                max(s_99)             AS s_99
             FROM meta_up23c
             WHERE {meta_filter(part_filter, exclude_flex)}
+            GROUP BY circuit_id
         ) AS m ON ts.circuit_id = m.circuit_id
         WHERE {partition_predicate(partitions)}
           AND ts.t_stamp >= TIMESTAMP '{utc_start}'

@@ -105,12 +105,71 @@ def run_year(aq, database, year, n_parts=1, parts=None):
         print(results[-1])
     return results
 
+def run(aq, database, years=(2024, 2025), n_parts=1, parts=None):
+    """
+    Fit the model ONCE across all years.
+
+    The model key is (site_id, tod_bin) -- there is no year dimension. Calling
+    run_year() once per year therefore inserts a SECOND row for every
+    (site_id, tod_bin) that has data in both years, which fans out the join in
+    build_all_uncurtailedpv and doubles the counterfactual table.
+    Fit across all years in a single INSERT instead.
+    """
+    if parts is None:
+        parts = list(range(n_parts))
+
+    year_list = ", ".join(str(y) for y in years)
+    results = []
+    for part in parts:
+        part_filter = f"site_id % {n_parts} = {part}"
+        aq(f"""
+            INSERT INTO {TARGET}
+            WITH train_val_data AS (
+                SELECT
+                    site_id, actual_day, t_stamp,
+                    CAST(CAST(date_trunc('minute', t_stamp + interval '10' hour)
+                              - interval '1' minute * (minute(t_stamp + interval '10' hour) % {TIME_BIN_MIN})
+                              AS TIME) AS VARCHAR) AS tod_bin,
+                    GHI / GHI_cs AS x,
+                    P_kw_norm / NULLIF(P_kw_norm_cs, 0.0) AS y
+                FROM {SD}
+                WHERE P_kw_norm_cs > 0.2 AND GHI > 50 AND P_kw_norm > 0.05
+                  AND P_kw_norm <= P_kw_norm_cs
+                  AND V <= 253 AND (P_kw_norm >= 1 OR S_norm < 1.001)
+                  AND year IN ({year_list}) AND {part_filter}
+            ),
+            train_data AS (
+                SELECT t.*
+                FROM train_val_data t
+                JOIN {SPLIT} s ON t.site_id = s.site_id AND t.actual_day = s.actual_day
+                WHERE s.day_type = 'train'
+            ),
+            model AS (
+                SELECT site_id, tod_bin,
+                       (1 - regr_slope(y, x)) AS a,
+                       regr_slope(y, x)       AS b,
+                       count(*)               AS n
+                FROM train_data
+                GROUP BY site_id, tod_bin
+            )
+            SELECT * FROM model
+        """, database=database)
+        results.append(f"fitted years={year_list} part={part}/{n_parts}")
+        print(results[-1])
+    return results
 
 def validate(aq, database):
     n = aq(f"SELECT count(DISTINCT site_id) AS n_sites, count(*) AS n_rows FROM {TARGET}",
            database=database)
+    dupes = aq(f"""
+        SELECT count(*) AS n FROM (
+            SELECT site_id, tod_bin FROM {TARGET}
+            GROUP BY site_id, tod_bin HAVING count(*) > 1
+        )
+    """, database=database)
     print(f"Model rows: {int(n['n_rows'].iloc[0]):,}  "
           f"across {int(n['n_sites'].iloc[0]):,} sites")
+    print(f"Duplicate (site_id, tod_bin) keys (MUST be 0): {int(dupes['n'].iloc[0]):,}")
     # A few example fits
     sample = aq(f"""
         SELECT site_id, tod_bin, round(a,3) AS a, round(b,3) AS b, n
@@ -121,4 +180,4 @@ def validate(aq, database):
     """, database=database)
     print("Sample fits (expect a+b near 1.0):")
     print(sample.to_string(index=False))
-    return n, sample
+    return n, dupes, sample

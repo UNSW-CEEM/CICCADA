@@ -32,6 +32,7 @@ USAGE (from the orchestrator notebook)
               n_parts=8, parts=[0])
     validate(aq, database=SAI)
 """
+import time
 
 TABLE_SUFFIX = "_v2"      # change to "" only if you deliberately want to overwrite
 TARGET = f"structured_data{TABLE_SUFFIX}"
@@ -91,9 +92,13 @@ def _insert_sql(year, month_filter, part_filter, meta_filter):
             max(S_99)    AS S_99
         FROM ts
         JOIN (
-            SELECT site_id, circuit_id, circuit_polarity, S_99
+            SELECT circuit_id,
+                max(site_id)          AS site_id,
+                max(circuit_polarity) AS circuit_polarity,
+                max(S_99)             AS S_99
             FROM meta_up23c
             WHERE {meta_filter}
+            GROUP BY circuit_id
         ) AS m ON ts.circuit_id = m.circuit_id
         WHERE year = {year} AND {month_filter} AND {part_filter}
           AND ts.is_pv = True AND voltage > 0 AND voltage < 300
@@ -269,6 +274,60 @@ def run_slice(aq, database, year, months, n_parts=8, parts=None):
             results.append(f"loaded year={year} month={month} part={part}/{n_parts}")
             print(results[-1])
     return results
+
+def run_resilient(b, aq, database, year, months, n_parts=16,
+                  pause=5, max_retries=2, split_on_fail=True):
+    """
+    Run Stage 1 slices with pacing, retry, and halve-on-failure.
+
+    A failed slice writes NOTHING (Athena INSERTs are atomic), so retrying or
+    sub-splitting it cannot duplicate rows. Sub-split uses n_parts*2, where
+    parts p and p+n_parts together cover exactly the original slice p.
+
+    Returns (done, failed) lists of (month, n_parts, part) tuples.
+    """
+    done, failed = [], []
+
+    for month in months:
+        for part in range(n_parts):
+            ok = False
+            for attempt in range(max_retries + 1):
+                try:
+                    b.run_slice(aq, database=database, year=year, months=[month],
+                                n_parts=n_parts, parts=[part])
+                    done.append((month, n_parts, part))
+                    ok = True
+                    break
+                except Exception as e:
+                    if "exhausted resources" not in str(e).lower():
+                        raise                       # a real error -- don't mask it
+                    wait = 30 * (attempt + 1)
+                    print(f"  ! {year}-{month:02d} part {part}/{n_parts} "
+                          f"exhausted resources; retry in {wait}s")
+                    time.sleep(wait)
+
+            if not ok and split_on_fail:
+                # Halve this slice: parts p and p+n_parts of a 2x split
+                print(f"  -> splitting {year}-{month:02d} part {part}/{n_parts} in two")
+                for sub in (part, part + n_parts):
+                    try:
+                        b.run_slice(aq, database=database, year=year, months=[month],
+                                    n_parts=n_parts * 2, parts=[sub])
+                        done.append((month, n_parts * 2, sub))
+                    except Exception as e:
+                        print(f"  !! {year}-{month:02d} part {sub}/{n_parts*2} FAILED: {e}")
+                        failed.append((month, n_parts * 2, sub))
+            elif not ok:
+                failed.append((month, n_parts, part))
+
+            time.sleep(pause)   # don't machine-gun Athena
+
+    print(f"\n{year}: {len(done)} slices loaded, {len(failed)} failed")
+    if failed:
+        print("Failed slices (rerun these individually):")
+        for f in failed:
+            print("  ", f)
+    return done, failed
 
 
 def validate(aq, database):

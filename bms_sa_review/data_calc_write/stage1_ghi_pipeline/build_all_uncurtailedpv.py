@@ -84,7 +84,11 @@ def run_year(aq, database, year, mape_csv_path, n_parts=3, parts=None):
                     sd.P_kw_norm, sd.P_kw_norm_cs, sd.S_99,
                     m.ac_capacity_kw
                 FROM {SD} sd
-                JOIN (SELECT DISTINCT site_id, ac_capacity_kw FROM meta_up23c) m
+                JOIN (SELECT site_id, max(ac_capacity_kw) AS ac_capacity_kw
+                    FROM meta_up23c
+                    WHERE is_pv = True
+                    GROUP BY site_id) m
+                ON sd.site_id = m.site_id
                   ON sd.site_id = m.site_id
                 WHERE sd.P_kw_norm_cs > 0.2 AND sd.GHI > 50 AND sd.P_kw_norm > 0.05
                   AND sd.P_kw_norm <= sd.P_kw_norm_cs
@@ -102,12 +106,13 @@ def run_year(aq, database, year, mape_csv_path, n_parts=3, parts=None):
                     mo.n AS n_train
                 FROM eligible e
                 JOIN {MODEL} mo ON e.site_id = mo.site_id AND e.tod_bin = mo.tod_bin
+                                AND mo.n >= 5
             )
             SELECT
                 site_id, t_stamp,
                 CAST(year(t_stamp) AS INT)  AS year,
                 CAST(month(t_stamp) AS INT) AS month,
-                least(uncurtailed_P_raw, ac_capacity_kw) AS uncurtailed_P,
+                greatest(least(uncurtailed_P_raw, ac_capacity_kw), P_kw) AS uncurtailed_P,
                 P_kw, GHI, n_train,
                 (uncurtailed_P_raw > ac_capacity_kw)     AS capped,
                 CAST(year(t_stamp) AS INT)  AS year_p,
