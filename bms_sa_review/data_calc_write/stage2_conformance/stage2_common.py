@@ -2,16 +2,6 @@
 Data calc-write pipeline: Stage 2. Shared helpers
 =================================================
 
-WHY THIS FILE EXISTS
---------------------
-`build_conformance_voltvar.py` and `build_conformance_voltwatt.py` both need
-EXACTLY the same site-level aggregation of `ts` + `meta_up23c`, and both need
-the same UTC->AEST month-window arithmetic. Duplicating that logic in two
-modules is how the inherited codebase drifted (R13: the same concept meaning
-different things in different notebooks). One definition, imported twice.
-
-Same spirit as `as4777_curves.py`: a single source of truth.
-
 WHAT IT PROVIDES
 ----------------
 1. `aest_month_window(year, month)`
@@ -26,13 +16,6 @@ WHAT IT PROVIDES
          - V      = MAX(voltage) across circuits          <- R1 fix
          - ac_capacity_kw, S_99 from metadata
        restricted to is_pv sites with flex_export_detected = False  <- R2 fix
-
-FIXES CARRIED BY THIS FILE
---------------------------
-  R1  max(voltage), not avg(voltage), across a site's circuits
-  R2  flex_export_detected = False  (exposed as `exclude_flex`)
-  R3  the AEST window arithmetic that makes correct date extraction possible
-  R9  t_stamp is UTC; +10h before ANY temporal extraction
 """
 
 from datetime import datetime, timedelta
@@ -40,19 +23,19 @@ from datetime import datetime, timedelta
 # ---------------------------------------------------------------------------
 # Conventions shared by every Stage 2 table
 # ---------------------------------------------------------------------------
-TABLE_SUFFIX = "_v2"                            # never overwrite Hossein's originals
+TABLE_SUFFIX = "_v2"                            # never overwrite originals
 WAREHOUSE    = "Trino-Warehouse/solar_analytics"
 AEST         = "+ interval '10' hour"           # UTC -> AEST (no DST, per ciccada_config)
 
 # The Stage 1 counterfactual table this stage joins against.
 UNCURTAILED = f"all_uncurtailedpv{TABLE_SUFFIX}"
 
-# Voltage sanity gate on the raw telemetry (Hossein's, unchanged)
+# Voltage sanity gate on the raw telemetry
 V_MIN, V_MAX = 0, 300
 
 
 # ===========================================================================
-# 1. AEST MONTH WINDOWS  (D2 / R3 / R9)
+# 1. AEST MONTH WINDOWS
 # ===========================================================================
 def aest_month_window(year, month):
     """
@@ -110,24 +93,24 @@ def uncurtailed_partition_predicate(partitions, alias="a"):
 
 
 # ===========================================================================
-# 2. SITE-LEVEL AGGREGATE  (R1, R2)
+# 2. SITE-LEVEL AGGREGATE
 # ===========================================================================
 def meta_filter(part_filter, exclude_flex=True):
     """
     WHERE clause for the `meta_up23c` subquery.
 
-    exclude_flex=True  -> R2: drop sites on flexible-export agreements. Their
-                          exports are curtailed by contract, not by the
+    exclude_flex=True  -> Drop sites on flexible-export agreements. 
+                          Their exports are curtailed by contract, not by the
                           inverter's Volt-Watt / Volt-VAr response, so leaving
                           them in makes externally-imposed curtailment look
                           like non-conformance.
 
-    NOTE (deviation from Hossein, deliberate): we also require
-    `ac_capacity_kw > 0 AND s_99 > 0`. The Q_impact denominator is
-    `abs(Q_required) + 1e-9`; a site with a zero/NULL nameplate gives a
-    required-Q of 0, a denominator of 1e-9, and a Q_impact of ~1e9, which lands
-    in Q_major_surplus and pollutes the fleet aggregate. `validate()` reports
-    how many sites this drops.
+    NOTE (deviation from original, deliberate): 
+    Also require `ac_capacity_kw > 0 AND s_99 > 0`. 
+    The Q_impact denominator is `abs(Q_required) + 1e-9`
+    A site with a zero/NULL nameplate gives a required-Q of 0, a denominator of 1e-9, and a Q_impact of ~1e9, which lands
+    in Q_major_surplus and pollutes the fleet aggregate. 
+    `validate()` reports how many sites this drops.
     """
     parts = [
         "is_pv = True",
@@ -135,7 +118,7 @@ def meta_filter(part_filter, exclude_flex=True):
         "s_99 > 0",
     ]
     if exclude_flex:
-        parts.append("flex_export_detected = False")   # R2
+        parts.append("flex_export_detected = False")
     parts.append(part_filter)
     return " AND ".join(parts)
 
@@ -144,7 +127,6 @@ def site_agg_cte(partitions, utc_start, utc_end, part_filter,
                  exclude_flex=True, with_reactive=True):
     """
     Build the `data` CTE: one row per (site_id, t_stamp).
-
     `with_reactive=False` skips the energy_reactive column, which lets the
     Volt-Watt builders scan one less column off the fact table.
     """
@@ -158,9 +140,9 @@ def site_agg_cte(partitions, utc_start, utc_end, part_filter,
             ts.t_stamp,
             sum(ts.power * m.circuit_polarity) / 1000 AS P_kW,
             {q_col}
-            max(ts.voltage)        AS V,               -- R1: was avg(voltage)
+            max(ts.voltage)        AS V,               -- original was avg(voltage)
             max(m.ac_capacity_kw)  AS ac_capacity_kw,  -- nameplate: drives the STANDARD's curves
-            max(m.s_99)            AS S_99             -- empirical: drives the CAPABILITY curve (R10)
+            max(m.s_99)            AS S_99             -- empirical: drives the CAPABILITY curve 
         FROM ts
         JOIN (
             SELECT DISTINCT site_id, circuit_id, circuit_polarity, ac_capacity_kw, s_99
@@ -177,17 +159,16 @@ def site_agg_cte(partitions, utc_start, utc_end, part_filter,
 
 
 # ===========================================================================
-# 3. TEMPORAL EXTRACTION  (R3, R9, R12)
+# 3. TEMPORAL EXTRACTION
 # ===========================================================================
 def temporal_cols(ts_col="t_stamp"):
     """
     AEST year / month / day / day_night. NEVER extract these from raw UTC.
 
-    R12 note: Hossein's original was
+    original was
         CASE WHEN hour(t_stamp) >= 20 OR hour(t_stamp) <= 7 THEN 'day' ELSE 'night'
     on the UTC timestamp. That is arithmetically the same window as AEST
-    06:00-17:00, so his labels were correct -- just unreadable. Written properly
-    below. His DATE extraction (day/month/year straight off UTC t_stamp) was the
+    06:00-17:00, so his labels were correct. His DATE extraction (day/month/year straight off UTC t_stamp) was the
     actual bug: every interval before 10:00 AEST was booked to the previous day.
     """
     return f"""
@@ -208,8 +189,6 @@ def run_months(aq, database, insert_sql_builder, year, months,
 
     `insert_sql_builder(partitions, utc_start, utc_end, part_filter, exclude_flex)`
     must return a complete INSERT statement. Site-slicing is `site_id % n_parts`
-    (Hossein used Trino's `system.bucket(postcode, 16)`, which Athena does not
-    have).
     """
     if parts is None:
         parts = list(range(n_parts))

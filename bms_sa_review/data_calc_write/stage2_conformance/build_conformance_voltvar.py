@@ -18,49 +18,73 @@ RATED-VALUE CONVENTION
 NAMING THRESHOLDS
 -----------------------------------------------------
 
-  Q_impact range | Hossein's name       | This module            | Meaning
-  ---------------|----------------------|-----------------------|--------------------
-  < -0.1         | Q_adverse            | Q_adverse             | wrong direction
-  -0.1 .. 0.1    | Q_inactive           | Q_inactive            | no response
+  Q_impact range | Original (Mileston3) | This module             | Meaning
+  ---------------|----------------------|-------------------------|--------------------
+  < -0.1         | Q_adverse            | Q_adverse               | wrong direction
+  -0.1 .. 0.1    | Q_inactive           | Q_inactive              | no response
   0.1 .. 0.9     | Q_minor_deviation    | Q_significant_shortfall | responded, but far short
-  0.9 .. 1.1     | Q_major_deficit      | Q_near_conformant     | essentially conformant
-  > 1.1          | Q_major_surplus      | Q_major_surplus       | over-response
+  0.9 .. 1.1     | Q_major_deficit      | Q_near_conformant       | essentially conformant
+  > 1.1          | Q_major_surplus      | Q_major_surplus         | over-response
+
+REDUCED NON-CONFORMANCE
+--------------------------------------
+    reduced = Q_adverse + Q_inactive + Q_significant_shortfall
+
+Q_near_conformant (0.9-1.1) is EXCLUDED: those inverters deliver 90-110% of the
+required reactive power. Milestone 3 included that band and excluded the
+shortfall band -- an artefact of the swapped names (R4). This module does not
+reproduce that. Figures will not match Milestone 3's Volt-VAr reduced
+non-conformance rate, and should not.
 
 SAFE-BY-DEFAULT
 ---------------
 Writes to `conformance_voltvar_v2`. Original `conformance_voltvar` untouched.
 """
 
-from shared.as4777_curves import (
+from as4777_curves import (
     vvar_required_q_sql,
     q_cap_absorbing_sql,
     tol_kw_sql,
 )
 from stage2_common import (
-    TABLE_SUFFIX, WAREHOUSE, UNCURTAILED,
-    aest_month_window, partition_predicate, uncurtailed_partition_predicate,
-    site_agg_cte, temporal_cols, run_months,
+    TABLE_SUFFIX, 
+    WAREHOUSE, 
+    UNCURTAILED,
+    aest_month_window, 
+    partition_predicate, 
+    uncurtailed_partition_predicate,
+    site_agg_cte, 
+    temporal_cols, 
+    run_months,
 )
+from ciccada_config import AS4777
 
 TARGET = f"conformance_voltvar{TABLE_SUFFIX}"
 
-# Q_impact classification thresholds (Hossein's, unchanged -- only names changed)
+# Q_impact classification thresholds
 THR1, THR2, THR3, THR4 = -0.1, 0.1, 0.9, 1.1
 
 # Volt-VAr absorbing zone (AS/NZS 4777.2 Australia A)
-V3 = 240.0      # absorption begins
-VW_V1 = 253.0   # Volt-Watt begins -- above this, P reduction is confounded
 
+# V3 = 240.0      # absorption begins
+# VW_V1 = 253.0   # Volt-Watt begins -- above this, P reduction is confounded
+
+VVAR_V3 = AS4777["VVAR"]["V3"]
+print(f"Using VVAR_V3 = {VVAR_V3} V (AS4777.2:2020 Australia A)")
+VW_V1 = AS4777["VW"]["V1"]
+print(f"Using VW_V1 = {VW_V1} V (AS4777.2:2020 Australia A)")
 
 # ---------------------------------------------------------------------------
 # DDL
 # ---------------------------------------------------------------------------
 def create_table(aq, database):
-    """Drop & recreate the empty target table. Run once before loading.
+    """
+    Drop & recreate the empty target table. 
+    Run once before loading.
 
     Partition columns (year, month) sit LAST in the column list and are
-    identity-partitioned, mirroring build_structured_data.py. The INSERT below
-    is positional, so its final SELECT must list columns in exactly this order.
+    identity-partitione
+    The INSERT below is positional, so its final SELECT must list columns in exactly this order.
     """
     aq(f"DROP TABLE IF EXISTS {TARGET}", database=database)
     aq(f"""
@@ -77,7 +101,6 @@ def create_table(aq, database):
             Q_major_surplus_sum                DOUBLE,
             curtailment_voltvar_sum            DOUBLE,
             nonconformance_voltvar_red_sum     DOUBLE,
-            nonconformance_voltvar_red_alt_sum DOUBLE,
             nonconformance_voltvar_count       BIGINT,
             Q_adverse_count                    BIGINT,
             Q_inactive_count                   BIGINT,
@@ -86,7 +109,6 @@ def create_table(aq, database):
             Q_major_surplus_count              BIGINT,
             curtailment_voltvar_count          BIGINT,
             nonconformance_voltvar_red_count   BIGINT,
-            nonconformance_voltvar_red_alt_count BIGINT,
             curtailment_eligible_count         BIGINT,
             null_uncurtailed_P_count           BIGINT,
             exposed_count                      BIGINT,
@@ -101,15 +123,12 @@ def create_table(aq, database):
     """, database=database)
     return f"Created empty {TARGET}"
 
-
-# ---------------------------------------------------------------------------
-# INSERT for one (AEST month x site-slice)
-# ---------------------------------------------------------------------------
 def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
     data = site_agg_cte(partitions, utc_start, utc_end, part_filter,
                         exclude_flex=exclude_flex, with_reactive=True)
 
-    # R11: every curve comes from the keystone. R10: capability on S_99.
+    # every curve comes from the keystone.
+    # capability on S_99.
     q_required = vvar_required_q_sql("V", "ac_capacity_kw")
     q_cap      = q_cap_absorbing_sql("P_kW", "S_99")
     tol        = tol_kw_sql("ac_capacity_kw")
@@ -168,8 +187,9 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
         FROM clamped
     ),
 
-    -- five mutually exclusive buckets. The VALUE in each is the kvar shortfall
-    -- (distance to the nearest edge of the tolerance band); 0 when inside band.
+    -- five mutually exclusive buckets. 
+    -- The VALUE in each is the kvar shortfall (distance to the nearest edge of the tolerance band) 
+    -- 0 when inside band.
     classified AS (
         SELECT
             q.site_id, q.t_stamp, q.P_kW, q.Q_kvar, q.V, q.S_99, q.Q_impact,
@@ -190,7 +210,7 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
                  THEN least(abs(q.Q_kvar - q.Q_min_final), abs(q.Q_kvar - q.Q_max_final))
                  ELSE 0 END AS Q_significant_shortfall,
 
-            -- was Q_major_deficit (R4): 0.9-1.1 is essentially CONFORMANT
+            -- was Q_major_deficit: 0.9-1.1 is essentially CONFORMANT
             CASE WHEN (q.Q_kvar < q.Q_min_final OR q.Q_kvar > q.Q_max_final)
                   AND q.Q_impact >= {THR3} AND q.Q_impact <= {THR4}
                  THEN least(abs(q.Q_kvar - q.Q_min_final), abs(q.Q_kvar - q.Q_max_final))
@@ -201,18 +221,14 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
                  THEN least(abs(q.Q_kvar - q.Q_min_final), abs(q.Q_kvar - q.Q_max_final))
                  ELSE 0 END AS Q_major_surplus,
 
-            -- R7 CURTAILMENT. Hossein flagged curtailment whenever V <= 253 and
-            -- the site sat on its S-circle -- which fires across the whole
-            -- deadband and the supplying zone, where Volt-VAr cannot be the
-            -- cause. Restricted here to the absorbing zone, below the Volt-Watt
-            -- knee, with Q actually being absorbed:
+            -- CURTAILMENT. Restricted here to the absorbing zone, below the Volt-Watt knee
+            -- with Q actually being absorbed:
             --     240 < V <= 253      absorbing zone, no Volt-Watt confound
             --     Q_kvar < 0          inverter really is absorbing
             --     sqrt(P^2+Q^2) >= S_99   sitting on the apparent-power limit
             --     uncurtailed_P > P_kW    counterfactual says it lost energy
-            -- Hard S-circle test, no tolerance band: matches Hossein and
-            -- Method A. Conservative; noted as such.
-            CASE WHEN q.V > {V3} AND q.V <= {VW_V1}
+            -- Hard S-circle test, no tolerance band
+            CASE WHEN q.V > {VVAR_V3} AND q.V <= {VW_V1}
                   AND q.Q_kvar < 0
                   AND sqrt(power(q.Q_kvar, 2) + power(q.P_kW, 2)) >= q.S_99
                   AND a.uncurtailed_P > q.P_kW
@@ -220,13 +236,13 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
                  ELSE NULL END AS curtailment_voltvar,   -- R15: NULL, not 0
 
             -- interval sat in the curtailment-detection zone (denominator)
-            CASE WHEN q.V > {V3} AND q.V <= {VW_V1}
+            CASE WHEN q.V > {VVAR_V3} AND q.V <= {VW_V1}
                   AND q.Q_kvar < 0
                   AND sqrt(power(q.Q_kvar, 2) + power(q.P_kW, 2)) >= q.S_99
                  THEN 1 ELSE 0 END AS curtailment_eligible,
 
-            -- R14: eligible interval with no GHI counterfactual to compare to
-            CASE WHEN q.V > {V3} AND q.V <= {VW_V1}
+            -- Eligible interval with no GHI counterfactual to compare to
+            CASE WHEN q.V > {VVAR_V3} AND q.V <= {VW_V1}
                   AND q.Q_kvar < 0
                   AND sqrt(power(q.Q_kvar, 2) + power(q.P_kW, 2)) >= q.S_99
                   AND a.uncurtailed_P IS NULL
@@ -240,7 +256,7 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
         ) a ON q.site_id = a.site_id AND q.t_stamp = a.t_stamp
     ),
 
-    -- R3 / R9 / R12: everything temporal comes off t_stamp + 10h
+    -- Everything temporal comes off t_stamp + 10h
     temporal AS (
         SELECT
             site_id, P_kW, V,
@@ -267,22 +283,15 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
         sum(Q_major_surplus)                            AS Q_major_surplus_sum,
         sum(curtailment_voltvar)                        AS curtailment_voltvar_sum,
 
-        -- R5, PENDING BARAN ---------------------------------------------------
-        -- `_red` reproduces Hossein's definition literally:
-        --     adverse + inactive + Q_major_deficit
-        -- which, after the R4 renaming, is adverse + inactive + NEAR-CONFORMANT.
-        -- i.e. "reduced non-conformance" currently counts the sites that are
-        -- essentially complying and ignores the ones falling well short.
-        -- `_red_alt` is what the definition almost certainly SHOULD be:
-        --     adverse + inactive + SIGNIFICANT SHORTFALL
-        -- Both are emitted so the table does not have to be rebuilt after the
-        -- conversation with Baran. DO NOT publish either number until he has
-        -- confirmed which range CANVAS intended.
-        -- ---------------------------------------------------------------------
-        sum(Q_adverse) + sum(Q_inactive) + sum(Q_near_conformant)
-                                                        AS nonconformance_voltvar_red_sum,
+        -- Reduced non-conformance (R5, RESOLVED).
+        -- Counts inverters that are actually FAILING: wrong direction, no
+        -- response, or responding at only 10-90% of what the curve requires.
+        -- Deliberately EXCLUDES Q_near_conformant (0.9-1.1) -- those inverters
+        -- are delivering 90-110% of required Q and are not failing.
+        -- Milestone 3 summed Q_near_conformant here instead of the shortfall
+        -- band, which followed from the swapped column names (R4). Not reproduced.
         sum(Q_adverse) + sum(Q_inactive) + sum(Q_significant_shortfall)
-                                                        AS nonconformance_voltvar_red_alt_sum,
+                                                        AS nonconformance_voltvar_red_sum,
 
         sum(CASE WHEN nonconformance_voltvar  > 0 THEN 1 ELSE 0 END) AS nonconformance_voltvar_count,
         sum(CASE WHEN Q_adverse               > 0 THEN 1 ELSE 0 END) AS Q_adverse_count,
@@ -294,18 +303,14 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
 
         sum(CASE WHEN Q_adverse > 0 THEN 1 ELSE 0 END)
           + sum(CASE WHEN Q_inactive > 0 THEN 1 ELSE 0 END)
-          + sum(CASE WHEN Q_near_conformant > 0 THEN 1 ELSE 0 END)
-                                                        AS nonconformance_voltvar_red_count,
-        sum(CASE WHEN Q_adverse > 0 THEN 1 ELSE 0 END)
-          + sum(CASE WHEN Q_inactive > 0 THEN 1 ELSE 0 END)
           + sum(CASE WHEN Q_significant_shortfall > 0 THEN 1 ELSE 0 END)
-                                                        AS nonconformance_voltvar_red_alt_count,
+                                                        AS nonconformance_voltvar_red_count,
 
         sum(curtailment_eligible)                       AS curtailment_eligible_count,
-        sum(null_uncurtailed_P)                         AS null_uncurtailed_P_count,   -- R14
-        sum(CASE WHEN V > {V3} THEN 1 ELSE 0 END)       AS exposed_count,              -- V-VAr can act
-        count(*)                                        AS all_intervals_count,        -- D4
-        count(nonconformance_voltvar)                   AS total_count,                -- == Hossein's
+        sum(null_uncurtailed_P)                         AS null_uncurtailed_P_count,   
+        sum(CASE WHEN V > {VVAR_V3} THEN 1 ELSE 0 END)       AS exposed_count,         -- V-VAr can act
+        count(*)                                        AS all_intervals_count,        
+        count(nonconformance_voltvar)                   AS total_count,                -- == Matching the milestone report 3
         year_aest                                       AS year,
         month_aest                                      AS month
     FROM temporal
@@ -344,8 +349,7 @@ def validate(aq, database):
         GROUP BY year, month ORDER BY year, month
     """, database=database)
 
-    # One row per (site, day, day_night). Anything > 1 means the AEST-month
-    # window logic leaked -- this is the D2 regression test.
+    # One row per (site, day, day_night). Anything > 1 means the AEST-month window logic leaked
     dupes = aq(f"""
         SELECT count(*) AS n_dupe_keys FROM (
             SELECT year, month, day, day_night, site_id
@@ -355,8 +359,7 @@ def validate(aq, database):
         )
     """, database=database)
 
-    # Curtailment can never be negative, and Q_impact buckets must sum to
-    # nonconformance.
+    # Curtailment can never be negative, and Q_impact buckets must sum to nonconformance.
     coherence = aq(f"""
         SELECT
             sum(CASE WHEN curtailment_voltvar_sum < 0 THEN 1 ELSE 0 END) AS neg_curtailment_rows,
@@ -368,7 +371,7 @@ def validate(aq, database):
         FROM {TARGET}
     """, database=database)
 
-    # How much of the curtailment zone has no counterfactual? (R14)
+    # How much of the curtailment zone has no counterfactual?
     cover = aq(f"""
         SELECT sum(curtailment_eligible_count) AS eligible,
                sum(null_uncurtailed_P_count)   AS no_counterfactual,
@@ -390,9 +393,7 @@ def validate(aq, database):
 
 def compare_to_original(aq, database, original="conformance_voltvar"):
     """
-    Reconcile against Hossein's table. Differences are EXPECTED and should be
-    explainable by: R2 (flex-export sites dropped), R1 (max vs avg voltage),
-    R3 (AEST vs UTC day boundaries), R10 (S_99 capability).
+    Reconcile against original results. The original table is not touched.
     """
     new = aq(f"SELECT count(DISTINCT site_id) AS n FROM {TARGET}", database=database)
     old = aq(f"SELECT count(DISTINCT site_id) AS n FROM {original}", database=database)

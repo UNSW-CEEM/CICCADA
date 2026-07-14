@@ -28,7 +28,7 @@ SAFE-BY-DEFAULT
 Writes to `conformance_voltwatt_v2` / `conformance_voltwattghi_v2`.
 """
 
-from shared.as4777_curves import vw_max_p_sql, tol_kw_sql
+from as4777_curves import vw_max_p_sql, tol_kw_sql
 from stage2_common import (
     TABLE_SUFFIX, 
     WAREHOUSE, 
@@ -39,12 +39,11 @@ from stage2_common import (
     temporal_cols, 
     run_months,
 )
+from ciccada_config import AS4777
 
 TARGET_BASIC = f"conformance_voltwatt{TABLE_SUFFIX}"
 TARGET_GHI   = f"conformance_voltwattghi{TABLE_SUFFIX}"
 
-
-from shared.ciccada_config import AS4777
 # VW_V1 = 253.0
 
 VW_V1 = AS4777["VW"]["V1"]
@@ -326,7 +325,7 @@ def validate_ghi(aq, database):
     print(f"\nDuplicate keys (MUST be 0): {int(dupes['n_dupe_keys'].iloc[0])}")
     print("\nCoherence (all MUST be 0):")
     print(coh.to_string(index=False))
-    print("\nCounterfactual coverage above 253 V (R14):")
+    print("\nCounterfactual coverage above 253 V:")
     print(cover.to_string(index=False))
     return shape, dupes, coh, cover
 
