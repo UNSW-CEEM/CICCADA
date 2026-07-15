@@ -10,7 +10,7 @@ All functions take explicit arguments for:
 Standard constants (AS4777, INTERVAL_H) are imported from ciccada_config.
 """
 
-from ciccada_config import AS4777
+from bms_sa_review.data_query.OBSOLETEciccada_config import AS4777
 
 # Helper: build phase-filter SQL fragments
 def _build_phase_fragments(phase_filter):
