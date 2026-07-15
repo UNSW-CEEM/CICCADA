@@ -40,6 +40,7 @@ from funcs import (
     loadCleanedSiteData,
     mapCircuitDataToSite,
 )
+from nov2022_site_days import build_nov2022_site_day_long
 
 
 PHASE_B_SUMMARY_PATH = Path("updated results/site_compliance/phase_b_site_summary_tier_based.csv")
@@ -369,15 +370,16 @@ def main() -> None:
         site_day_frames: list[pl.DataFrame] = []
         for day in DAYS_TO_CHECK:
             start_day, end_day = _window_for_day(day)
-            has_data, wide, _ = mapCircuitDataToSite(
+            site_day_long = build_nov2022_site_day_long(
                 all_data,
                 circuit_details,
                 site_id,
                 start_day,
                 end_day,
             )
-            if not has_data:
+            if site_day_long.is_empty():
                 continue
+            wide = mapCircuitDataToSite(site_day_long, site_id)
 
             # Unlike ``main.py``, this script intentionally keeps any assessed
             # site-day that has raw mapped data. It does not remove days for

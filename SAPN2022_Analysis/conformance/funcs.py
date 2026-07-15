@@ -3,8 +3,6 @@ from pathlib import Path
 
 import polars as pl
 
-from checkData import checkDupes
-
 ''' only add functions that reads from dataset and make small additons to the dataset
     do not add scripts to inspect data
 '''
@@ -253,36 +251,41 @@ def getPVCircuitDataUsingSite(siteNumber, allSites, allSites2, df):
     circuitData = circuitData.sort('local_tstamp').with_row_index("row_id")
     return circuitData, PRated
 
-def mapCircuitDataToSite(allData, circuitDetails, siteNumber, 
-                         startDay, endDay):
-    allCircuitsOnSite    = circuitDetails.filter(pl.col("site_id")==siteNumber).unique() # all circuits on site
-    pvCircuitsDataOnSite = allCircuitsOnSite.filter(pl.col("con_type") == "pv_site_net") # pv circuits
-    pvCircuitNosOnSite   = list(pvCircuitsDataOnSite["c_id"]) # list of PV circuits on site
-    site_df = (allData.filter(pl.col("c_id").is_in(pvCircuitNosOnSite))               
-        .select([
-            "c_id", "local_tstamp", "utc_tstamp", "duration", "power","voltage_valid"
-        ]))
-    
-    # Add the date filter only if provided
-    if startDay is not None and endDay is not None:
-        site_df = site_df.filter(pl.col("local_tstamp").is_between(startDay, endDay, closed="both")).collect()
-    # data does not exist for certain days
-    if site_df.is_empty():
-        return 0, site_df, pvCircuitNosOnSite # 0 for no data
-    else:
-        # Deduplicate each circuit individually
-        deDuped = site_df.group_by("c_id", maintain_order=True).map_groups(checkDupes)
+def mapCircuitDataToSite(siteDayLong, siteNumber):
+    index_columns = ["local_tstamp", "utc_tstamp"]
+    select_columns = [
+        "c_id",
+        "local_tstamp",
+        "utc_tstamp",
+        "power",
+        "voltage_valid",
+    ]
+    if "duration" in siteDayLong.columns:
+        index_columns.append("duration")
+        select_columns.insert(3, "duration")
 
-    # you need to add start and end day
-    wide = (deDuped.pivot(
-            values=["power", "voltage_valid"],
-            index=["local_tstamp", "utc_tstamp", "duration"],
-            on="c_id"
+    analysis_long = siteDayLong.select(select_columns)
+    if analysis_long.is_empty():
+        return (
+            analysis_long
+            .select([c for c in index_columns if c != "duration"])
+            .with_row_index("row_id")
+            .with_columns(pl.lit(siteNumber).alias("site_id"))
         )
+
+    wide = (
+        analysis_long
+        .pivot(
+            values=["power", "voltage_valid"],
+            index=index_columns,
+            on="c_id",
+        )
+        .sort("local_tstamp")
+        .drop("duration", strict=False)
+        .with_row_index("row_id")
+        .with_columns(pl.lit(siteNumber).alias("site_id"))
     )
-    wide = wide.sort("local_tstamp").with_row_index("row_id").with_columns(
-        pl.lit(siteNumber).alias("site_id"))
-    return 1, wide, pvCircuitNosOnSite # 1 for data
+    return wide
 
 def loadSiteData(localPath, S3Path, csv = False, convert = False):
     ''' return/ save/ read the processed data preferably as parquet 

@@ -20,6 +20,7 @@ class CheckPVBehaviour:
         self.vDrop = 2.3 if vDrop is None else vDrop
         self.powerMeasError = 0.04 if powerMeasError is None else powerMeasError
         self.vMeasError     = 0 if vMeasError is None else vMeasError
+        self._prepared_site_day_frame = None
         
         # per-row time deltas & next values
         self.circuitData = self.circuitData.with_columns(
@@ -35,86 +36,54 @@ class CheckPVBehaviour:
             pl.col("local_tstamp").shift(-1).alias("ts_next")
         )
 
-    def day_eligibility_summary(
-        self,
-        coverage_threshold=0.80,
-        window_seconds=12 * 60 * 60,
-    ):
-        """
-        Day-level data-quality gate using time-weighted common power + V10m coverage.
-        Coverage is accumulated only over timestamps where at least one raw power
-        channel is present and the site-level V10m signal is available.
-        Each row contributes its actual metrology duration in seconds.
-        """
-        power_cols = [
-            c for c in self.circuitData.columns
+    def _power_columns(self, df):
+        return [
+            c for c in df.columns
             if c.startswith("power")
             and not c.endswith("_next")
             and not c.endswith("_logic")
         ]
-        voltage_cols = [c for c in self.circuitData.columns if c.startswith(self.volCol)]
 
-        total_rows = int(self.circuitData.height)
-        if total_rows == 0 or not power_cols or not voltage_cols:
-            return {
-                "total_rows": total_rows,
-                "rows_with_power": 0,
-                "rows_with_v10m": 0,
-                "rows_common_power_v10m": 0,
-                "covered_seconds": 0.0,
-                "window_seconds": float(window_seconds),
-                "common_power_v10m_coverage_pct": 0.0,
-                "eligible": False,
-                "reason": "insufficient_raw_columns",
-            }
+    def _voltage_columns(self, df):
+        return [c for c in df.columns if c.startswith(self.volCol)]
 
+    def prepare_site_day_frame(self):
+        """
+        Build the shared site-day frame used by downstream eligibility and
+        conformance consumers. This adds the common rolling voltage signals but
+        does not apply any dataset-specific filtering policy.
+        """
+        if self._prepared_site_day_frame is not None:
+            return self._prepared_site_day_frame
+
+        voltage_cols = self._voltage_columns(self.circuitData)
         df = self.circuitData.clone()
-        for c in voltage_cols:
-            rolled_name = f"vmean_rolling_10m{c.replace(self.volCol, '', 1)}"
-            rolled = (
-                df.filter(pl.col(c).is_not_null())
-                .with_columns(
-                    pl.col(c).rolling_mean_by(by="local_tstamp", window_size="10m").alias(rolled_name)
+
+        if voltage_cols:
+            for c in voltage_cols:
+                rolled_name = f"vmean_rolling_10m{c.replace(self.volCol, '', 1)}"
+                rolled = (
+                    df.filter(pl.col(c).is_not_null())
+                    .with_columns(
+                        pl.col(c).rolling_mean_by(by="local_tstamp", window_size="10m").alias(rolled_name)
+                    )
+                    .select(["local_tstamp", rolled_name])
                 )
-                .select(["local_tstamp", rolled_name])
-            )
-            df = df.join(rolled, on="local_tstamp", how="left")
+                df = df.join(rolled, on="local_tstamp", how="left")
 
-        vmean_cols = [c for c in df.columns if c.startswith("vmean_rolling_10m")]
-        df = df.with_columns([
-            pl.mean_horizontal([pl.col(c) for c in vmean_cols]).alias("v10m_avg"),
-            pl.any_horizontal([pl.col(c).is_not_null() for c in power_cols]).alias("_has_power"),
-        ]).with_columns([
-            pl.col("v10m_avg").is_not_null().alias("_has_v10m"),
-            pl.col("duration").cast(pl.Float64, strict=False).fill_null(0.0).alias("_duration_s"),
-        ]).with_columns(
-            (pl.col("_has_power") & pl.col("_has_v10m")).alias("_has_common_power_v10m")
-        )
+            vmean_cols = [c for c in df.columns if c.startswith("vmean_rolling_10m")]
+            df = df.with_columns([
+                pl.mean_horizontal([pl.col(c) for c in vmean_cols]).alias("v10m_avg"),
+                pl.max_horizontal([pl.col(c) for c in voltage_cols]).alias("vinst_max"),
+            ])
+        else:
+            df = df.with_columns([
+                pl.lit(None).cast(pl.Float64).alias("v10m_avg"),
+                pl.lit(None).cast(pl.Float64).alias("vinst_max"),
+            ])
 
-        rows_with_power = int(df.filter(pl.col("_has_power")).height)
-        rows_with_v10m = int(df.filter(pl.col("_has_v10m")).height)
-        rows_common_power_v10m = int(df.filter(pl.col("_has_common_power_v10m")).height)
-        covered_seconds = float(
-            df.select(
-                pl.when(pl.col("_has_common_power_v10m"))
-                .then(pl.col("_duration_s"))
-                .otherwise(0)
-                .sum()
-            ).item()
-        )
-        coverage_pct = 0.0 if window_seconds == 0 else (covered_seconds / window_seconds) * 100.0
-
-        return {
-            "total_rows": total_rows,
-            "rows_with_power": rows_with_power,
-            "rows_with_v10m": rows_with_v10m,
-            "rows_common_power_v10m": rows_common_power_v10m,
-            "covered_seconds": covered_seconds,
-            "window_seconds": float(window_seconds),
-            "common_power_v10m_coverage_pct": coverage_pct,
-            "eligible": coverage_pct >= (coverage_threshold * 100.0),
-            "reason": None if coverage_pct >= (coverage_threshold * 100.0) else "common_power_v10m_coverage_below_threshold",
-        }
+        self._prepared_site_day_frame = df
+        return self._prepared_site_day_frame
 
     # ------------------------------ OV1 KPI (anti‑islanding) ------------------------------
     # (Kept as‑is for assessment; diagnostics are not emitted here)
@@ -659,16 +628,10 @@ class CheckPVBehaviour:
         The dataframe stays on the measured/switchboard basis; site-specific
         voltage shifts are learned later in Phase A.
         """
-        volCol = self.volCol
-        voltage_cols = [c for c in self.circuitData.columns if c.startswith(volCol)]
-        power_cols = [
-            c for c in self.circuitData.columns
-            if c.startswith("power")
-            and not c.endswith("_next")
-            and not c.endswith("_logic")
-        ]
+        df = self.prepare_site_day_frame()
+        power_cols = self._power_columns(df)
         power_cols_next = [
-            c for c in self.circuitData.columns
+            c for c in df.columns
             if c.startswith("power")
             and c.endswith("_next")
             and not c.endswith("_logic_next")
@@ -677,7 +640,6 @@ class CheckPVBehaviour:
         if not power_cols:
             return pl.DataFrame()
 
-        df = self.circuitData.clone()
         p_disconnect = self.powerMeasError * PRated
         p_step_strict = 0.10 * PRated
         p_step_fallback = 0.05 * PRated
@@ -706,29 +668,6 @@ class CheckPVBehaviour:
             else:
                 df = df.with_columns(pl.lit(0.0).alias(logic_next_name))
             logic_next.append(logic_next_name)
-
-        if voltage_cols:
-            for c in voltage_cols:
-                rolled_name = f"vmean_rolling_10m{c.replace(volCol, '', 1)}"
-                rolled = (
-                    df.filter(pl.col(c).is_not_null())
-                    .with_columns(
-                        pl.col(c).rolling_mean_by(by="local_tstamp", window_size="10m").alias(rolled_name)
-                    )
-                    .select(["local_tstamp", rolled_name])
-                )
-                df = df.join(rolled, on="local_tstamp", how="left")
-            vmean_cols = [c for c in df.columns if c.startswith("vmean_rolling_10m")]
-            df = df.with_columns([
-                pl.mean_horizontal([pl.col(c) for c in vmean_cols]).alias("v10m_avg"),
-                pl.max_horizontal([pl.col(c) for c in voltage_cols]).alias("vinst_max"),
-            ])
-        else:
-            vmean_cols = []
-            df = df.with_columns([
-                pl.lit(None).cast(pl.Float64).alias("v10m_avg"),
-                pl.lit(None).cast(pl.Float64).alias("vinst_max"),
-            ])
 
         df = df.with_columns([
             pl.sum_horizontal([pl.col(c) for c in logic_current]).alias("site_power"),

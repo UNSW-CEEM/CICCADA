@@ -8,8 +8,8 @@ if str(REPO_ROOT) not in sys.path:
 import polars as pl
 
 from funcs import loadCleanedSiteData, ratedCapacityOfPV
+from nov2022_site_days import collect_site_days
 from plots.plots import plot_method_threshold_overlay_day, plot_site_compliance_day
-from prepare_site_day_inputs import DAY_COVERAGE_THRESHOLD, collect_site_days
 
 
 DATA_DIR = REPO_ROOT / "Nov2022"
@@ -144,8 +144,8 @@ def _comparison_bucket(method_rows):
 def _eligible_day_behaviours(site_id, circuit_details, all_data):
     # Reuse the shared site-day builder so plotting follows the same eligibility
     # rules as the main conformance run.
-    day_behaviours = collect_site_days(site_id, circuit_details, all_data, DAYS_TO_CHECK)
-    return [day_info for day_info in day_behaviours if day_info["eligibility"]["eligible"]]
+    site_day_result = collect_site_days(site_id, circuit_details, all_data, DAYS_TO_CHECK)
+    return site_day_result["eligible_day_behaviours"]
 
 
 def _build_method_threshold_plot(day_info, p_rated, method_row):

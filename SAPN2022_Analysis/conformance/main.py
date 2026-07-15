@@ -21,10 +21,7 @@ from plots.plots import (
     plot_site_threshold_distribution,
     plot_site_threshold_distribution_extremes,
 )
-from prepare_site_day_inputs import (
-    DAY_COVERAGE_THRESHOLD,
-    collect_site_days,
-)
+from nov2022_site_days import collect_site_days
 from summaryStats import (
     summarize_multi_method_site_outputs,
 )
@@ -136,45 +133,31 @@ def main():
             continue
 
         # Build the per-day behaviour objects used by Phase A and Phase B.
-        day_behaviours = collect_site_days(site_number, circuit_details, all_data, days_to_check)
+        site_day_result = collect_site_days(
+            site_number,
+            circuit_details,
+            all_data,
+            days_to_check,
+        )
+        day_behaviours = site_day_result["eligible_day_behaviours"]
+        excluded_day_rows.extend(site_day_result["excluded_day_rows"])
 
-        if not day_behaviours:
+        if site_day_result["mapped_day_count"] == 0:
             skipped_no_day_data.append(site_number)
             continue
 
-        # Keep only days that pass the shared day-level coverage gate.
-        eligible_day_behaviours = []
-        for day_info in day_behaviours:
-            day_eligibility = day_info["eligibility"]
-            if day_eligibility["eligible"]:
-                eligible_day_behaviours.append(day_info)
-            else:
-                excluded_day_rows.append({
-                    "site_id": site_number,
-                    "day": day_info["day"],
-                    "reason": day_eligibility["reason"],
-                    "common_power_v10m_coverage_pct": day_eligibility["common_power_v10m_coverage_pct"],
-                    "rows_common_power_v10m": day_eligibility["rows_common_power_v10m"],
-                    "rows_with_power": day_eligibility["rows_with_power"],
-                    "rows_with_v10m": day_eligibility["rows_with_v10m"],
-                    "covered_seconds": day_eligibility["covered_seconds"],
-                    "window_seconds": day_eligibility["window_seconds"],
-                    "total_rows": day_eligibility["total_rows"],
-                    "coverage_threshold_pct": DAY_COVERAGE_THRESHOLD * 100.0,
-                })
-
-        if not eligible_day_behaviours:
+        if not day_behaviours:
             skipped_no_eligible_days.append(site_number)
             continue
 
         p_rated = ratedCapacityOfPV(
             site_details,
             site_number,
-            day_behaviours=eligible_day_behaviours,
+            day_behaviours=day_behaviours,
         )
 
         # Run Phase A once per site to build the candidate threshold inputs.
-        phase_a = run_phase_a_for_site(site_number, eligible_day_behaviours, p_rated)
+        phase_a = run_phase_a_for_site(site_number, day_behaviours, p_rated)
 
         if not phase_a["records"].is_empty():
             phase_a_records.append(phase_a["records"])
@@ -186,7 +169,7 @@ def main():
         for method_key in PHASE_B_METHODS_TO_RUN:
             method_phase_b = run_phase_b_for_site(
                 site_number,
-                eligible_day_behaviours,
+                day_behaviours,
                 p_rated,
                 raw_thresholds=phase_a["raw_thresholds"],
                 confidence_info=phase_a["confidence_info"],
@@ -221,7 +204,7 @@ def main():
         summary = primary_phase_b["summary_row"].to_dicts()[0]
         if GENERATE_SITE_PLOTS and summary["overall_pass"] is not None:
             plot_folder = "compliant" if summary["overall_pass"] is True else "non_compliant"
-            for day_info in eligible_day_behaviours:
+            for day_info in day_behaviours:
                 day_plot = day_info["behaviour"].phase_b_day(
                     p_rated,
                     los_threshold=summary["los_threshold_used"],
