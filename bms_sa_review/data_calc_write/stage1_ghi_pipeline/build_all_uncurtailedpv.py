@@ -89,7 +89,6 @@ def run_year(aq, database, year, mape_csv_path, n_parts=3, parts=None):
                     WHERE is_pv = True
                     GROUP BY site_id) m
                 ON sd.site_id = m.site_id
-                  ON sd.site_id = m.site_id
                 WHERE sd.P_kw_norm_cs > 0.2 AND sd.GHI > 50 AND sd.P_kw_norm > 0.05
                   AND sd.P_kw_norm <= sd.P_kw_norm_cs
                   AND sd.year = {year} AND {part_filter}

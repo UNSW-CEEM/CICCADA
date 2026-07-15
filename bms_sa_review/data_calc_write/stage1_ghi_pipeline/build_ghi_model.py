@@ -105,6 +105,28 @@ def run_year(aq, database, year, n_parts=1, parts=None):
         print(results[-1])
     return results
 
+# LEGACY-MODEL AND YEAR-POOLING NOTE
+# ----------------------------------
+# This function intentionally reproduces the inherited GHI-model algorithm used for the milestone 3 report:
+#
+#     x = GHI / GHI_cs
+#     y = P_kw_norm / P_kw_norm_cs
+#     b = regr_slope(y, x)
+#     a = 1 - b
+#
+# The slope is therefore estimated using ordinary unconstrained regression and
+# the intercept is subsequently set to 1-b so that a+b=1. This is retained for
+# comparability with the inherited CICCADA results. It should not be described
+# as the mathematically constrained least-squares fit through (1, 1).
+#
+# The selected years are pooled into one fit because the model key is only
+# (site_id, tod_bin), with no year dimension. Do not call run_year() separately
+# for multiple years and append them to the same target table, because that
+# creates duplicate model keys and fans out the downstream application join.
+#
+# Any future constrained-regression implementation should be written to a new
+# versioned model table so that legacy and revised results remain auditable.
+
 def run(aq, database, years=(2024, 2025), n_parts=1, parts=None):
     """
     Fit the model ONCE across all years.

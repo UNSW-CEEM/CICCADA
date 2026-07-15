@@ -161,11 +161,17 @@ def _insert_sql_basic(partitions, utc_start, utc_end, part_filter, exclude_flex=
 # INSERT -- GHI-aware
 # ===========================================================================
 def _insert_sql_ghi(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
-    data = site_agg_cte(partitions, utc_start, utc_end, part_filter,
-                        exclude_flex=exclude_flex, with_reactive=False)
+    data = site_agg_cte(
+        partitions,
+        utc_start,
+        utc_end,
+        part_filter,
+        exclude_flex=exclude_flex,
+        with_reactive=False,
+    )
 
-    max_p    = vw_max_p_sql("V", "ac_capacity_kw")
-    tol      = tol_kw_sql("ac_capacity_kw")
+    max_p = vw_max_p_sql("V", "ac_capacity_kw")
+    tol = tol_kw_sql("ac_capacity_kw")
     unc_pred = uncurtailed_partition_predicate(partitions, alias="a")
 
     return f"""
@@ -173,70 +179,153 @@ def _insert_sql_ghi(partitions, utc_start, utc_end, part_filter, exclude_flex=Tr
     WITH
     {data},
 
-    -- Joins all_uncurtailedpv_v2
+    -- Join the Stage 1 GHI counterfactual. This must be at most one row per
+    -- (site_id, t_stamp); the notebook checks that dependency before Stage 2.
     limits AS (
-        SELECT d.site_id, d.t_stamp, d.P_kW, d.V, d.ac_capacity_kw,
-               ({max_p}) + {tol} AS max_P_volt_watt,
-               a.uncurtailed_P
+        SELECT
+            d.site_id,
+            d.t_stamp,
+            d.P_kW,
+            d.V,
+            d.ac_capacity_kw,
+            ({max_p}) + {tol} AS max_P_volt_watt,
+            a.uncurtailed_P
         FROM data d
         LEFT JOIN (
-            SELECT a.site_id, a.t_stamp, a.uncurtailed_P
+            SELECT
+                a.site_id,
+                a.t_stamp,
+                a.uncurtailed_P
             FROM {UNCURTAILED} a
             WHERE {unc_pred}
-        ) a ON d.site_id = a.site_id AND d.t_stamp = a.t_stamp
+        ) a
+          ON d.site_id = a.site_id
+         AND d.t_stamp = a.t_stamp
     ),
 
     scored AS (
-        SELECT site_id, P_kW, V, uncurtailed_P, max_P_volt_watt,
-               {temporal_cols('t_stamp')},
+        SELECT
+            site_id,
+            P_kW,
+            V,
+            uncurtailed_P,
+            max_P_volt_watt,
+            {temporal_cols('t_stamp')},
 
-               -- Non-conformance is only ASSESSABLE when the site could plausibly
-               -- have breached the limit (counterfactual above it), or when we
-               -- have no counterfactual at all and must fall back on the raw
-               -- reading. Otherwise NULL
-               CASE WHEN V > {VW_V1}
-                     AND (uncurtailed_P > max_P_volt_watt OR uncurtailed_P IS NULL)
-                    THEN greatest(0, P_kW - max_P_volt_watt)
-                    ELSE NULL END AS nonconformance_voltwattghi,
+            -- A Volt-Watt verdict is assessable when:
+            --
+            --   1. actual P already exceeds the permitted limit, which is a
+            --      definite violation even without a counterfactual; or
+            --
+            --   2. the GHI counterfactual exceeds the limit, showing that
+            --      sufficient solar power was available to test the response.
+            --
+            -- Missing counterfactual plus actual P at/below the limit is
+            -- unknown, not evidence of conformity.
+            CASE
+                WHEN V > {VW_V1}
+                     AND P_kW IS NOT NULL
+                     AND P_kW > max_P_volt_watt
+                THEN P_kW - max_P_volt_watt
 
-               -- Curtailment: it COULD have generated above the limit, and it
-               -- didn't. NULL when absent, never 0.
-               CASE WHEN V > {VW_V1}
+                WHEN V > {VW_V1}
+                     AND P_kW IS NOT NULL
                      AND uncurtailed_P > max_P_volt_watt
-                     AND P_kW < max_P_volt_watt
-                    THEN uncurtailed_P - P_kW
-                    ELSE NULL END AS curtailment_voltwattghi,
+                THEN 0
 
-               CASE WHEN V > {VW_V1}
-                     AND (uncurtailed_P > max_P_volt_watt OR uncurtailed_P IS NULL)
-                    THEN 1 ELSE 0 END AS assessable,
+                ELSE NULL
+            END AS nonconformance_voltwattghi,
 
-               -- Exposed interval with no counterfactual behind it
-               CASE WHEN V > {VW_V1} AND uncurtailed_P IS NULL
-                    THEN 1 ELSE 0 END AS null_uncurtailed_P
+            -- Volt-Watt-attributed curtailment:
+            -- sufficient counterfactual power was available, while actual P
+            -- remained at or below the permitted Volt-Watt limit.
+            CASE
+                WHEN V > {VW_V1}
+                     AND P_kW IS NOT NULL
+                     AND uncurtailed_P > max_P_volt_watt
+                     AND P_kW <= max_P_volt_watt
+                THEN uncurtailed_P - P_kW
+
+                ELSE NULL
+            END AS curtailment_voltwattghi,
+
+            CASE
+                WHEN V > {VW_V1}
+                     AND P_kW IS NOT NULL
+                     AND (
+                         P_kW > max_P_volt_watt
+                         OR uncurtailed_P > max_P_volt_watt
+                     )
+                THEN 1
+                ELSE 0
+            END AS assessable,
+
+            -- Track every exposed interval for which Stage 1 supplied no
+            -- counterfactual, including intervals that remain unassessable.
+            CASE
+                WHEN V > {VW_V1}
+                     AND uncurtailed_P IS NULL
+                THEN 1
+                ELSE 0
+            END AS null_uncurtailed_P
+
         FROM limits
     )
 
     -- Column order MUST match create_table_ghi().
     SELECT
         site_id,
-        day_aest                                        AS day,
+        day_aest AS day,
         day_night,
-        sum(P_kW)                                       AS P_kW_sum,
-        sum(nonconformance_voltwattghi)                 AS nonconformance_voltwattghi_sum,
-        sum(curtailment_voltwattghi)                    AS curtailment_voltwattghi_sum,
-        sum(CASE WHEN nonconformance_voltwattghi > 0 THEN 1 ELSE 0 END)
-                                                        AS nonconformance_voltwattghi_count,
-        sum(CASE WHEN curtailment_voltwattghi    > 0 THEN 1 ELSE 0 END)
-                                                        AS curtailment_voltwattghi_count,
-        sum(assessable)                                 AS assessable_count,
-        sum(null_uncurtailed_P)                         AS null_uncurtailed_P_count,  -- R14
-        count(*)                                        AS all_intervals_count,
-        sum(CASE WHEN V > {VW_V1} THEN 1 ELSE 0 END)    AS total_count,               -- R13
-        year_aest                                       AS year,
-        month_aest                                      AS month
+
+        sum(P_kW) AS P_kW_sum,
+
+        sum(nonconformance_voltwattghi)
+            AS nonconformance_voltwattghi_sum,
+
+        sum(curtailment_voltwattghi)
+            AS curtailment_voltwattghi_sum,
+
+        sum(
+            CASE
+                WHEN nonconformance_voltwattghi > 0 THEN 1
+                ELSE 0
+            END
+        ) AS nonconformance_voltwattghi_count,
+
+        sum(
+            CASE
+                WHEN curtailment_voltwattghi > 0 THEN 1
+                ELSE 0
+            END
+        ) AS curtailment_voltwattghi_count,
+
+        sum(assessable)
+            AS assessable_count,
+
+        sum(null_uncurtailed_P)
+            AS null_uncurtailed_P_count,
+
+        count(*)
+            AS all_intervals_count,
+
+        sum(
+            CASE
+                WHEN V > {VW_V1} THEN 1
+                ELSE 0
+            END
+        ) AS total_count,
+
+        year_aest AS year,
+        month_aest AS month
+
     FROM scored
-    GROUP BY year_aest, month_aest, day_aest, day_night, site_id
+    GROUP BY
+        year_aest,
+        month_aest,
+        day_aest,
+        day_night,
+        site_id
     """
 
 
@@ -331,14 +420,48 @@ def validate_ghi(aq, database):
 
 
 def cross_check(aq, database):
+    """
+    Confirm that the basic and GHI-aware Volt-Watt tables contain the same
+    site-day keys and were built from the same underlying telemetry intervals.
+    """
     df = aq(f"""
-        SELECT count(*) AS n_mismatched_site_days
+        SELECT
+            sum(CASE WHEN b.site_id IS NULL THEN 1 ELSE 0 END)
+                AS keys_missing_from_basic,
+
+            sum(CASE WHEN g.site_id IS NULL THEN 1 ELSE 0 END)
+                AS keys_missing_from_ghi,
+
+            sum(CASE
+                    WHEN b.site_id IS NOT NULL
+                     AND g.site_id IS NOT NULL
+                     AND b.total_count <> g.total_count
+                    THEN 1 ELSE 0
+                END) AS total_count_mismatches,
+
+            sum(CASE
+                    WHEN b.site_id IS NOT NULL
+                     AND g.site_id IS NOT NULL
+                     AND b.all_intervals_count <> g.all_intervals_count
+                    THEN 1 ELSE 0
+                END) AS all_intervals_mismatches,
+
+            sum(CASE
+                    WHEN b.site_id IS NOT NULL
+                     AND g.site_id IS NOT NULL
+                     AND abs(b.P_kW_sum - g.P_kW_sum) > 1e-6
+                    THEN 1 ELSE 0
+                END) AS power_sum_mismatches
+
         FROM {TARGET_BASIC} b
-        JOIN {TARGET_GHI}   g
-          ON b.site_id = g.site_id AND b.year = g.year
-         AND b.month = g.month AND b.day = g.day AND b.day_night = g.day_night
-        WHERE b.total_count <> g.total_count
+        FULL OUTER JOIN {TARGET_GHI} g
+          ON b.site_id = g.site_id
+         AND b.year = g.year
+         AND b.month = g.month
+         AND b.day = g.day
+         AND b.day_night = g.day_night
     """, database=database)
-    n = int(df["n_mismatched_site_days"].iloc[0])
-    print(f"Site-days where basic.total_count != ghi.total_count (MUST be 0): {n}")
+
+    print("Basic versus GHI Volt-Watt cross-check (all MUST be 0):")
+    print(df.to_string(index=False))
     return df
