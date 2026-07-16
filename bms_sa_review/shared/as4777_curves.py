@@ -105,51 +105,50 @@ def vw_max_p_sql(v_col, s_col, v1=_VW["V1"], v2=_VW["V2"], p2=_VW["P2"]):
 
 
 # ===========================================================================
-# 3. INVERTER CAPABILITY CURVE (max reactive absorption given active power)
+# 3. PHYSICAL INVERTER CAPABILITY LIMIT
+#    Maximum reactive absorption available inside the apparent-power circle
 # ===========================================================================
 def q_cap_absorbing(p, s_rated):
     """
-    Maximum reactive power the inverter CAN absorb given it is currently
-    producing active power `p`, respecting the apparent-power circle of radius
-    `s_rated`. 
-    
-    Returns a negative number (absorbing) or 0.
+    Most-negative reactive power physically available at active power `p`,
+    assuming an apparent-power circle of radius `s_rated`.
 
-        |P| < 0.2*S        : 0            (too little P to require VAr support)
-        0.2 <= |P| <= 0.6  : -0.44*S      (fixed pf floor region)
-        0.6 <  |P| <= 0.8  : -sqrt((|P|/0.8)^2 - |P|^2)   (pf=0.8 arc)
-        |P| > 0.8          : -sqrt(S^2 - |P|^2)           (full S-circle)
+        P^2 + Q^2 <= S_rated^2
+
+    Returns:
+        -sqrt(S_rated^2 - |P|^2) when |P| < S_rated
+        0.0                          when |P| >= S_rated
+
+    Negative Q means absorbing.
+
+    Important: this is a physical capability limit, not a minimum-active-power
+    enablement rule. At P=0, the complete apparent-power circle is available,
+    so the absorbing limit is -S_rated.
     """
     import math
-    ap = abs(p)
-    if ap < 0.2 * s_rated:
+
+    if s_rated <= 0:
         return 0.0
-    elif ap <= 0.6 * s_rated:
-        return -0.44 * s_rated
-    elif ap <= 0.8 * s_rated:
-        val = (ap / 0.8) ** 2 - ap ** 2
-        return -math.sqrt(val) if val > 0 else 0.0
-    else:
-        val = s_rated ** 2 - ap ** 2
-        return -math.sqrt(val) if val > 0 else 0.0
+
+    val = s_rated ** 2 - abs(p) ** 2
+    return -math.sqrt(val) if val > 0 else 0.0
 
 
 def q_cap_absorbing_sql(p_col, s_col):
     """
-    SQL CASE expression for the capability curve.
-    Pass `s_col = 's_99'` for the R10-correct behaviour (or 'ac_capacity_kw'
-    to reproduce Hossein's original for comparison).
+    Athena/Trino SQL equivalent of q_cap_absorbing().
+
+    Pass `s_col='S_99'` when the empirical apparent-power radius is being used.
+    The expression returns the physical absorbing edge of the S-circle; it does
+    not impose a low-active-power enablement floor.
     """
+    val = f"power({s_col}, 2) - power(abs({p_col}), 2)"
+
     return f"""
         CASE
-            WHEN abs({p_col}) <  0.2 * {s_col} THEN 0
-            WHEN abs({p_col}) <= 0.6 * {s_col} THEN -0.44 * {s_col}
-            WHEN abs({p_col}) <= 0.8 * {s_col} THEN
-                CASE WHEN (power(abs({p_col})/0.8, 2) - power(abs({p_col}), 2)) < 0 THEN 0
-                     ELSE -sqrt(power(abs({p_col})/0.8, 2) - power(abs({p_col}), 2)) END
-            ELSE
-                CASE WHEN (power({s_col}, 2) - power(abs({p_col}), 2)) < 0 THEN 0
-                     ELSE -sqrt(power({s_col}, 2) - power(abs({p_col}), 2)) END
+            WHEN {s_col} <= 0 THEN 0
+            WHEN ({val}) <= 0 THEN 0
+            ELSE -sqrt({val})
         END""".strip()
 
 
