@@ -8,7 +8,7 @@ Sign convention (generator convention, AS/NZS 4777.2 Fig 3.2):
   In the 240-258 V band the standard REQUIRES Q < 0 (absorbing).
 """
 
-from ciccada_config import AS4777
+from shared.ciccada_config import AS4777
 
 # ---------------------------------------------------------------------------
 # Pull set-points once
