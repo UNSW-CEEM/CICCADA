@@ -43,9 +43,10 @@ Writes to `conformance_voltvar_v2`. Original `conformance_voltvar` untouched.
 
 from as4777_curves import (
     vvar_required_q_sql,
-    q_cap_absorbing_sql,
+    q_conformance_floor_absorbing_sql,
     tol_kw_sql,
 )
+
 from stage2_common import (
     TABLE_SUFFIX, 
     WAREHOUSE, 
@@ -73,6 +74,11 @@ VVAR_V3 = AS4777["VVAR"]["V3"]
 print(f"Using VVAR_V3 = {VVAR_V3} V (AS4777.2:2020 Australia A)")
 VW_V1 = AS4777["VW"]["V1"]
 print(f"Using VW_V1 = {VW_V1} V (AS4777.2:2020 Australia A)")
+QCAP_P_MIN = AS4777["QCAP"]["P_MIN"]
+print(
+    f"Using QCAP_P_MIN = {QCAP_P_MIN:.0%} of rated apparent power "
+    "(ac_capacity_kw proxy)"
+)
 
 # ---------------------------------------------------------------------------
 # DDL
@@ -112,6 +118,8 @@ def create_table(aq, database):
             curtailment_eligible_count         BIGINT,
             null_uncurtailed_P_count           BIGINT,
             exposed_count                      BIGINT,
+            low_power_count                    BIGINT,
+            low_power_exposed_count            BIGINT,
             all_intervals_count                BIGINT,
             total_count                        BIGINT,
             year                               INT,
@@ -124,14 +132,28 @@ def create_table(aq, database):
     return f"Created empty {TARGET}"
 
 def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
-    data = site_agg_cte(partitions, utc_start, utc_end, part_filter,
-                        exclude_flex=exclude_flex, with_reactive=True)
+    data = site_agg_cte(
+        partitions,
+        utc_start,
+        utc_end,
+        part_filter,
+        exclude_flex=exclude_flex,
+        with_reactive=True,
+    )
 
-    # every curve comes from the keystone.
-    # capability on S_99.
+    # Both the required-Q curve and Figure 2.1 minimum capability are normative
+    # quantities based on S_rated. ac_capacity_kw is the current metadata proxy.
     q_required = vvar_required_q_sql("V", "ac_capacity_kw")
-    q_cap      = q_cap_absorbing_sql("P_kW", "S_99")
-    tol        = tol_kw_sql("ac_capacity_kw")
+    q_cap = q_conformance_floor_absorbing_sql(
+        "P_kW",
+        "ac_capacity_kw",
+    )
+    tol = tol_kw_sql("ac_capacity_kw")
+
+    # Below this active-power level, Figure 2.1 does not specify a quantified
+    # minimum reactive-power capability. Those intervals are retained but are
+    # marked as not assessable for standards-based Volt-VAr conformance.
+    qcap_p_min = AS4777["QCAP"]["P_MIN"]
 
     unc_pred = uncurtailed_partition_predicate(partitions, alias="a")
 
@@ -140,183 +162,431 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
     WITH
     {data},
 
-    -- required Q from the standard's curve + what the inverter can physically do
+    -- Required Q from Clause 3.3 and the minimum capability permitted by
+    -- Clause 2.6 / Figure 2.1.
     required_q AS (
-        SELECT site_id, t_stamp, P_kW, Q_kvar, V, ac_capacity_kw, S_99,
-               {q_required} AS Q_voltvar,
-               {q_cap}      AS Q_cap_absorbing
+        SELECT
+            site_id,
+            t_stamp,
+            P_kW,
+            Q_kvar,
+            V,
+            ac_capacity_kw,
+            S_99,
+            {q_required} AS Q_voltvar,
+            {q_cap} AS Q_cap_absorbing,
+            CASE
+                WHEN abs(P_kW) >= {qcap_p_min} * ac_capacity_kw
+                THEN 1
+                ELSE 0
+            END AS capability_assessable
         FROM data
     ),
 
-    -- +/-4% of nameplate around the required value
+    -- +/-4% of nameplate around the required Volt-VAr value.
     tol_band AS (
-        SELECT *,
-               -Q_cap_absorbing        AS Q_cap_supplying,
-               Q_voltvar + {tol}       AS Q_voltvar_max,
-               Q_voltvar - {tol}       AS Q_voltvar_min
+        SELECT
+            *,
+            -Q_cap_absorbing AS Q_cap_supplying,
+            Q_voltvar + {tol} AS Q_voltvar_max,
+            Q_voltvar - {tol} AS Q_voltvar_min
         FROM required_q
     ),
 
-    -- do not penalise an inverter for failing to exceed its own S-circle
+    -- Clamp the response band to the minimum reactive-power capability that
+    -- Figure 2.1 requires at the measured active-power level.
     clamped AS (
-        SELECT *,
-               CASE WHEN Q_voltvar_max < 0
-                    THEN greatest(Q_voltvar_max, Q_cap_absorbing + {tol})
-                    ELSE Q_voltvar_max END AS Q_max_final,
-               CASE WHEN Q_voltvar_min > 0
-                    THEN least(Q_voltvar_min, Q_cap_supplying - {tol})
-                    ELSE Q_voltvar_min END AS Q_min_final
+        SELECT
+            *,
+            CASE
+                WHEN Q_voltvar_max < 0
+                THEN greatest(
+                    Q_voltvar_max,
+                    Q_cap_absorbing + {tol}
+                )
+                ELSE Q_voltvar_max
+            END AS Q_max_final,
+
+            CASE
+                WHEN Q_voltvar_min > 0
+                THEN least(
+                    Q_voltvar_min,
+                    Q_cap_supplying - {tol}
+                )
+                ELSE Q_voltvar_min
+            END AS Q_min_final
         FROM tol_band
     ),
 
-    -- normalised response score: |Q_actual| / |Q_required|, signed by direction.
-    -- 1.0 = exactly on the curve, 0 = no response, <0 = responding the wrong way.
+    -- Normalised response score:
+    --   1.0 = response at the nearest permitted band edge
+    --   0.0 = no response
+    --   < 0 = response in the wrong direction
+    --
+    -- Below 20% of the rated-power proxy, Q_impact is NULL because Figure 2.1
+    -- provides no quantified minimum capability against which to assess it.
     q_impact AS (
-        SELECT site_id, t_stamp, P_kW, Q_kvar, V, ac_capacity_kw, S_99,
-               Q_max_final, Q_min_final,
-               CASE
-                   WHEN abs(Q_kvar) / (abs(Q_max_final) + 1e-9)
-                     <= abs(Q_kvar) / (abs(Q_min_final) + 1e-9)
-                   THEN (CASE WHEN Q_max_final + Q_min_final = 0 THEN 1
-                              ELSE sign(Q_max_final) * sign(Q_kvar) END)
-                        * (abs(Q_kvar) / (abs(Q_max_final) + 1e-9))
-                   ELSE (CASE WHEN Q_max_final + Q_min_final = 0 THEN 1
-                              ELSE sign(Q_min_final) * sign(Q_kvar) END)
-                        * (abs(Q_kvar) / (abs(Q_min_final) + 1e-9))
-               END AS Q_impact
+        SELECT
+            site_id,
+            t_stamp,
+            P_kW,
+            Q_kvar,
+            V,
+            ac_capacity_kw,
+            S_99,
+            capability_assessable,
+            Q_max_final,
+            Q_min_final,
+
+            CASE
+                WHEN capability_assessable = 0 THEN NULL
+                ELSE
+                    CASE
+                        WHEN abs(Q_kvar) / (abs(Q_max_final) + 1e-9)
+                          <= abs(Q_kvar) / (abs(Q_min_final) + 1e-9)
+                        THEN
+                            (
+                                CASE
+                                    WHEN Q_max_final + Q_min_final = 0 THEN 1
+                                    ELSE sign(Q_max_final) * sign(Q_kvar)
+                                END
+                            )
+                            * (
+                                abs(Q_kvar)
+                                / (abs(Q_max_final) + 1e-9)
+                            )
+                        ELSE
+                            (
+                                CASE
+                                    WHEN Q_max_final + Q_min_final = 0 THEN 1
+                                    ELSE sign(Q_min_final) * sign(Q_kvar)
+                                END
+                            )
+                            * (
+                                abs(Q_kvar)
+                                / (abs(Q_min_final) + 1e-9)
+                            )
+                    END
+            END AS Q_impact
         FROM clamped
     ),
 
-    -- five mutually exclusive buckets. 
-    -- The VALUE in each is the kvar shortfall (distance to the nearest edge of the tolerance band) 
-    -- 0 when inside band.
+    -- Five mutually exclusive Q_impact buckets.
+    --
+    -- The value stored in each bucket is the kvar distance to the nearest edge
+    -- of the permitted tolerance/capability band. Intervals below 20% of the
+    -- rated-power proxy are retained but cannot enter a conformance bucket.
     classified AS (
         SELECT
-            q.site_id, q.t_stamp, q.P_kW, q.Q_kvar, q.V, q.S_99, q.Q_impact,
+            q.site_id,
+            q.t_stamp,
+            q.P_kW,
+            q.Q_kvar,
+            q.V,
+            q.S_99,
+            q.capability_assessable,
+            q.Q_impact,
 
-            CASE WHEN (q.Q_kvar < q.Q_min_final OR q.Q_kvar > q.Q_max_final)
+            CASE
+                WHEN q.capability_assessable = 1
+                  AND (
+                      q.Q_kvar < q.Q_min_final
+                      OR q.Q_kvar > q.Q_max_final
+                  )
                   AND q.Q_impact < {THR1}
-                 THEN least(abs(q.Q_kvar - q.Q_min_final), abs(q.Q_kvar - q.Q_max_final))
-                 ELSE 0 END AS Q_adverse,
+                THEN least(
+                    abs(q.Q_kvar - q.Q_min_final),
+                    abs(q.Q_kvar - q.Q_max_final)
+                )
+                ELSE 0
+            END AS Q_adverse,
 
-            CASE WHEN (q.Q_kvar < q.Q_min_final OR q.Q_kvar > q.Q_max_final)
-                  AND q.Q_impact >= {THR1} AND q.Q_impact <= {THR2}
-                 THEN least(abs(q.Q_kvar - q.Q_min_final), abs(q.Q_kvar - q.Q_max_final))
-                 ELSE 0 END AS Q_inactive,
+            CASE
+                WHEN q.capability_assessable = 1
+                  AND (
+                      q.Q_kvar < q.Q_min_final
+                      OR q.Q_kvar > q.Q_max_final
+                  )
+                  AND q.Q_impact >= {THR1}
+                  AND q.Q_impact <= {THR2}
+                THEN least(
+                    abs(q.Q_kvar - q.Q_min_final),
+                    abs(q.Q_kvar - q.Q_max_final)
+                )
+                ELSE 0
+            END AS Q_inactive,
 
-            -- was Q_minor_deviation (R4): 0.1-0.9 is a SIGNIFICANT shortfall
-            CASE WHEN (q.Q_kvar < q.Q_min_final OR q.Q_kvar > q.Q_max_final)
-                  AND q.Q_impact > {THR2} AND q.Q_impact < {THR3}
-                 THEN least(abs(q.Q_kvar - q.Q_min_final), abs(q.Q_kvar - q.Q_max_final))
-                 ELSE 0 END AS Q_significant_shortfall,
+            CASE
+                WHEN q.capability_assessable = 1
+                  AND (
+                      q.Q_kvar < q.Q_min_final
+                      OR q.Q_kvar > q.Q_max_final
+                  )
+                  AND q.Q_impact > {THR2}
+                  AND q.Q_impact < {THR3}
+                THEN least(
+                    abs(q.Q_kvar - q.Q_min_final),
+                    abs(q.Q_kvar - q.Q_max_final)
+                )
+                ELSE 0
+            END AS Q_significant_shortfall,
 
-            -- was Q_major_deficit: 0.9-1.1 is essentially CONFORMANT
-            CASE WHEN (q.Q_kvar < q.Q_min_final OR q.Q_kvar > q.Q_max_final)
-                  AND q.Q_impact >= {THR3} AND q.Q_impact <= {THR4}
-                 THEN least(abs(q.Q_kvar - q.Q_min_final), abs(q.Q_kvar - q.Q_max_final))
-                 ELSE 0 END AS Q_near_conformant,
+            CASE
+                WHEN q.capability_assessable = 1
+                  AND (
+                      q.Q_kvar < q.Q_min_final
+                      OR q.Q_kvar > q.Q_max_final
+                  )
+                  AND q.Q_impact >= {THR3}
+                  AND q.Q_impact <= {THR4}
+                THEN least(
+                    abs(q.Q_kvar - q.Q_min_final),
+                    abs(q.Q_kvar - q.Q_max_final)
+                )
+                ELSE 0
+            END AS Q_near_conformant,
 
-            CASE WHEN (q.Q_kvar < q.Q_min_final OR q.Q_kvar > q.Q_max_final)
+            CASE
+                WHEN q.capability_assessable = 1
+                  AND (
+                      q.Q_kvar < q.Q_min_final
+                      OR q.Q_kvar > q.Q_max_final
+                  )
                   AND q.Q_impact > {THR4}
-                 THEN least(abs(q.Q_kvar - q.Q_min_final), abs(q.Q_kvar - q.Q_max_final))
-                 ELSE 0 END AS Q_major_surplus,
+                THEN least(
+                    abs(q.Q_kvar - q.Q_min_final),
+                    abs(q.Q_kvar - q.Q_max_final)
+                )
+                ELSE 0
+            END AS Q_major_surplus,
 
-            -- CURTAILMENT. Restricted here to the absorbing zone, below the Volt-Watt knee
-            -- with Q actually being absorbed:
-            --     240 < V <= 253      absorbing zone, no Volt-Watt confound
-            --     Q_kvar < 0          inverter really is absorbing
-            --     sqrt(P^2+Q^2) >= S_99   sitting on the apparent-power limit
-            --     uncurtailed_P > P_kW    counterfactual says it lost energy
-            -- Hard S-circle test, no tolerance band
-            CASE WHEN q.V > {VVAR_V3} AND q.V <= {VW_V1}
+            -- Volt-VAr-attributed curtailment remains an empirical S_99 test.
+            -- Do not replace S_99 here with ac_capacity_kw.
+            CASE
+                WHEN q.V > {VVAR_V3}
+                  AND q.V <= {VW_V1}
                   AND q.Q_kvar < 0
-                  AND sqrt(power(q.Q_kvar, 2) + power(q.P_kW, 2)) >= q.S_99
+                  AND sqrt(
+                      power(q.Q_kvar, 2) + power(q.P_kW, 2)
+                  ) >= q.S_99
                   AND a.uncurtailed_P > q.P_kW
-                 THEN a.uncurtailed_P - q.P_kW
-                 ELSE NULL END AS curtailment_voltvar,   -- R15: NULL, not 0
+                THEN a.uncurtailed_P - q.P_kW
+                ELSE NULL
+            END AS curtailment_voltvar,
 
-            -- interval sat in the curtailment-detection zone (denominator)
-            CASE WHEN q.V > {VVAR_V3} AND q.V <= {VW_V1}
+            CASE
+                WHEN q.V > {VVAR_V3}
+                  AND q.V <= {VW_V1}
                   AND q.Q_kvar < 0
-                  AND sqrt(power(q.Q_kvar, 2) + power(q.P_kW, 2)) >= q.S_99
-                 THEN 1 ELSE 0 END AS curtailment_eligible,
+                  AND sqrt(
+                      power(q.Q_kvar, 2) + power(q.P_kW, 2)
+                  ) >= q.S_99
+                THEN 1
+                ELSE 0
+            END AS curtailment_eligible,
 
-            -- Eligible interval with no GHI counterfactual to compare to
-            CASE WHEN q.V > {VVAR_V3} AND q.V <= {VW_V1}
+            CASE
+                WHEN q.V > {VVAR_V3}
+                  AND q.V <= {VW_V1}
                   AND q.Q_kvar < 0
-                  AND sqrt(power(q.Q_kvar, 2) + power(q.P_kW, 2)) >= q.S_99
+                  AND sqrt(
+                      power(q.Q_kvar, 2) + power(q.P_kW, 2)
+                  ) >= q.S_99
                   AND a.uncurtailed_P IS NULL
-                 THEN 1 ELSE 0 END AS null_uncurtailed_P
+                THEN 1
+                ELSE 0
+            END AS null_uncurtailed_P
 
         FROM q_impact q
+
         LEFT JOIN (
-            SELECT a.site_id, a.t_stamp, a.uncurtailed_P
+            SELECT
+                a.site_id,
+                a.t_stamp,
+                a.uncurtailed_P
             FROM {UNCURTAILED} a
             WHERE {unc_pred}
-        ) a ON q.site_id = a.site_id AND q.t_stamp = a.t_stamp
+        ) a
+          ON q.site_id = a.site_id
+         AND q.t_stamp = a.t_stamp
     ),
 
-    -- Everything temporal comes off t_stamp + 10h
+    -- All calendar fields are derived from fixed AEST.
     temporal AS (
         SELECT
-            site_id, P_kW, V,
+            site_id,
+            P_kW,
+            V,
+            capability_assessable,
             {temporal_cols('t_stamp')},
-            Q_adverse, Q_inactive, Q_significant_shortfall,
-            Q_near_conformant, Q_major_surplus,
-            Q_adverse + Q_inactive + Q_significant_shortfall
-                      + Q_near_conformant + Q_major_surplus AS nonconformance_voltvar,
-            curtailment_voltvar, curtailment_eligible, null_uncurtailed_P
+
+            Q_adverse,
+            Q_inactive,
+            Q_significant_shortfall,
+            Q_near_conformant,
+            Q_major_surplus,
+
+            CASE
+                WHEN capability_assessable = 1
+                THEN
+                    Q_adverse
+                    + Q_inactive
+                    + Q_significant_shortfall
+                    + Q_near_conformant
+                    + Q_major_surplus
+                ELSE NULL
+            END AS nonconformance_voltvar,
+
+            curtailment_voltvar,
+            curtailment_eligible,
+            null_uncurtailed_P
         FROM classified
     )
 
-    -- Column order below MUST match create_table() exactly (positional INSERT).
+    -- Column order must match create_table() exactly because the INSERT is
+    -- positional.
     SELECT
         site_id,
-        day_aest                                        AS day,
+        day_aest AS day,
         day_night,
-        sum(P_kW)                                       AS P_kW_sum,
-        sum(nonconformance_voltvar)                     AS nonconformance_voltvar_sum,
-        sum(Q_adverse)                                  AS Q_adverse_sum,
-        sum(Q_inactive)                                 AS Q_inactive_sum,
-        sum(Q_significant_shortfall)                    AS Q_significant_shortfall_sum,
-        sum(Q_near_conformant)                          AS Q_near_conformant_sum,
-        sum(Q_major_surplus)                            AS Q_major_surplus_sum,
-        sum(curtailment_voltvar)                        AS curtailment_voltvar_sum,
 
-        -- Reduced non-conformance (R5, RESOLVED).
-        -- Counts inverters that are actually FAILING: wrong direction, no
-        -- response, or responding at only 10-90% of what the curve requires.
-        -- Deliberately EXCLUDES Q_near_conformant (0.9-1.1) -- those inverters
-        -- are delivering 90-110% of required Q and are not failing.
-        -- Milestone 3 summed Q_near_conformant here instead of the shortfall
-        -- band, which followed from the swapped column names (R4). Not reproduced.
-        sum(Q_adverse) + sum(Q_inactive) + sum(Q_significant_shortfall)
-                                                        AS nonconformance_voltvar_red_sum,
+        sum(P_kW) AS P_kW_sum,
+        sum(nonconformance_voltvar)
+            AS nonconformance_voltvar_sum,
 
-        sum(CASE WHEN nonconformance_voltvar  > 0 THEN 1 ELSE 0 END) AS nonconformance_voltvar_count,
-        sum(CASE WHEN Q_adverse               > 0 THEN 1 ELSE 0 END) AS Q_adverse_count,
-        sum(CASE WHEN Q_inactive              > 0 THEN 1 ELSE 0 END) AS Q_inactive_count,
-        sum(CASE WHEN Q_significant_shortfall > 0 THEN 1 ELSE 0 END) AS Q_significant_shortfall_count,
-        sum(CASE WHEN Q_near_conformant       > 0 THEN 1 ELSE 0 END) AS Q_near_conformant_count,
-        sum(CASE WHEN Q_major_surplus         > 0 THEN 1 ELSE 0 END) AS Q_major_surplus_count,
-        sum(CASE WHEN curtailment_voltvar     > 0 THEN 1 ELSE 0 END) AS curtailment_voltvar_count,
+        sum(Q_adverse)
+            AS Q_adverse_sum,
+        sum(Q_inactive)
+            AS Q_inactive_sum,
+        sum(Q_significant_shortfall)
+            AS Q_significant_shortfall_sum,
+        sum(Q_near_conformant)
+            AS Q_near_conformant_sum,
+        sum(Q_major_surplus)
+            AS Q_major_surplus_sum,
 
-        sum(CASE WHEN Q_adverse > 0 THEN 1 ELSE 0 END)
-          + sum(CASE WHEN Q_inactive > 0 THEN 1 ELSE 0 END)
-          + sum(CASE WHEN Q_significant_shortfall > 0 THEN 1 ELSE 0 END)
-                                                        AS nonconformance_voltvar_red_count,
+        sum(curtailment_voltvar)
+            AS curtailment_voltvar_sum,
 
-        sum(curtailment_eligible)                       AS curtailment_eligible_count,
-        sum(null_uncurtailed_P)                         AS null_uncurtailed_P_count,   
-        sum(CASE WHEN V > {VVAR_V3} THEN 1 ELSE 0 END)       AS exposed_count,         -- V-VAr can act
-        count(*)                                        AS all_intervals_count,        
-        count(nonconformance_voltvar)                   AS total_count,                -- == Matching the milestone report 3
-        year_aest                                       AS year,
-        month_aest                                      AS month
+        sum(Q_adverse)
+            + sum(Q_inactive)
+            + sum(Q_significant_shortfall)
+            AS nonconformance_voltvar_red_sum,
+
+        sum(
+            CASE
+                WHEN nonconformance_voltvar > 0 THEN 1
+                ELSE 0
+            END
+        ) AS nonconformance_voltvar_count,
+
+        sum(
+            CASE
+                WHEN Q_adverse > 0 THEN 1
+                ELSE 0
+            END
+        ) AS Q_adverse_count,
+
+        sum(
+            CASE
+                WHEN Q_inactive > 0 THEN 1
+                ELSE 0
+            END
+        ) AS Q_inactive_count,
+
+        sum(
+            CASE
+                WHEN Q_significant_shortfall > 0 THEN 1
+                ELSE 0
+            END
+        ) AS Q_significant_shortfall_count,
+
+        sum(
+            CASE
+                WHEN Q_near_conformant > 0 THEN 1
+                ELSE 0
+            END
+        ) AS Q_near_conformant_count,
+
+        sum(
+            CASE
+                WHEN Q_major_surplus > 0 THEN 1
+                ELSE 0
+            END
+        ) AS Q_major_surplus_count,
+
+        sum(
+            CASE
+                WHEN curtailment_voltvar > 0 THEN 1
+                ELSE 0
+            END
+        ) AS curtailment_voltvar_count,
+
+        sum(
+            CASE
+                WHEN Q_adverse > 0 THEN 1
+                ELSE 0
+            END
+        )
+        + sum(
+            CASE
+                WHEN Q_inactive > 0 THEN 1
+                ELSE 0
+            END
+        )
+        + sum(
+            CASE
+                WHEN Q_significant_shortfall > 0 THEN 1
+                ELSE 0
+            END
+        ) AS nonconformance_voltvar_red_count,
+
+        sum(curtailment_eligible)
+            AS curtailment_eligible_count,
+
+        sum(null_uncurtailed_P)
+            AS null_uncurtailed_P_count,
+
+        sum(
+            CASE
+                WHEN V > {VVAR_V3} THEN 1
+                ELSE 0
+            END
+        ) AS exposed_count,
+
+        sum(
+            CASE
+                WHEN capability_assessable = 0 THEN 1
+                ELSE 0
+            END
+        ) AS low_power_count,
+
+        sum(
+            CASE
+                WHEN capability_assessable = 0
+                 AND V > {VVAR_V3}
+                THEN 1
+                ELSE 0
+            END
+        ) AS low_power_exposed_count,
+
+        count(*) AS all_intervals_count,
+
+        -- Only intervals at or above 20% of the rated-power proxy are included
+        -- in the standards-based conformance denominator.
+        count(nonconformance_voltvar) AS total_count,
+
+        year_aest AS year,
+        month_aest AS month
+
     FROM temporal
-    GROUP BY year_aest, month_aest, day_aest, day_night, site_id
+    GROUP BY
+        year_aest,
+        month_aest,
+        day_aest,
+        day_night,
+        site_id
     """
-
 
 # ---------------------------------------------------------------------------
 # Runner
@@ -367,7 +637,12 @@ def validate(aq, database):
                               - (Q_adverse_sum + Q_inactive_sum + Q_significant_shortfall_sum
                                  + Q_near_conformant_sum + Q_major_surplus_sum)) > 1e-6
                      THEN 1 ELSE 0 END) AS bucket_mismatch_rows,
-            sum(CASE WHEN total_count > all_intervals_count THEN 1 ELSE 0 END) AS count_inversion_rows
+            sum(CASE WHEN total_count > all_intervals_count 
+                   THEN 1 ELSE 0 END) AS count_inversion_rows,
+            sum(CASE WHEN total_count + low_power_count <> all_intervals_count
+                    THEN 1 ELSE 0 END) AS assessment_partition_mismatch_rows,
+            sum(CASE WHEN low_power_exposed_count > exposed_count
+                    THEN 1 ELSE 0 END) AS low_power_exposure_inversion_rows
         FROM {TARGET}
     """, database=database)
 

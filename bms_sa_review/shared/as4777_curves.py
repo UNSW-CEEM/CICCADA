@@ -184,6 +184,71 @@ def q_cap_absorbing_sql(p_col, s_col):
         END""".strip()
 
 
+def q_conformance_floor_absorbing(p, s_rated):
+    """
+    Minimum absorbing-Q response used by the field conformance assessment.
+
+    Unlike q_cap_absorbing(), this does not relax the required Volt-VAr
+    response above 80% S_rated. In that region, reactive-power priority
+    requires active power to be reduced where necessary.
+
+        |P| < 0.20 S       : no quantified minimum
+        0.20 S to 0.60 S   : -0.44 S
+        >0.60 S to 0.80 S  : PF 0.8 boundary
+        >0.80 S            : -0.60 S absorbing response available by
+                             reducing active power where necessary
+    """
+    import math
+
+    if s_rated <= 0:
+        return 0.0
+
+    p_abs = abs(p)
+    p_min = _QC["P_MIN"]
+    p_flat_max = _QC["P_FLAT_MAX"]
+    q_flat = _QC["Q_FLAT"]
+    pf_min = _QC["PF_MIN"]
+    p_circle = _QC["P_CIRCLE"]
+    q_absorbing_max = _VV["Q4"]
+
+    if p_abs < p_min * s_rated:
+        return 0.0
+
+    if p_abs <= p_flat_max * s_rated:
+        return -q_flat * s_rated
+
+    if p_abs <= p_circle * s_rated:
+        q_to_p = math.sqrt(1.0 / pf_min**2 - 1.0)
+        return -p_abs * q_to_p
+
+    # Above 80%, do not use the falling edge of the fixed-P circle as an
+    # excuse for deficient Q. Active power must be reduced where necessary.
+    return -q_absorbing_max * s_rated
+
+
+def q_conformance_floor_absorbing_sql(p_col, s_col):
+    """Athena/Trino equivalent of q_conformance_floor_absorbing()."""
+    p_min = _QC["P_MIN"]
+    p_flat_max = _QC["P_FLAT_MAX"]
+    q_flat = _QC["Q_FLAT"]
+    pf_min = _QC["PF_MIN"]
+    p_circle = _QC["P_CIRCLE"]
+    q_absorbing_max = _VV["Q4"]
+
+    pf_ratio = f"sqrt(power(1.0 / {pf_min}, 2) - 1.0)"
+
+    return f"""
+        CASE
+            WHEN {s_col} <= 0 THEN 0
+            WHEN abs({p_col}) < {p_min} * {s_col}
+                THEN 0
+            WHEN abs({p_col}) <= {p_flat_max} * {s_col}
+                THEN -{q_flat} * {s_col}
+            WHEN abs({p_col}) <= {p_circle} * {s_col}
+                THEN -abs({p_col}) * {pf_ratio}
+            ELSE -{q_absorbing_max} * {s_col}
+        END""".strip()
+
 # ===========================================================================
 # 4. TOLERANCE HELPERS  (±4% of nameplate, additive in kW)
 # ===========================================================================

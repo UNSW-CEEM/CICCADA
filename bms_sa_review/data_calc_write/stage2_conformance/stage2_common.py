@@ -142,7 +142,7 @@ def site_agg_cte(partitions, utc_start, utc_end, part_filter,
             {q_col}
             max(ts.voltage)        AS V,               -- original was avg(voltage)
             max(m.ac_capacity_kw)  AS ac_capacity_kw,  -- nameplate: drives the STANDARD's curves
-            max(m.s_99)            AS S_99             -- empirical: drives the CAPABILITY curve 
+            max(m.s_99)            AS S_99             -- empirical: drives curtailment-limit detection
         FROM ts
         JOIN (
             SELECT circuit_id,
