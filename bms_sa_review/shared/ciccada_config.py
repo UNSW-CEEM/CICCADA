@@ -34,6 +34,19 @@ AS4777 = {
         "Q1": 0.44,   # fraction of S_rated, supplying
         "Q4": 0.60,   # fraction of S_rated, absorbing
     },
+
+    # AS/NZS 4777.2:2020 Figure 2.1 minimum reactive-power capability.
+    # P and Q are fractions of rated apparent power S_rated.
+    # Below 20% S_rated the standard specifies no quantified minimum Q.
+    # From >60% S_rated the inverter must operate down to PF 0.8.
+    "QCAP": {
+        "P_MIN":        0.20,
+        "P_FLAT_MAX":   0.60,
+        "Q_FLAT":       0.44,
+        "PF_MIN":       0.80,
+        "P_CIRCLE":     0.80,
+    },
+
     # Volt-VAr Q_impact category thresholds (signed measured/required ratio).
     #   < thr1        : Q_adverse                 wrong direction
     #   thr1 .. thr2  : Q_inactive                no response

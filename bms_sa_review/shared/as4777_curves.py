@@ -16,6 +16,7 @@ from ciccada_config import AS4777
 _VV = AS4777["VVAR"]      # V1..V4, Q1, Q4
 _VW = AS4777["VW"]        # V1, V2, P2
 _TOL = AS4777["TOL_FRAC"] # 0.04
+_QC = AS4777["QCAP"] # From AS477.2.2020 Figure 2.1.
 
 
 # ===========================================================================
@@ -105,50 +106,81 @@ def vw_max_p_sql(v_col, s_col, v1=_VW["V1"], v2=_VW["V2"], p2=_VW["P2"]):
 
 
 # ===========================================================================
-# 3. PHYSICAL INVERTER CAPABILITY LIMIT
-#    Maximum reactive absorption available inside the apparent-power circle
+# 3. AS/NZS 4777.2:2020 FIGURE 2.1 MINIMUM REACTIVE-POWER CAPABILITY
 # ===========================================================================
 def q_cap_absorbing(p, s_rated):
     """
-    Most-negative reactive power physically available at active power `p`,
-    assuming an apparent-power circle of radius `s_rated`.
+    Minimum absorbing reactive-power capability required by Figure 2.1.
 
-        P^2 + Q^2 <= S_rated^2
+    `s_rated` must be rated apparent power. In the current CICCADA metadata,
+    `ac_capacity_kw` is used as an explicitly documented proxy because a
+    separate rated-apparent-power field is unavailable.
 
-    Returns:
-        -sqrt(S_rated^2 - |P|^2) when |P| < S_rated
-        0.0                          when |P| >= S_rated
+    Returns the absorbing boundary using the generator convention:
+        negative Q = absorbing.
 
-    Negative Q means absorbing.
+        |P| < 0.20 S       :  0
+        0.20 S to 0.60 S   : -0.44 S
+        >0.60 S to 0.80 S  : PF 0.8 boundary
+        >0.80 S to 1.00 S  : apparent-power circle
+        |P| >= S           :  0
 
-    Important: this is a physical capability limit, not a minimum-active-power
-    enablement rule. At P=0, the complete apparent-power circle is available,
-    so the absorbing limit is -S_rated.
+    Below 20% S_rated, zero means that Figure 2.1 specifies no quantified
+    minimum capability. It does not mean that the inverter is physically
+    incapable of producing reactive power.
     """
     import math
 
     if s_rated <= 0:
         return 0.0
 
-    val = s_rated ** 2 - abs(p) ** 2
+    p_abs = abs(p)
+    p_min = _QC["P_MIN"]
+    p_flat_max = _QC["P_FLAT_MAX"]
+    q_flat = _QC["Q_FLAT"]
+    pf_min = _QC["PF_MIN"]
+    p_circle = _QC["P_CIRCLE"]
+
+    if p_abs < p_min * s_rated:
+        return 0.0
+
+    if p_abs <= p_flat_max * s_rated:
+        return -q_flat * s_rated
+
+    if p_abs <= p_circle * s_rated:
+        q_to_p = math.sqrt(1.0 / pf_min**2 - 1.0)
+        return -p_abs * q_to_p
+
+    val = s_rated**2 - p_abs**2
     return -math.sqrt(val) if val > 0 else 0.0
 
 
 def q_cap_absorbing_sql(p_col, s_col):
     """
-    Athena/Trino SQL equivalent of q_cap_absorbing().
+    Athena/Trino equivalent of q_cap_absorbing().
 
-    Pass `s_col='S_99'` when the empirical apparent-power radius is being used.
-    The expression returns the physical absorbing edge of the S-circle; it does
-    not impose a low-active-power enablement floor.
+    `s_col` must represent rated apparent power, or the documented
+    `ac_capacity_kw` proxy. Do not pass empirical S_99 here.
     """
-    val = f"power({s_col}, 2) - power(abs({p_col}), 2)"
+    p_min = _QC["P_MIN"]
+    p_flat_max = _QC["P_FLAT_MAX"]
+    q_flat = _QC["Q_FLAT"]
+    pf_min = _QC["PF_MIN"]
+    p_circle = _QC["P_CIRCLE"]
+
+    circle_val = f"power({s_col}, 2) - power(abs({p_col}), 2)"
+    pf_ratio = f"sqrt(power(1.0 / {pf_min}, 2) - 1.0)"
 
     return f"""
         CASE
             WHEN {s_col} <= 0 THEN 0
-            WHEN ({val}) <= 0 THEN 0
-            ELSE -sqrt({val})
+            WHEN abs({p_col}) <  {p_min} * {s_col} THEN 0
+            WHEN abs({p_col}) <= {p_flat_max} * {s_col}
+                THEN -{q_flat} * {s_col}
+            WHEN abs({p_col}) <= {p_circle} * {s_col}
+                THEN -abs({p_col}) * {pf_ratio}
+            WHEN ({circle_val}) <= 0 THEN 0
+            ELSE -sqrt({circle_val})
         END""".strip()
 
 
