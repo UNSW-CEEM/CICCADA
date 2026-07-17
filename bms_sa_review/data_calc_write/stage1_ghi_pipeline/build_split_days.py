@@ -31,21 +31,21 @@ TRAIN_FRAC = 0.8
 
 
 
-def create_table(aq, database):
-    aq(f"DROP TABLE IF EXISTS {TARGET}", database=database)
+def create_table(aq, database, target=TARGET):
+    aq(f"DROP TABLE IF EXISTS {target}", database=database)
     aq(f"""
-        CREATE TABLE {TARGET} (
+        CREATE TABLE {target} (
             site_id    BIGINT,
             actual_day DATE,
             day_type   STRING
         )
-        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET}/'
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{target}/'
         TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
-    return f"Created empty {TARGET}"
+    return f"Created empty {target}"
 
 
-def run(aq, database):
+def run(aq, database, source=SOURCE, target=TARGET):
     """
     Build the split over ALL sites/days present in structured_data{SUFFIX}.
     The eligibility filter mirrors the model's training filter so the split is
@@ -54,10 +54,10 @@ def run(aq, database):
         V <= 253, (P_kw_norm >= 1 OR S_norm < 1.001)
     """
     aq(f"""
-        INSERT INTO {TARGET}
+        INSERT INTO {target}
         WITH eligible AS (
             SELECT DISTINCT site_id, actual_day
-            FROM {SOURCE}
+            FROM {source}
             WHERE P_kw_norm_cs > 0.2 AND GHI > 50 AND P_kw_norm > 0.05
               AND V <= 253 AND (P_kw_norm >= 1 OR S_norm < 1.001)
         ),
@@ -74,14 +74,13 @@ def run(aq, database):
     return f"Populated {TARGET}"
 
 
-def validate(aq, database):
+def validate(aq, database, target=TARGET):
     counts = aq(f"""
         SELECT day_type, count(*) AS n_site_days, count(DISTINCT site_id) AS n_sites
-        FROM {TARGET}
+        FROM {target}
         GROUP BY day_type
         ORDER BY day_type
     """, database=database)
     print("Train / val split:")
     print(counts.to_string(index=False))
     return counts
-

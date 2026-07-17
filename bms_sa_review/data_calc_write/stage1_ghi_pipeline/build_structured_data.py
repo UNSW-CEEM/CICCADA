@@ -33,19 +33,31 @@ USAGE (from the orchestrator notebook)
     validate(aq, database=SAI)
 """
 import time
+from pipeline_options import capacity_column, flex_predicate, voltage_aggregate_sql
 
 TABLE_SUFFIX = "_v2"      # change to "" only if you deliberately want to overwrite
 TARGET = f"structured_data{TABLE_SUFFIX}"
 WAREHOUSE = "Trino-Warehouse/solar_analytics"
 
+# Empirical clear-sky heuristics inherited from Hossein's cell 7. These are
+# modelling choices, not AS/NZS 4777.2 or BOM requirements. Change only as a
+# labelled sensitivity run and record retained-site/interval coverage.
+CLEAR_SKY_TOP_N = 3
+CLEAR_SKY_MAX_CLOUD_SUM = 60
+CLEAR_SKY_MIN_MAX_GHI = 200
+CLEAR_SKY_MAX_DAY_SEPARATION = 45
+CLEAR_SKY_PROFILE_PERCENTILE = 0.60
+CLEAR_SKY_PROFILE_RADIUS = 3
+CLEAR_SKY_GAP_MINUTES = 30
+
 # ---------------------------------------------------------------------------
 # DDL create the empty target table (Iceberg, partitioned by year/month)
 # ---------------------------------------------------------------------------
-def create_table(aq, database):
+def create_table(aq, database, target=TARGET):
     """Drop & recreate the empty target table. Run once before loading."""
-    aq(f"DROP TABLE IF EXISTS {TARGET}", database=database)
+    aq(f"DROP TABLE IF EXISTS {target}", database=database)
     aq(f"""
-        CREATE TABLE {TARGET} (
+        CREATE TABLE {target} (
             site_id       BIGINT,
             t_stamp       TIMESTAMP,
             actual_day    DATE,
@@ -62,40 +74,55 @@ def create_table(aq, database):
             GHI_cs        DOUBLE,
             cloud_type_cs INT,
             S_99          DOUBLE,
+            ac_capacity_kw DOUBLE,
+            normalization_capacity DOUBLE,
+            normalization_basis STRING,
+            voltage_aggregation STRING,
+            flex_selection STRING,
             year          INT,
             month         INT
         )
         PARTITIONED BY (year, month)
-        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET}/'
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{target}/'
         TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
-    return f"Created empty {TARGET}"
+    return f"Created empty {target}"
 
 
 # ---------------------------------------------------------------------------
 # INSERT one (year, month-set, site-slice) at a time
 # ---------------------------------------------------------------------------
-def _insert_sql(year, month_filter, part_filter, meta_filter):
+def _insert_sql(
+    year, month_filter, part_filter, meta_filter, *, target=TARGET,
+    normalization_basis="s_99", voltage_aggregation="avg",
+    flex_selection="exclude",
+):
     """
     Build the INSERT ... SELECT statement for one slice.
     """
+    normalization_col = capacity_column(normalization_basis)
+    voltage_sql = voltage_aggregate_sql(voltage_aggregation, "voltage")
     return f"""
-    INSERT INTO {TARGET}
+    INSERT INTO {target}
     WITH
     -- circuit -> site aggregation ------------------------------------------
     data AS (
         SELECT
             site_id, t_stamp,
-            sum(power * circuit_polarity) / 1000 / max(S_99)            AS P_kw_norm,
-            sum(energy_reactive * circuit_polarity) / 1000 / max(S_99) * 12 AS Q_kvar_norm,
-            max(voltage) AS V,          -- FIX R1: was avg(voltage)
-            max(S_99)    AS S_99
+            sum(power * circuit_polarity) / 1000 / max({normalization_col}) AS P_kw_norm,
+            sum(energy_reactive * circuit_polarity) / 1000
+                / max({normalization_col}) * 12 AS Q_kvar_norm,
+            {voltage_sql} AS V,
+            max(S_99) AS S_99,
+            max(ac_capacity_kw) AS ac_capacity_kw,
+            max({normalization_col}) AS normalization_capacity
         FROM ts
         JOIN (
             SELECT circuit_id,
                 max(site_id)          AS site_id,
                 max(circuit_polarity) AS circuit_polarity,
-                max(S_99)             AS S_99
+                max(S_99)             AS S_99,
+                max(ac_capacity_kw)   AS ac_capacity_kw
             FROM meta_up23c
             WHERE {meta_filter}
             GROUP BY circuit_id
@@ -135,7 +162,9 @@ def _insert_sql(year, month_filter, part_filter, meta_filter):
                                       ORDER BY cloud_sum ASC, day ASC) AS rn
             FROM daily_cloud
         )
-        WHERE rn < 4 AND cloud_sum < 60 AND max_GHI > 200
+        WHERE rn <= {CLEAR_SKY_TOP_N}
+          AND cloud_sum < {CLEAR_SKY_MAX_CLOUD_SUM}
+          AND max_GHI > {CLEAR_SKY_MIN_MAX_GHI}
     ),
     daily_site_days AS (
         SELECT n_lat, n_long, date_trunc('day', t_stamp + interval '10' hour) AS day
@@ -175,7 +204,7 @@ def _insert_sql(year, month_filter, part_filter, meta_filter):
     gaps AS (
         SELECT *,
                CASE WHEN prev_ts IS NULL THEN 0
-                    WHEN t_stamp - prev_ts > interval '30' minute THEN 1
+                     WHEN t_stamp - prev_ts > interval '{CLEAR_SKY_GAP_MINUTES}' minute THEN 1
                     ELSE 0 END AS gap_start
         FROM base
     ),
@@ -194,13 +223,15 @@ def _insert_sql(year, month_filter, part_filter, meta_filter):
             CAST(date_trunc('minute', s.t_stamp + interval '10' hour)
                  - interval '1' minute * (minute(s.t_stamp + interval '10' hour) % 5)
                  AS TIME) AS cs_tod,
-            approx_percentile(P_kw_norm, 0.6) OVER (
+            approx_percentile(P_kw_norm, {CLEAR_SKY_PROFILE_PERCENTILE}) OVER (
                 PARTITION BY s.site_id, date_trunc('day', s.t_stamp + interval '10' hour), segment_id
-                ORDER BY t_stamp ROWS BETWEEN 3 PRECEDING AND 3 FOLLOWING
+                ORDER BY t_stamp ROWS BETWEEN {CLEAR_SKY_PROFILE_RADIUS} PRECEDING
+                                        AND {CLEAR_SKY_PROFILE_RADIUS} FOLLOWING
             ) AS P_kw_norm_cs,
-            approx_percentile(GHI, 0.6) OVER (
+            approx_percentile(GHI, {CLEAR_SKY_PROFILE_PERCENTILE}) OVER (
                 PARTITION BY s.site_id, date_trunc('day', s.t_stamp + interval '10' hour), segment_id
-                ORDER BY t_stamp ROWS BETWEEN 3 PRECEDING AND 3 FOLLOWING
+                ORDER BY t_stamp ROWS BETWEEN {CLEAR_SKY_PROFILE_RADIUS} PRECEDING
+                                        AND {CLEAR_SKY_PROFILE_RADIUS} FOLLOWING
             ) AS GHI_cs,
             cloud_type AS cloud_type_cs
         FROM segments s
@@ -226,6 +257,11 @@ def _insert_sql(year, month_filter, part_filter, meta_filter):
             CAST(ncs.cs_tod AS VARCHAR) AS cs_tod,
             ncs.P_kw_norm_cs, ncs.GHI_cs, ncs.cloud_type_cs,
             d.S_99,
+            d.ac_capacity_kw,
+            d.normalization_capacity,
+            '{normalization_basis}' AS normalization_basis,
+            '{voltage_aggregation}' AS voltage_aggregation,
+            '{flex_selection}' AS flex_selection,
             CAST(year(d.t_stamp) AS INT)  AS year,
             CAST(month(d.t_stamp) AS INT) AS month
         FROM data d
@@ -242,13 +278,18 @@ def _insert_sql(year, month_filter, part_filter, meta_filter):
          AND n.clear_sky_day = ncs.cs_day
         JOIN bom5min b
           ON m.n_lat = b.latitude AND m.n_long = b.longitude AND b.time_5min = d.t_stamp
-        WHERE abs(date_diff('day', ncs.cs_day, n.actual_day)) < 45
+        WHERE abs(date_diff('day', ncs.cs_day, n.actual_day))
+              < {CLEAR_SKY_MAX_DAY_SEPARATION}
     )
     SELECT * FROM assembled
     """.replace("{time_col}", "time")
 
 
-def run_slice(aq, database, year, months, n_parts=8, parts=None):
+def run_slice(
+    aq, database, year, months, n_parts=8, parts=None, *, target=TARGET,
+    normalization_basis="s_99", voltage_aggregation="avg",
+    flex_selection="exclude",
+):
     """
     Load one slice at a time
 
@@ -268,15 +309,25 @@ def run_slice(aq, database, year, months, n_parts=8, parts=None):
         for part in parts:
             month_filter = f"month = {month}"
             part_filter  = f"site_id % {n_parts} = {part}"
-            meta_filter  = f"is_pv = True AND flex_export_detected = False AND {part_filter}"
-            sql = _insert_sql(year, month_filter, part_filter, meta_filter)
+            meta_filter = (
+                "is_pv = True AND ac_capacity_kw > 0 AND s_99 > 0 AND "
+                f"{flex_predicate(flex_selection)} AND {part_filter}"
+            )
+            sql = _insert_sql(
+                year, month_filter, part_filter, meta_filter,
+                target=target,
+                normalization_basis=normalization_basis,
+                voltage_aggregation=voltage_aggregation,
+                flex_selection=flex_selection,
+            )
             aq(sql, database=database)
             results.append(f"loaded year={year} month={month} part={part}/{n_parts}")
             print(results[-1])
     return results
 
 def run_resilient(b, aq, database, year, months, n_parts=16,
-                  pause=5, max_retries=2, split_on_fail=True):
+                  pause=5, max_retries=2, split_on_fail=True,
+                  **run_options):
     """
     Run Stage 1 slices with pacing, retry, and halve-on-failure.
 
@@ -294,7 +345,7 @@ def run_resilient(b, aq, database, year, months, n_parts=16,
             for attempt in range(max_retries + 1):
                 try:
                     b.run_slice(aq, database=database, year=year, months=[month],
-                                n_parts=n_parts, parts=[part])
+                                n_parts=n_parts, parts=[part], **run_options)
                     done.append((month, n_parts, part))
                     ok = True
                     break
@@ -312,7 +363,7 @@ def run_resilient(b, aq, database, year, months, n_parts=16,
                 for sub in (part, part + n_parts):
                     try:
                         b.run_slice(aq, database=database, year=year, months=[month],
-                                    n_parts=n_parts * 2, parts=[sub])
+                                    n_parts=n_parts * 2, parts=[sub], **run_options)
                         done.append((month, n_parts * 2, sub))
                     except Exception as e:
                         print(f"  !! {year}-{month:02d} part {sub}/{n_parts*2} FAILED: {e}")
@@ -330,14 +381,14 @@ def run_resilient(b, aq, database, year, months, n_parts=16,
     return done, failed
 
 
-def validate(aq, database):
+def validate(aq, database, target=TARGET):
     """sanity checks after loading."""
-    n_sites = aq(f"SELECT count(DISTINCT site_id) AS n FROM {TARGET}", database=database)
+    n_sites = aq(f"SELECT count(DISTINCT site_id) AS n FROM {target}", database=database)
     v_stats = aq(f"""
         SELECT round(min(V),1) AS v_min, round(avg(V),1) AS v_avg,
                round(max(V),1) AS v_max,
                round(avg(P_kw_norm),3) AS p_norm_avg
-        FROM {TARGET}
+        FROM {target}
     """, database=database)
     print(f"Distinct sites: {int(n_sites['n'].iloc[0]):,}")
     print("Voltage / P_norm sanity:")

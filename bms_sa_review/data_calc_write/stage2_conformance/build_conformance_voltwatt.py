@@ -40,6 +40,7 @@ from stage2_common import (
     run_months,
 )
 from ciccada_config import AS4777
+from pipeline_options import capacity_column
 
 TARGET_BASIC = f"conformance_voltwatt{TABLE_SUFFIX}"
 TARGET_GHI   = f"conformance_voltwattghi{TABLE_SUFFIX}"
@@ -52,10 +53,10 @@ print(f"Using VW_V1 = {VW_V1} V (AS4777.2:2020 Australia A)")
 # ===========================================================================
 # DDL
 # ===========================================================================
-def create_table_basic(aq, database):
-    aq(f"DROP TABLE IF EXISTS {TARGET_BASIC}", database=database)
+def create_table_basic(aq, database, target=TARGET_BASIC):
+    aq(f"DROP TABLE IF EXISTS {target}", database=database)
     aq(f"""
-        CREATE TABLE {TARGET_BASIC} (
+        CREATE TABLE {target} (
             site_id                        BIGINT,
             day                            INT,
             day_night                      STRING,
@@ -64,20 +65,23 @@ def create_table_basic(aq, database):
             nonconformance_voltwatt_count  BIGINT,
             all_intervals_count            BIGINT,
             total_count                    BIGINT,
+            rating_basis                   STRING,
+            voltage_aggregation            STRING,
+            flex_selection                 STRING,
             year                           INT,
             month                          INT
         )
         PARTITIONED BY (year, month)
-        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET_BASIC}/'
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{target}/'
         TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
-    return f"Created empty {TARGET_BASIC}"
+    return f"Created empty {target}"
 
 
-def create_table_ghi(aq, database):
-    aq(f"DROP TABLE IF EXISTS {TARGET_GHI}", database=database)
+def create_table_ghi(aq, database, target=TARGET_GHI):
+    aq(f"DROP TABLE IF EXISTS {target}", database=database)
     aq(f"""
-        CREATE TABLE {TARGET_GHI} (
+        CREATE TABLE {target} (
             site_id                           BIGINT,
             day                               INT,
             day_night                         STRING,
@@ -90,34 +94,48 @@ def create_table_ghi(aq, database):
             null_uncurtailed_P_count          BIGINT,
             all_intervals_count               BIGINT,
             total_count                       BIGINT,
+            rating_basis                      STRING,
+            voltage_aggregation               STRING,
+            flex_selection                    STRING,
             year                              INT,
             month                             INT
         )
         PARTITIONED BY (year, month)
-        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET_GHI}/'
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{target}/'
         TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
-    return f"Created empty {TARGET_GHI}"
+    return f"Created empty {target}"
 
 
-def create_tables(aq, database):
-    return [create_table_basic(aq, database), create_table_ghi(aq, database)]
+def create_tables(aq, database, target_basic=TARGET_BASIC, target_ghi=TARGET_GHI):
+    return [
+        create_table_basic(aq, database, target=target_basic),
+        create_table_ghi(aq, database, target=target_ghi),
+    ]
 
 
 # ===========================================================================
 # INSERT -- basic
 # ===========================================================================
-def _insert_sql_basic(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
+def _insert_sql_basic(
+    partitions, utc_start, utc_end, part_filter, exclude_flex=None, *,
+    target=TARGET_BASIC, rating_basis="ac_capacity_kw",
+    voltage_aggregation="avg", flex_selection="exclude",
+):
     # Volt-Watt does not need reactive power -> one less column off the fact table.
-    data = site_agg_cte(partitions, utc_start, utc_end, part_filter,
-                        exclude_flex=exclude_flex, with_reactive=False)
+    data = site_agg_cte(
+        partitions, utc_start, utc_end, part_filter,
+        exclude_flex=exclude_flex, with_reactive=False,
+        flex_selection=flex_selection,
+        voltage_aggregation=voltage_aggregation,
+    )
 
-    # curve from the keystone. Tolerance added explicitly, on nameplate.
-    max_p = vw_max_p_sql("V", "ac_capacity_kw")
-    tol   = tol_kw_sql("ac_capacity_kw")
+    rating_col = capacity_column(rating_basis)
+    max_p = vw_max_p_sql("V", rating_col)
+    tol   = tol_kw_sql(rating_col)
 
     return f"""
-    INSERT INTO {TARGET_BASIC}
+    INSERT INTO {target}
     WITH
     {data},
 
@@ -150,6 +168,9 @@ def _insert_sql_basic(partitions, utc_start, utc_end, part_filter, exclude_flex=
                                                         AS nonconformance_voltwatt_count,
         count(*)                                        AS all_intervals_count,
         sum(CASE WHEN V > {VW_V1} THEN 1 ELSE 0 END)    AS total_count,   -- R13
+        '{rating_basis}'                                AS rating_basis,
+        '{voltage_aggregation}'                         AS voltage_aggregation,
+        '{flex_selection}'                              AS flex_selection,
         year_aest                                       AS year,
         month_aest                                      AS month
     FROM scored
@@ -160,7 +181,12 @@ def _insert_sql_basic(partitions, utc_start, utc_end, part_filter, exclude_flex=
 # ===========================================================================
 # INSERT -- GHI-aware
 # ===========================================================================
-def _insert_sql_ghi(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
+def _insert_sql_ghi(
+    partitions, utc_start, utc_end, part_filter, exclude_flex=None, *,
+    target=TARGET_GHI, uncurtailed=UNCURTAILED,
+    rating_basis="ac_capacity_kw", voltage_aggregation="avg",
+    flex_selection="exclude",
+):
     data = site_agg_cte(
         partitions,
         utc_start,
@@ -168,14 +194,17 @@ def _insert_sql_ghi(partitions, utc_start, utc_end, part_filter, exclude_flex=Tr
         part_filter,
         exclude_flex=exclude_flex,
         with_reactive=False,
+        flex_selection=flex_selection,
+        voltage_aggregation=voltage_aggregation,
     )
 
-    max_p = vw_max_p_sql("V", "ac_capacity_kw")
-    tol = tol_kw_sql("ac_capacity_kw")
+    rating_col = capacity_column(rating_basis)
+    max_p = vw_max_p_sql("V", rating_col)
+    tol = tol_kw_sql(rating_col)
     unc_pred = uncurtailed_partition_predicate(partitions, alias="a")
 
     return f"""
-    INSERT INTO {TARGET_GHI}
+    INSERT INTO {target}
     WITH
     {data},
 
@@ -196,7 +225,7 @@ def _insert_sql_ghi(partitions, utc_start, utc_end, part_filter, exclude_flex=Tr
                 a.site_id,
                 a.t_stamp,
                 a.uncurtailed_P
-            FROM {UNCURTAILED} a
+            FROM {uncurtailed} a
             WHERE {unc_pred}
         ) a
           ON d.site_id = a.site_id
@@ -316,6 +345,10 @@ def _insert_sql_ghi(partitions, utc_start, utc_end, part_filter, exclude_flex=Tr
             END
         ) AS total_count,
 
+        '{rating_basis}' AS rating_basis,
+        '{voltage_aggregation}' AS voltage_aggregation,
+        '{flex_selection}' AS flex_selection,
+
         year_aest AS year,
         month_aest AS month
 
@@ -333,24 +366,30 @@ def _insert_sql_ghi(partitions, utc_start, utc_end, part_filter, exclude_flex=Tr
 # Runners
 # ===========================================================================
 def run_months_basic(aq, database, year, months, n_parts=8, parts=None,
-                     exclude_flex=True):
+                     exclude_flex=None, **run_options):
     return run_months(aq, database, _insert_sql_basic, year, months,
-                      n_parts=n_parts, parts=parts, exclude_flex=exclude_flex)
+                      n_parts=n_parts, parts=parts, exclude_flex=exclude_flex,
+                      **run_options)
 
 
 def run_months_ghi(aq, database, year, months, n_parts=8, parts=None,
-                   exclude_flex=True):
+                   exclude_flex=None, **run_options):
     return run_months(aq, database, _insert_sql_ghi, year, months,
-                      n_parts=n_parts, parts=parts, exclude_flex=exclude_flex)
+                      n_parts=n_parts, parts=parts, exclude_flex=exclude_flex,
+                      **run_options)
 
 
 def preview_sql(which="basic", year=2024, month=1, n_parts=8, part=0,
-                exclude_flex=True):
+                exclude_flex=None, **run_options):
     """Return the INSERT SQL for one slice WITHOUT running it."""
     utc_start, utc_end, partitions = aest_month_window(year, month)
     builder = _insert_sql_basic if which == "basic" else _insert_sql_ghi
-    return builder(partitions, utc_start, utc_end,
-                   f"site_id % {n_parts} = {part}", exclude_flex)
+    return builder(
+        partitions, utc_start, utc_end,
+        f"site_id % {n_parts} = {part}",
+        exclude_flex=exclude_flex,
+        **run_options,
+    )
 
 
 # ===========================================================================
@@ -376,14 +415,14 @@ def _dupes(aq, database, table):
     """, database=database)
 
 
-def validate_basic(aq, database):
-    shape = _shape(aq, database, TARGET_BASIC)
-    dupes = _dupes(aq, database, TARGET_BASIC)
+def validate_basic(aq, database, target=TARGET_BASIC):
+    shape = _shape(aq, database, target)
+    dupes = _dupes(aq, database, target)
     coh = aq(f"""
         SELECT sum(CASE WHEN nonconformance_voltwatt_sum < 0 THEN 1 ELSE 0 END) AS neg_rows,
                sum(CASE WHEN total_count > all_intervals_count THEN 1 ELSE 0 END) AS count_inversion_rows,
                sum(CASE WHEN nonconformance_voltwatt_count > total_count THEN 1 ELSE 0 END) AS impossible_rows
-        FROM {TARGET_BASIC}
+        FROM {target}
     """, database=database)
     print("Rows / sites / days per AEST month:")
     print(shape.to_string(index=False))
@@ -393,21 +432,21 @@ def validate_basic(aq, database):
     return shape, dupes, coh
 
 
-def validate_ghi(aq, database):
-    shape = _shape(aq, database, TARGET_GHI)
-    dupes = _dupes(aq, database, TARGET_GHI)
+def validate_ghi(aq, database, target=TARGET_GHI):
+    shape = _shape(aq, database, target)
+    dupes = _dupes(aq, database, target)
     coh = aq(f"""
         SELECT sum(CASE WHEN curtailment_voltwattghi_sum < 0 THEN 1 ELSE 0 END) AS neg_curtailment_rows,
                sum(CASE WHEN assessable_count > total_count THEN 1 ELSE 0 END)  AS impossible_rows,
                sum(CASE WHEN total_count > all_intervals_count THEN 1 ELSE 0 END) AS count_inversion_rows
-        FROM {TARGET_GHI}
+        FROM {target}
     """, database=database)
     cover = aq(f"""
         SELECT sum(total_count)              AS exposed_intervals,
                sum(null_uncurtailed_P_count) AS no_counterfactual,
                round(100.0 * sum(null_uncurtailed_P_count)
                      / nullif(sum(total_count), 0), 2) AS pct_missing
-        FROM {TARGET_GHI}
+        FROM {target}
     """, database=database)
     print("Rows / sites / days per AEST month:")
     print(shape.to_string(index=False))
@@ -419,7 +458,7 @@ def validate_ghi(aq, database):
     return shape, dupes, coh, cover
 
 
-def cross_check(aq, database):
+def cross_check(aq, database, target_basic=TARGET_BASIC, target_ghi=TARGET_GHI):
     """
     Confirm that the basic and GHI-aware Volt-Watt tables contain the same
     site-day keys and were built from the same underlying telemetry intervals.
@@ -453,8 +492,8 @@ def cross_check(aq, database):
                     THEN 1 ELSE 0
                 END) AS power_sum_mismatches
 
-        FROM {TARGET_BASIC} b
-        FULL OUTER JOIN {TARGET_GHI} g
+        FROM {target_basic} b
+        FULL OUTER JOIN {target_ghi} g
           ON b.site_id = g.site_id
          AND b.year = g.year
          AND b.month = g.month

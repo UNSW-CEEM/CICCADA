@@ -16,7 +16,7 @@ from shared.ciccada_config import AS4777
 _VV = AS4777["VVAR"]      # V1..V4, Q1, Q4
 _VW = AS4777["VW"]        # V1, V2, P2
 _TOL = AS4777["TOL_FRAC"] # 0.04
-_QC = AS4777["QCAP"] # From AS477.2.2020 Figure 2.1.
+_QC = AS4777["QCAP"]      # From AS477.2.2020 Figure 2.1.
 
 
 # ===========================================================================
@@ -159,8 +159,9 @@ def q_cap_absorbing_sql(p_col, s_col):
     """
     Athena/Trino equivalent of q_cap_absorbing().
 
-    `s_col` must represent rated apparent power, or the documented
-    `ac_capacity_kw` proxy. Do not pass empirical S_99 here.
+    `s_col` must represent rated apparent power. 
+    It may be thedocumented `ac_capacity_kw` proxy, or `S_99` only for an explicitly labelled sensitivity run. 
+    `S_99` is empirical and must not be presented as verified manufacturer S_rated.
     """
     p_min = _QC["P_MIN"]
     p_flat_max = _QC["P_FLAT_MAX"]
@@ -250,16 +251,16 @@ def q_conformance_floor_absorbing_sql(p_col, s_col):
         END""".strip()
 
 # ===========================================================================
-# 4. TOLERANCE HELPERS  (±4% of nameplate, additive in kW)
+# 4. TOLERANCE HELPERS  (±4% of selected rating proxy, additive in kW)
 # ===========================================================================
-def add_tol_kw(value, ac_capacity_kw, tol_frac=_TOL, sign=+1):
-    """Add (sign=+1) or subtract (sign=-1) the 4%-of-nameplate tolerance, in kW."""
-    return value + sign * tol_frac * ac_capacity_kw
+def add_tol_kw(value, capacity, tol_frac=_TOL, sign=+1):
+    """Add/subtract 4% of the selected, explicitly labelled capacity basis."""
+    return value + sign * tol_frac * capacity
 
 
-def tol_kw_sql(ac_col, tol_frac=_TOL):
-    """Return the SQL fragment for the tolerance magnitude in kW (e.g. '0.04 * ac_capacity_kw')."""
-    return f"{tol_frac} * {ac_col}"
+def tol_kw_sql(capacity_col, tol_frac=_TOL):
+    """Return the SQL fragment for 4% of the selected capacity-basis column."""
+    return f"{tol_frac} * {capacity_col}"
 
 
 # ===========================================================================

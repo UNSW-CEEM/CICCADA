@@ -7,13 +7,15 @@ Produces `conformance_voltvar_v2`:
 - the five Q_impact category buckets, and 
 - the Volt-VAr-attributed active-power curtailment.
 
-RATED-VALUE CONVENTION
+CAPACITY CONVENTION
 ------------------------------------------------
-  * The STANDARD's required-Q curve is defined against rated apparent power
-    -> `ac_capacity_kw` (nameplate).
-  * The inverter's CAPABILITY curve is a physical limit
-    -> `s_99` (empirical 99th-percentile apparent power).
-  * The +/-4% tolerance band is a fraction of NAMEPLATE.
+The standard refers to rated apparent power. 
+This dataset has no verified manufacturer ``S_rated`` field, so each run must declare its proxy:
+
+  * ``rating_basis`` scales required Q, the +/-4% band, the 20% assessability rule, and Figure 2.1. It defaults to provider ``ac_capacity_kw``.
+  * ``empirical_limit_basis`` drives only the observed apparent-limit symptom. It defaults to empirical ``S_99``.
+
+An all-``S_99`` run is a labelled sensitivity analysis, not evidence that ``S_99`` is manufacturer nameplate.
 
 NAMING THRESHOLDS
 -----------------------------------------------------
@@ -59,6 +61,7 @@ from stage2_common import (
     run_months,
 )
 from ciccada_config import AS4777
+from pipeline_options import capacity_column
 
 TARGET = f"conformance_voltvar{TABLE_SUFFIX}"
 
@@ -77,13 +80,13 @@ print(f"Using VW_V1 = {VW_V1} V (AS4777.2:2020 Australia A)")
 QCAP_P_MIN = AS4777["QCAP"]["P_MIN"]
 print(
     f"Using QCAP_P_MIN = {QCAP_P_MIN:.0%} of rated apparent power "
-    "(ac_capacity_kw proxy)"
+    "(capacity proxy selected and labelled at run time)"
 )
 
 # ---------------------------------------------------------------------------
 # DDL
 # ---------------------------------------------------------------------------
-def create_table(aq, database):
+def create_table(aq, database, target=TARGET):
     """
     Drop & recreate the empty target table. 
     Run once before loading.
@@ -92,9 +95,9 @@ def create_table(aq, database):
     identity-partitione
     The INSERT below is positional, so its final SELECT must list columns in exactly this order.
     """
-    aq(f"DROP TABLE IF EXISTS {TARGET}", database=database)
+    aq(f"DROP TABLE IF EXISTS {target}", database=database)
     aq(f"""
-        CREATE TABLE {TARGET} (
+        CREATE TABLE {target} (
             site_id                            BIGINT,
             day                                INT,
             day_night                          STRING,
@@ -122,16 +125,25 @@ def create_table(aq, database):
             low_power_exposed_count            BIGINT,
             all_intervals_count                BIGINT,
             total_count                        BIGINT,
+            rating_basis                       STRING,
+            empirical_limit_basis              STRING,
+            voltage_aggregation                STRING,
+            flex_selection                     STRING,
             year                               INT,
             month                              INT
         )
         PARTITIONED BY (year, month)
-        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET}/'
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{target}/'
         TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
-    return f"Created empty {TARGET}"
+    return f"Created empty {target}"
 
-def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
+def _insert_sql(
+    partitions, utc_start, utc_end, part_filter, exclude_flex=None, *,
+    target=TARGET, uncurtailed=UNCURTAILED,
+    rating_basis="ac_capacity_kw", empirical_limit_basis="s_99",
+    voltage_aggregation="avg", flex_selection="exclude",
+):
     data = site_agg_cte(
         partitions,
         utc_start,
@@ -139,16 +151,20 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
         part_filter,
         exclude_flex=exclude_flex,
         with_reactive=True,
+        flex_selection=flex_selection,
+        voltage_aggregation=voltage_aggregation,
     )
 
     # Both the required-Q curve and Figure 2.1 minimum capability are normative
-    # quantities based on S_rated. ac_capacity_kw is the current metadata proxy.
-    q_required = vvar_required_q_sql("V", "ac_capacity_kw")
+    # quantities based on S_rated. The selected basis is recorded in output.
+    rating_col = capacity_column(rating_basis)
+    empirical_col = capacity_column(empirical_limit_basis)
+    q_required = vvar_required_q_sql("V", rating_col)
     q_cap = q_conformance_floor_absorbing_sql(
         "P_kW",
-        "ac_capacity_kw",
+        rating_col,
     )
-    tol = tol_kw_sql("ac_capacity_kw")
+    tol = tol_kw_sql(rating_col)
 
     # Below this active-power level, Figure 2.1 does not specify a quantified
     # minimum reactive-power capability. Those intervals are retained but are
@@ -158,7 +174,7 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
     unc_pred = uncurtailed_partition_predicate(partitions, alias="a")
 
     return f"""
-    INSERT INTO {TARGET}
+    INSERT INTO {target}
     WITH
     {data},
 
@@ -176,14 +192,14 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
             {q_required} AS Q_voltvar,
             {q_cap} AS Q_cap_absorbing,
             CASE
-                WHEN abs(P_kW) >= {qcap_p_min} * ac_capacity_kw
+                WHEN abs(P_kW) >= {qcap_p_min} * {rating_col}
                 THEN 1
                 ELSE 0
             END AS capability_assessable
         FROM data
     ),
 
-    -- +/-4% of nameplate around the required Volt-VAr value.
+    -- +/-4% of the selected and output-labelled rating basis.
     tol_band AS (
         SELECT
             *,
@@ -360,15 +376,15 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
                 ELSE 0
             END AS Q_major_surplus,
 
-            -- Volt-VAr-attributed curtailment remains an empirical S_99 test.
-            -- Do not replace S_99 here with ac_capacity_kw.
+            -- Empirical apparent-power-limit symptom. This is deliberately
+            -- separate from rating_basis and is labelled in the output.
             CASE
                 WHEN q.V > {VVAR_V3}
                   AND q.V <= {VW_V1}
                   AND q.Q_kvar < 0
                   AND sqrt(
                       power(q.Q_kvar, 2) + power(q.P_kW, 2)
-                  ) >= q.S_99
+                  ) >= q.{empirical_col}
                   AND a.uncurtailed_P > q.P_kW
                 THEN a.uncurtailed_P - q.P_kW
                 ELSE NULL
@@ -380,7 +396,7 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
                   AND q.Q_kvar < 0
                   AND sqrt(
                       power(q.Q_kvar, 2) + power(q.P_kW, 2)
-                  ) >= q.S_99
+                  ) >= q.{empirical_col}
                 THEN 1
                 ELSE 0
             END AS curtailment_eligible,
@@ -391,7 +407,7 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
                   AND q.Q_kvar < 0
                   AND sqrt(
                       power(q.Q_kvar, 2) + power(q.P_kW, 2)
-                  ) >= q.S_99
+                  ) >= q.{empirical_col}
                   AND a.uncurtailed_P IS NULL
                 THEN 1
                 ELSE 0
@@ -404,7 +420,7 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
                 a.site_id,
                 a.t_stamp,
                 a.uncurtailed_P
-            FROM {UNCURTAILED} a
+            FROM {uncurtailed} a
             WHERE {unc_pred}
         ) a
           ON q.site_id = a.site_id
@@ -576,6 +592,11 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
         -- in the standards-based conformance denominator.
         count(nonconformance_voltvar) AS total_count,
 
+        '{rating_basis}' AS rating_basis,
+        '{empirical_limit_basis}' AS empirical_limit_basis,
+        '{voltage_aggregation}' AS voltage_aggregation,
+        '{flex_selection}' AS flex_selection,
+
         year_aest AS year,
         month_aest AS month
 
@@ -592,30 +613,36 @@ def _insert_sql(partitions, utc_start, utc_end, part_filter, exclude_flex=True):
 # Runner
 # ---------------------------------------------------------------------------
 def run_months_voltvar(aq, database, year, months, n_parts=8, parts=None,
-                       exclude_flex=True):
+                       exclude_flex=None, **run_options):
     """Load AEST months for one year. See stage2_common.run_months."""
     return run_months(aq, database, _insert_sql, year, months,
-                      n_parts=n_parts, parts=parts, exclude_flex=exclude_flex)
+                      n_parts=n_parts, parts=parts, exclude_flex=exclude_flex,
+                      **run_options)
 
 
-def preview_sql(year=2024, month=1, n_parts=8, part=0, exclude_flex=True):
+def preview_sql(year=2024, month=1, n_parts=8, part=0,
+                exclude_flex=None, **run_options):
     """Return the INSERT SQL for one slice WITHOUT running it. Read it first."""
     utc_start, utc_end, partitions = aest_month_window(year, month)
-    return _insert_sql(partitions, utc_start, utc_end,
-                       f"site_id % {n_parts} = {part}", exclude_flex)
+    return _insert_sql(
+        partitions, utc_start, utc_end,
+        f"site_id % {n_parts} = {part}",
+        exclude_flex=exclude_flex,
+        **run_options,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
-def validate(aq, database):
+def validate(aq, database, target=TARGET):
     """Sanity checks after loading."""
     shape = aq(f"""
         SELECT year, month,
                count(*)                  AS n_rows,
                count(DISTINCT site_id)   AS n_sites,
                count(DISTINCT day)       AS n_days
-        FROM {TARGET}
+        FROM {target}
         GROUP BY year, month ORDER BY year, month
     """, database=database)
 
@@ -623,7 +650,7 @@ def validate(aq, database):
     dupes = aq(f"""
         SELECT count(*) AS n_dupe_keys FROM (
             SELECT year, month, day, day_night, site_id
-            FROM {TARGET}
+            FROM {target}
             GROUP BY year, month, day, day_night, site_id
             HAVING count(*) > 1
         )
@@ -643,7 +670,7 @@ def validate(aq, database):
                     THEN 1 ELSE 0 END) AS assessment_partition_mismatch_rows,
             sum(CASE WHEN low_power_exposed_count > exposed_count
                     THEN 1 ELSE 0 END) AS low_power_exposure_inversion_rows
-        FROM {TARGET}
+        FROM {target}
     """, database=database)
 
     # How much of the curtailment zone has no counterfactual?
@@ -652,7 +679,7 @@ def validate(aq, database):
                sum(null_uncurtailed_P_count)   AS no_counterfactual,
                round(100.0 * sum(null_uncurtailed_P_count)
                      / nullif(sum(curtailment_eligible_count), 0), 2) AS pct_missing
-        FROM {TARGET}
+        FROM {target}
     """, database=database)
 
     print("Rows / sites / days per AEST month:")
@@ -666,24 +693,24 @@ def validate(aq, database):
     return shape, dupes, coherence, cover
 
 
-def compare_to_original(aq, database, original="conformance_voltvar"):
+def compare_to_original(aq, database, original="conformance_voltvar", target=TARGET):
     """
     Reconcile against original results. The original table is not touched.
     """
-    new = aq(f"SELECT count(DISTINCT site_id) AS n FROM {TARGET}", database=database)
+    new = aq(f"SELECT count(DISTINCT site_id) AS n FROM {target}", database=database)
     old = aq(f"SELECT count(DISTINCT site_id) AS n FROM {original}", database=database)
     only_old = aq(f"""
         SELECT count(*) AS n FROM (
             SELECT DISTINCT site_id FROM {original}
             EXCEPT
-            SELECT DISTINCT site_id FROM {TARGET}
+            SELECT DISTINCT site_id FROM {target}
         )
     """, database=database)
     flex = aq("""
         SELECT count(DISTINCT site_id) AS n FROM meta_up23c
         WHERE is_pv = True AND flex_export_detected = True
     """, database=database)
-    print(f"sites in {TARGET}:  {int(new['n'].iloc[0]):,}")
+    print(f"sites in {target}:  {int(new['n'].iloc[0]):,}")
     print(f"sites in {original}: {int(old['n'].iloc[0]):,}")
     print(f"sites dropped:       {int(only_old['n'].iloc[0]):,}")
     print(f"flex-export sites (expected explanation for the drop): "

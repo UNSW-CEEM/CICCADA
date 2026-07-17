@@ -13,12 +13,13 @@ WHAT IT PROVIDES
        The `data` CTE: one row per site per 5-minute interval, with
          - P_kW   = sum(power * circuit_polarity) / 1000            (kW)
          - Q_kvar = sum(energy_reactive * circuit_polarity) / 1000 * 12  (kvar)
-         - V      = MAX(voltage) across circuits          <- R1 fix
+         - V      = AVG or MAX voltage across circuits, selected per run
          - ac_capacity_kw, S_99 from metadata
        restricted to is_pv sites with flex_export_detected = False  <- R2 fix
 """
 
 from datetime import datetime, timedelta
+from pipeline_options import flex_predicate, voltage_aggregate_sql
 
 # ---------------------------------------------------------------------------
 # Conventions shared by every Stage 2 table
@@ -95,36 +96,42 @@ def uncurtailed_partition_predicate(partitions, alias="a"):
 # ===========================================================================
 # 2. SITE-LEVEL AGGREGATE
 # ===========================================================================
-def meta_filter(part_filter, exclude_flex=True):
+def meta_filter(part_filter, exclude_flex=None, flex_selection="exclude"):
     """
     WHERE clause for the `meta_up23c` subquery.
 
-    exclude_flex=True  -> Drop sites on flexible-export agreements. 
-                          Their exports are curtailed by contract, not by the
-                          inverter's Volt-Watt / Volt-VAr response, so leaving
-                          them in makes externally-imposed curtailment look
-                          like non-conformance.
+    flex_selection="exclude" -> keep explicitly unflagged sites only.
+    flex_selection="include" -> include flagged, unflagged and NULL flags.
+    flex_selection="only"    -> keep flagged sites only, for diagnostics.
 
-    NOTE (deviation from original, deliberate): 
-    Also require `ac_capacity_kw > 0 AND s_99 > 0`. 
+    ``exclude_flex`` is retained for compatibility with the existing runner notebooks. 
+    When supplied, True maps to ``exclude`` and False to ``include``.
+
+    NOTE (deviation from original, deliberate):
+    Also require `ac_capacity_kw > 0 AND s_99 > 0` so either labelled basis
+    can be selected and directly compared on the same site population.
     The Q_impact denominator is `abs(Q_required) + 1e-9`
-    A site with a zero/NULL nameplate gives a required-Q of 0, a denominator of 1e-9, and a Q_impact of ~1e9, which lands
-    in Q_major_surplus and pollutes the fleet aggregate. 
+    A site with a zero/NULL selected rating gives a required-Q of 0, a
+    denominator of 1e-9, and a Q_impact of ~1e9, which lands in
+    Q_major_surplus and pollutes the fleet aggregate.
     `validate()` reports how many sites this drops.
     """
+    if exclude_flex is not None:
+        flex_selection = "exclude" if exclude_flex else "include"
+
     parts = [
         "is_pv = True",
         "ac_capacity_kw > 0",
         "s_99 > 0",
+        flex_predicate(flex_selection),
     ]
-    if exclude_flex:
-        parts.append("flex_export_detected = False")
     parts.append(part_filter)
     return " AND ".join(parts)
 
 
 def site_agg_cte(partitions, utc_start, utc_end, part_filter,
-                 exclude_flex=True, with_reactive=True):
+                 exclude_flex=None, with_reactive=True,
+                 flex_selection="exclude", voltage_aggregation="avg"):
     """
     Build the `data` CTE: one row per (site_id, t_stamp).
     `with_reactive=False` skips the energy_reactive column, which lets the
@@ -132,6 +139,7 @@ def site_agg_cte(partitions, utc_start, utc_end, part_filter,
     """
     q_col = ("sum(ts.energy_reactive * m.circuit_polarity) / 1000 * 12 AS Q_kvar,"
              if with_reactive else "")
+    v_col = voltage_aggregate_sql(voltage_aggregation, "ts.voltage")
 
     return f"""
     data AS (
@@ -140,9 +148,9 @@ def site_agg_cte(partitions, utc_start, utc_end, part_filter,
             ts.t_stamp,
             sum(ts.power * m.circuit_polarity) / 1000 AS P_kW,
             {q_col}
-            max(ts.voltage)        AS V,               -- original was avg(voltage)
-            max(m.ac_capacity_kw)  AS ac_capacity_kw,  -- nameplate: drives the STANDARD's curves
-            max(m.s_99)            AS S_99             -- empirical: drives curtailment-limit detection
+            {v_col}                 AS V,
+            max(m.ac_capacity_kw)   AS ac_capacity_kw,
+            max(m.s_99)             AS S_99
         FROM ts
         JOIN (
             SELECT circuit_id,
@@ -151,7 +159,7 @@ def site_agg_cte(partitions, utc_start, utc_end, part_filter,
                 max(ac_capacity_kw)   AS ac_capacity_kw,
                 max(s_99)             AS s_99
             FROM meta_up23c
-            WHERE {meta_filter(part_filter, exclude_flex)}
+            WHERE {meta_filter(part_filter, exclude_flex, flex_selection)}
             GROUP BY circuit_id
         ) AS m ON ts.circuit_id = m.circuit_id
         WHERE {partition_predicate(partitions)}
@@ -188,7 +196,8 @@ def temporal_cols(ts_col="t_stamp"):
 # 4. SLICE RUNNER  (shared loop mechanics)
 # ===========================================================================
 def run_months(aq, database, insert_sql_builder, year, months,
-               n_parts=8, parts=None, exclude_flex=True, verbose=True):
+               n_parts=8, parts=None, exclude_flex=None, verbose=True,
+               **builder_options):
     """
     Execute one INSERT per (AEST month x site-slice).
 
@@ -203,8 +212,14 @@ def run_months(aq, database, insert_sql_builder, year, months,
         utc_start, utc_end, partitions = aest_month_window(year, month)
         for part in parts:
             part_filter = f"site_id % {n_parts} = {part}"
-            sql = insert_sql_builder(partitions, utc_start, utc_end,
-                                     part_filter, exclude_flex)
+            sql = insert_sql_builder(
+                partitions,
+                utc_start,
+                utc_end,
+                part_filter,
+                exclude_flex=exclude_flex,
+                **builder_options,
+            )
             aq(sql, database=database)
             msg = (f"loaded AEST {year}-{month:02d} part={part}/{n_parts} "
                    f"(UTC {utc_start} -> {utc_end}, partitions {partitions})")

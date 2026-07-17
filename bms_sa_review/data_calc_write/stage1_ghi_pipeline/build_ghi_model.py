@@ -43,23 +43,24 @@ WAREHOUSE = "Trino-Warehouse/solar_analytics"
 TIME_BIN_MIN = 5   # 5-minute time-of-day bins (authoritative)
 
 
-def create_table(aq, database):
-    aq(f"DROP TABLE IF EXISTS {TARGET}", database=database)
+def create_table(aq, database, target=TARGET):
+    aq(f"DROP TABLE IF EXISTS {target}", database=database)
     aq(f"""
-        CREATE TABLE {TARGET} (
+        CREATE TABLE {target} (
             site_id BIGINT,
             tod_bin STRING,
             a       DOUBLE,
             b       DOUBLE,
             n       BIGINT
         )
-        LOCATION 's3://project-ciccada/{WAREHOUSE}/{TARGET}/'
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{target}/'
         TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
     """, database=database)
-    return f"Created empty {TARGET}"
+    return f"Created empty {target}"
 
 
-def run_year(aq, database, year, n_parts=1, parts=None):
+def run_year(aq, database, year, n_parts=1, parts=None,
+             sd=SD, split=SPLIT, target=TARGET):
     """
     Fit the model for one year.
     """
@@ -70,7 +71,7 @@ def run_year(aq, database, year, n_parts=1, parts=None):
     for part in parts:
         part_filter = f"site_id % {n_parts} = {part}"
         aq(f"""
-            INSERT INTO {TARGET}
+            INSERT INTO {target}
             WITH train_val_data AS (
                 SELECT
                     site_id, actual_day, t_stamp,
@@ -79,7 +80,7 @@ def run_year(aq, database, year, n_parts=1, parts=None):
                                         AS TIME) AS VARCHAR) AS tod_bin,
                     GHI / GHI_cs AS x,
                     P_kw_norm / NULLIF(P_kw_norm_cs, 0.0) AS y
-                FROM {SD}
+                FROM {sd}
                 WHERE P_kw_norm_cs > 0.2 AND GHI > 50 AND P_kw_norm > 0.05
                   AND P_kw_norm <= P_kw_norm_cs
                   AND V <= 253 AND (P_kw_norm >= 1 OR S_norm < 1.001)
@@ -88,7 +89,7 @@ def run_year(aq, database, year, n_parts=1, parts=None):
             train_data AS (
                 SELECT t.*
                 FROM train_val_data t
-                JOIN {SPLIT} s ON t.site_id = s.site_id AND t.actual_day = s.actual_day
+                JOIN {split} s ON t.site_id = s.site_id AND t.actual_day = s.actual_day
                 WHERE s.day_type = 'train'
             ),
             model AS (
@@ -127,7 +128,8 @@ def run_year(aq, database, year, n_parts=1, parts=None):
 # Any future constrained-regression implementation should be written to a new
 # versioned model table so that legacy and revised results remain auditable.
 
-def run(aq, database, years=(2024, 2025), n_parts=1, parts=None):
+def run(aq, database, years=(2024, 2025), n_parts=1, parts=None,
+        sd=SD, split=SPLIT, target=TARGET):
     """
     Fit the model ONCE across all years.
 
@@ -145,7 +147,7 @@ def run(aq, database, years=(2024, 2025), n_parts=1, parts=None):
     for part in parts:
         part_filter = f"site_id % {n_parts} = {part}"
         aq(f"""
-            INSERT INTO {TARGET}
+            INSERT INTO {target}
             WITH train_val_data AS (
                 SELECT
                     site_id, actual_day, t_stamp,
@@ -154,7 +156,7 @@ def run(aq, database, years=(2024, 2025), n_parts=1, parts=None):
                               AS TIME) AS VARCHAR) AS tod_bin,
                     GHI / GHI_cs AS x,
                     P_kw_norm / NULLIF(P_kw_norm_cs, 0.0) AS y
-                FROM {SD}
+                FROM {sd}
                 WHERE P_kw_norm_cs > 0.2 AND GHI > 50 AND P_kw_norm > 0.05
                   AND P_kw_norm <= P_kw_norm_cs
                   AND V <= 253 AND (P_kw_norm >= 1 OR S_norm < 1.001)
@@ -163,7 +165,7 @@ def run(aq, database, years=(2024, 2025), n_parts=1, parts=None):
             train_data AS (
                 SELECT t.*
                 FROM train_val_data t
-                JOIN {SPLIT} s ON t.site_id = s.site_id AND t.actual_day = s.actual_day
+                JOIN {split} s ON t.site_id = s.site_id AND t.actual_day = s.actual_day
                 WHERE s.day_type = 'train'
             ),
             model AS (
@@ -180,12 +182,12 @@ def run(aq, database, years=(2024, 2025), n_parts=1, parts=None):
         print(results[-1])
     return results
 
-def validate(aq, database):
-    n = aq(f"SELECT count(DISTINCT site_id) AS n_sites, count(*) AS n_rows FROM {TARGET}",
+def validate(aq, database, target=TARGET):
+    n = aq(f"SELECT count(DISTINCT site_id) AS n_sites, count(*) AS n_rows FROM {target}",
            database=database)
     dupes = aq(f"""
         SELECT count(*) AS n FROM (
-            SELECT site_id, tod_bin FROM {TARGET}
+            SELECT site_id, tod_bin FROM {target}
             GROUP BY site_id, tod_bin HAVING count(*) > 1
         )
     """, database=database)
@@ -195,7 +197,7 @@ def validate(aq, database):
     # A few example fits
     sample = aq(f"""
         SELECT site_id, tod_bin, round(a,3) AS a, round(b,3) AS b, n
-        FROM {TARGET}
+        FROM {target}
         WHERE n > 20
         ORDER BY site_id, tod_bin
         LIMIT 8
