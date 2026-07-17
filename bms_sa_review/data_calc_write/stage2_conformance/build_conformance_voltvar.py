@@ -45,6 +45,7 @@ Writes to `conformance_voltvar_v2`. Original `conformance_voltvar` untouched.
 
 from as4777_curves import (
     vvar_required_q_sql,
+    q_cap_absorbing_sql,
     q_conformance_floor_absorbing_sql,
     tol_kw_sql,
 )
@@ -127,6 +128,7 @@ def create_table(aq, database, target=TARGET):
             total_count                        BIGINT,
             rating_basis                       STRING,
             empirical_limit_basis              STRING,
+            capability_profile                 STRING,
             voltage_aggregation                STRING,
             flex_selection                     STRING,
             year                               INT,
@@ -139,10 +141,18 @@ def create_table(aq, database, target=TARGET):
     return f"Created empty {target}"
 
 def _insert_sql(
-    partitions, utc_start, utc_end, part_filter, exclude_flex=None, *,
-    target=TARGET, uncurtailed=UNCURTAILED,
-    rating_basis="ac_capacity_kw", empirical_limit_basis="s_99",
-    voltage_aggregation="avg", flex_selection="exclude",
+    partitions, 
+    utc_start, 
+    utc_end, 
+    part_filter, 
+    exclude_flex=None, *,
+    target=TARGET, 
+    uncurtailed=UNCURTAILED,
+    rating_basis="ac_capacity_kw", 
+    empirical_limit_basis="s_99",
+    capability_profile="review_corrected",
+    voltage_aggregation="avg", 
+    flex_selection="exclude",
 ):
     data = site_agg_cte(
         partitions,
@@ -160,16 +170,35 @@ def _insert_sql(
     rating_col = capacity_column(rating_basis)
     empirical_col = capacity_column(empirical_limit_basis)
     q_required = vvar_required_q_sql("V", rating_col)
-    q_cap = q_conformance_floor_absorbing_sql(
-        "P_kW",
-        rating_col,
-    )
-    tol = tol_kw_sql(rating_col)
 
-    # Below this active-power level, Figure 2.1 does not specify a quantified
-    # minimum reactive-power capability. Those intervals are retained but are
-    # marked as not assessable for standards-based Volt-VAr conformance.
+    ### Q-CAP ###
     qcap_p_min = AS4777["QCAP"]["P_MIN"]
+
+    if capability_profile == "review_corrected":
+        # Reactive-power priority above 80%; below 20% is reported separately.
+        q_cap = q_conformance_floor_absorbing_sql("P_kW", rating_col)
+        assessable_sql = f"""
+            CASE
+                WHEN abs(P_kW) >= {qcap_p_min} * {rating_col}
+                THEN 1
+                ELSE 0
+            END
+        """.strip()
+
+    elif capability_profile == "hossein_m3":
+        # Hossein's Figure 2.1 implementation:
+        # zero below 20%, flat/0.8-PF branches, then the shrinking fixed-P circle.
+        # He did not remove low-power intervals from conformance assessment.
+        q_cap = q_cap_absorbing_sql("P_kW", rating_col)
+        assessable_sql = "1"
+
+    else:
+        raise ValueError(
+            "capability_profile must be "
+            "'review_corrected' or 'hossein_m3'"
+        )
+
+    tol = tol_kw_sql(rating_col)
 
     unc_pred = uncurtailed_partition_predicate(partitions, alias="a")
 
@@ -191,11 +220,7 @@ def _insert_sql(
             S_99,
             {q_required} AS Q_voltvar,
             {q_cap} AS Q_cap_absorbing,
-            CASE
-                WHEN abs(P_kW) >= {qcap_p_min} * {rating_col}
-                THEN 1
-                ELSE 0
-            END AS capability_assessable
+            {assessable_sql} AS capability_assessable
         FROM data
     ),
 
@@ -594,6 +619,7 @@ def _insert_sql(
 
         '{rating_basis}' AS rating_basis,
         '{empirical_limit_basis}' AS empirical_limit_basis,
+        '{capability_profile}' AS capability_profile,
         '{voltage_aggregation}' AS voltage_aggregation,
         '{flex_selection}' AS flex_selection,
 

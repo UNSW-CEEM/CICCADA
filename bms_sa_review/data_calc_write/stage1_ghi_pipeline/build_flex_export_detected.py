@@ -24,9 +24,10 @@ limits, shorter events, noisy measurements or no suitable operating day.
 
 Safe workflow
 --------------------------------------------------------------------------
-``create_table`` + ``run`` build an auditable side table. ``write_back_meta``
-is separate and requires an explicit confirmation string because it mutates
-``meta_up23c``. It is never called automatically.
+``create_table`` + ``run`` build an auditable side table.
+
+This module never updates ``meta_up23c``. Candidate detections remain in the
+separate target table and can be compared with the existing metadata flag.
 """
 
 TARGET = "flex_export_detection_v2"
@@ -171,10 +172,13 @@ def validate(aq, database, target=TARGET):
     return result
 
 
+#### TO AVOID ANY ACCIDENTS, KEEP THE FOLLOWING COMMENTED OUT
+
+'''
 def write_back_meta(aq, database, target=TARGET, *, confirmation=None):
     """Replace ``meta_up23c.flex_export_detected`` from the audit table.
 
-    This reproduces the effect of Hossein's cells 7-9 but only after the caller
+    This reproduces the effect of original cells 7-9 but only after the caller
     explicitly acknowledges that every metadata row will be updated.
     """
     required = "UPDATE_META_UP23C_FROM_AUDITED_FLEX_TABLE"
@@ -191,3 +195,4 @@ def write_back_meta(aq, database, target=TARGET, *, confirmation=None):
         END
     """, database=database)
     return "meta_up23c.flex_export_detected replaced from audited detection table"
+'''

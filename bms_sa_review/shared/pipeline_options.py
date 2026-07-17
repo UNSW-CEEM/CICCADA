@@ -52,19 +52,22 @@ def voltage_aggregate_sql(method, column="voltage"):
 def flex_predicate(selection, column="flex_export_detected"):
     """Return the metadata predicate for the requested flex-export cohort.
 
-    ``exclude`` keeps only explicitly false flags. 
-    ``only`` keeps only true flags. 
-    ``include`` applies no flag predicate. 
-    NULL flags are therefore not silently treated as false.
+    ``exclude`` removes only explicitly true flags. False and NULL are retained.
+    ``only`` keeps only explicitly true flags.
+    ``include`` applies no flag predicate.
     """
     if selection not in FLEX_SELECTIONS:
         raise ValueError(
-            f"flex selection must be one of {sorted(FLEX_SELECTIONS)}, got {selection!r}"
+            f"flex selection must be one of {sorted(FLEX_SELECTIONS)}, "
+            f"got {selection!r}"
         )
+
     if selection == "exclude":
-        return f"{column} = False"
+        return f"coalesce({column}, False) = False"
+
     if selection == "only":
         return f"{column} = True"
+
     return "1 = 1"
 
 
