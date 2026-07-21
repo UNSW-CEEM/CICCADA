@@ -42,7 +42,6 @@ WAREHOUSE = "Trino-Warehouse/solar_analytics"
 
 TIME_BIN_MIN = 5   # 5-minute time-of-day bins (authoritative)
 
-
 def create_table(aq, database, target=TARGET):
     aq(f"DROP TABLE IF EXISTS {target}", database=database)
     aq(f"""
@@ -117,8 +116,7 @@ def run_year(aq, database, year, n_parts=1, parts=None,
 #
 # The slope is therefore estimated using ordinary unconstrained regression and
 # the intercept is subsequently set to 1-b so that a+b=1. This is retained for
-# comparability with the inherited CICCADA results. It should not be described
-# as the mathematically constrained least-squares fit through (1, 1).
+# comparability with the inherited CICCADA results.
 #
 # The selected years are pooled into one fit because the model key is only
 # (site_id, tod_bin), with no year dimension. Do not call run_year() separately

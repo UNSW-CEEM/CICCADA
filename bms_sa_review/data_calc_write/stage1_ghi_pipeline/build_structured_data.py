@@ -16,21 +16,12 @@ This is the foundational feature table that the GHI model and everything downstr
 DELIBERATELY NOT CHANGED HERE
 -----------------------------
   * Storage partition columns `year`/`month` stay UTC-derived (year(t_stamp),
-    month(t_stamp)) so this table stays ALIGNED with `ts` (which is partitioned
-    on UTC year/month). 
+    month(t_stamp)) so this table stays ALIGNED with `ts` (which is partitioned on UTC year/month). 
 
 SAFE-BY-DEFAULT
 ---------------
-Writes to a table named `structured_data{TABLE_SUFFIX}` (default suffix
-"_v2") so original `structured_data` is NOT overwritten.
-
-USAGE (from the orchestrator notebook)
---------------------------------------
-    from build_structured_data import create_table, run_slice, validate
-    create_table(aq, database=SAI)                      # once
-    run_slice(aq, database=SAI, year=2024, months=[1],  # small test slice
-              n_parts=8, parts=[0])
-    validate(aq, database=SAI)
+Writes to a table named `structured_data{TABLE_SUFFIX}` (default suffix "_v2") 
+so original `structured_data` is NOT overwritten.
 """
 import time
 from pipeline_options import capacity_column, flex_predicate, voltage_aggregate_sql
@@ -39,9 +30,8 @@ TABLE_SUFFIX = "_v2"      # change to "" only if you deliberately want to overwr
 TARGET = f"structured_data{TABLE_SUFFIX}"
 WAREHOUSE = "Trino-Warehouse/solar_analytics"
 
-# Empirical clear-sky heuristics inherited from Hossein's cell 7. These are
-# modelling choices, not AS/NZS 4777.2 or BOM requirements. Change only as a
-# labelled sensitivity run and record retained-site/interval coverage.
+# Empirical clear-sky heuristics inherited from original code's cell 7. 
+# These are modelling choices, not AS/NZS 4777.2 or BOM requirements. 
 CLEAR_SKY_TOP_N = 3
 CLEAR_SKY_MAX_CLOUD_SUM = 60
 CLEAR_SKY_MIN_MAX_GHI = 200
@@ -93,8 +83,14 @@ def create_table(aq, database, target=TARGET):
 # INSERT one (year, month-set, site-slice) at a time
 # ---------------------------------------------------------------------------
 def _insert_sql(
-    year, month_filter, part_filter, meta_filter, *, target=TARGET,
-    normalization_basis="s_99", voltage_aggregation="avg",
+    year, 
+    month_filter, 
+    part_filter, 
+    meta_filter, 
+    *, 
+    target=TARGET,
+    normalization_basis="s_99", 
+    voltage_aggregation="avg",
     flex_selection="exclude",
 ):
     """
@@ -286,8 +282,16 @@ def _insert_sql(
 
 
 def run_slice(
-    aq, database, year, months, n_parts=8, parts=None, *, target=TARGET,
-    normalization_basis="s_99", voltage_aggregation="avg",
+    aq, 
+    database, 
+    year, 
+    months, 
+    n_parts=8, 
+    parts=None, 
+    *, 
+    target=TARGET,
+    normalization_basis="s_99", 
+    voltage_aggregation="avg",
     flex_selection="exclude",
 ):
     """
