@@ -73,15 +73,29 @@ def _acceptable_sites_csv(csv_path):
 
 
 def run_year(
-    aq, database, year, mape_csv_path, n_parts=3, parts=None, *,
-    sd=SD, model=MODEL, target=TARGET,
-    normalization_basis="s_99", normalization_capacity_col="S_99",
+    aq, 
+    database, 
+    year, 
+    mape_csv_path, 
+    n_parts=3, 
+    parts=None, *,
+    sd=SD, 
+    model=MODEL, 
+    target=TARGET,
+    normalization_basis="s_99", 
+    normalization_capacity_col="S_99",
     counterfactual_cap_basis="ac_capacity_kw",
+    min_model_bin_n=5,
 ):
     """
     Apply the model for one year. `mape_csv_path` points at your local
     mape<50_sites.csv quality-gate file.
     """
+    model_bin_predicate = (
+        ""
+        if min_model_bin_n is None
+        else f"AND mo.n >= {int(min_model_bin_n)}"
+    )
     if parts is None:
         parts = list(range(n_parts))
 
@@ -138,8 +152,10 @@ def run_year(
                         * e.normalization_capacity AS model_prediction_raw,
                     mo.n AS n_train
                 FROM eligible e
-                JOIN {model} mo ON e.site_id = mo.site_id AND e.tod_bin = mo.tod_bin
-                                AND mo.n >= 5
+                JOIN {model} mo
+                ON e.site_id = mo.site_id
+                AND e.tod_bin = mo.tod_bin
+                {model_bin_predicate}
             ),
             adjusted AS (
                 SELECT *,
