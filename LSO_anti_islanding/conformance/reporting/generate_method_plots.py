@@ -1,3 +1,5 @@
+"""Generate the optional method-comparison plots."""
+
 import sys
 from pathlib import Path
 
@@ -7,28 +9,23 @@ if str(REPO_ROOT) not in sys.path:
 
 import polars as pl
 
-from funcs import loadCleanedSiteData, ratedCapacityOfPV
-from nov2022_site_days import collect_site_days
-from plots.plots import plot_method_threshold_overlay_day, plot_site_compliance_day
+from config import (
+    METHOD_COMPARISON_METHODS,
+    SAPN2022_DAY_COVERAGE_THRESHOLD as DAY_COVERAGE_THRESHOLD,
+    SAPN2022_EVENT_DAYS,
+)
+from reporting.plotting import plot_method_threshold_overlay_day
+from sapn2022_workflow.sapn_paths import (
+    CIRCUIT_DETAILS_PATH,
+    CONFORMANCE_OUTPUT_DIR,
+    SITE_DETAILS_PATH,
+)
+from sapn2022_workflow.workflow import (
+    load_cleaned_site_data as loadCleanedSiteData,
+    rated_capacity_of_pv as ratedCapacityOfPV,
+)
+from sapn2022_workflow.workflow import collect_sapn2022_site_days as collect_site_days
 
-
-DATA_DIR = REPO_ROOT / "Nov2022"
-OUTPUT_DIR = REPO_ROOT / "updated results" / "site_compliance"
-METHOD_PLOT_DIR = OUTPUT_DIR / "method_plots"
-SUMMARY_PATH = OUTPUT_DIR / "phase_b_site_summary_by_method.csv"
-THRESHOLD_PATH = OUTPUT_DIR / "site_thresholds_by_method.csv"
-DAYS_TO_CHECK = [13, 14, 15, 16, 17, 19]
-
-# This is the main plotting script for method-level conformance review.
-# - one method in PHASE_B_METHODS_TO_PLOT -> individual plots
-# - multiple methods in PHASE_B_METHODS_TO_PLOT -> comparison plots
-# If both plot types are wanted, run this script twice with different values.
-#
-# The by-method results for these methods must already have been produced by
-# main.py. Those CSV outputs come from the methods included in
-# PHASE_B_METHODS_TO_RUN in main.py.
-# PHASE_B_METHODS_TO_PLOT = ["tier_based",]
-PHASE_B_METHODS_TO_PLOT = ["tier_based", "blended"]
 
 METHOD_COLOR_MAP = {
     "default": "#2ca02c",
@@ -82,52 +79,66 @@ def _status_label(value):
     return "unassessed"
 
 
-def _load_method_rows():
-    if not SUMMARY_PATH.exists():
-        raise FileNotFoundError(
-            f"Missing {SUMMARY_PATH}. Run main.py first to generate by-method summary outputs."
+def _comparison_methods():
+    methods = tuple(METHOD_COMPARISON_METHODS)
+    if len(methods) < 2:
+        raise ValueError(
+            "METHOD_COMPARISON_METHODS must contain at least two methods."
         )
-    if not THRESHOLD_PATH.exists():
+    if len(set(methods)) != len(methods):
+        raise ValueError("METHOD_COMPARISON_METHODS must not contain duplicates.")
+    return methods
+
+
+def _load_method_rows(output_dir, methods):
+    summary_path = output_dir / "phase_b_site_summary_by_method.csv"
+    threshold_path = output_dir / "site_thresholds_by_method.csv"
+    if not summary_path.exists():
         raise FileNotFoundError(
-            f"Missing {THRESHOLD_PATH}. Run main.py first to generate by-method threshold outputs."
+            f"Missing {summary_path}. Run main_run_sapn2022_conformance.py first."
+        )
+    if not threshold_path.exists():
+        raise FileNotFoundError(
+            f"Missing {threshold_path}. Run main_run_sapn2022_conformance.py first."
         )
 
-    summary_df = pl.read_csv(SUMMARY_PATH, try_parse_dates=True).with_columns(
+    summary_df = pl.read_csv(summary_path, try_parse_dates=True).with_columns(
         pl.col("overall_pass").map_elements(_bool_or_none, return_dtype=pl.Boolean)
     )
-    threshold_df = pl.read_csv(THRESHOLD_PATH)
+    threshold_df = pl.read_csv(threshold_path)
     joined = summary_df.join(
         threshold_df,
-        on=["site_id", "method_key", "method_label"],
+        on=["site_id", "method_key"],
         how="left",
         suffix="_threshold",
     )
 
     available_methods = sorted(joined["method_key"].unique().to_list())
     missing_methods = [
-        method_key for method_key in PHASE_B_METHODS_TO_PLOT
+        method_key for method_key in methods
         if method_key not in available_methods
     ]
     if missing_methods:
         raise ValueError(
             "Missing by-method outputs for "
-            f"{missing_methods}. Run main.py first with those methods enabled."
+            f"{missing_methods}. Enable them in config.py and rerun conformance."
         )
 
     site_rows: dict[int, dict[str, dict]] = {}
     for row in joined.iter_rows(named=True):
         method_key = row["method_key"]
-        if method_key not in PHASE_B_METHODS_TO_PLOT:
+        if method_key not in methods:
             continue
+        row["method_label"] = method_key.replace("_", " ").title()
         site_rows.setdefault(int(row["site_id"]), {})[method_key] = row
     return site_rows
 
 
-def _comparison_bucket(method_rows):
+def _comparison_bucket(method_rows, methods):
     # These buckets are mutually exclusive so the same site does not get plotted
     # repeatedly in multiple folders.
     results = []
-    for method_key in PHASE_B_METHODS_TO_PLOT:
+    for method_key in methods:
         row = method_rows.get(method_key)
         results.append(None if row is None else row["overall_pass"])
 
@@ -144,7 +155,12 @@ def _comparison_bucket(method_rows):
 def _eligible_day_behaviours(site_id, circuit_details, all_data):
     # Reuse the shared site-day builder so plotting follows the same eligibility
     # rules as the main conformance run.
-    site_day_result = collect_site_days(site_id, circuit_details, all_data, DAYS_TO_CHECK)
+    site_day_result = collect_site_days(
+        site_id,
+        circuit_details,
+        all_data,
+        SAPN2022_EVENT_DAYS,
+    )
     return site_day_result["eligible_day_behaviours"]
 
 
@@ -236,14 +252,14 @@ def _build_method_event_overlays(base_timestamps, method_event_lookups):
     return overlays
 
 
-def _build_comparison_day_payload(day_info, p_rated, method_rows):
+def _build_comparison_day_payload(day_info, p_rated, method_rows, methods):
     base_frame = None
     method_thresholds = []
     day_has_any_eligible = False
     event_lookup = {}
     method_event_lookups = []
 
-    for method_key in PHASE_B_METHODS_TO_PLOT:
+    for method_key in methods:
         method_row = method_rows.get(method_key)
         if method_row is None:
             continue
@@ -302,71 +318,16 @@ def _build_comparison_day_payload(day_info, p_rated, method_rows):
     }
 
 
-def _plot_single_method(site_rows, site_details, circuit_details, all_data):
-    method_key = PHASE_B_METHODS_TO_PLOT[0]
-    output_root = METHOD_PLOT_DIR / "individual" / method_key
-
-    plotted_sites = 0
-    plotted_days = 0
-    for site_id in sorted(site_rows):
-        method_row = site_rows[site_id].get(method_key)
-        if method_row is None or method_row["overall_pass"] is None:
-            continue
-
-        eligible_day_behaviours = _eligible_day_behaviours(site_id, circuit_details, all_data)
-        if not eligible_day_behaviours:
-            continue
-
-        p_rated = ratedCapacityOfPV(
-            site_details,
-            site_id,
-            day_behaviours=eligible_day_behaviours,
-        )
-        plot_folder = "compliant" if method_row["overall_pass"] is True else "non_compliant"
-        plotted_sites += 1
-
-        for day_info in eligible_day_behaviours:
-            day_plot = _build_method_threshold_plot(day_info, p_rated, method_row)
-            if day_plot is None:
-                continue
-
-            total_eligible = (
-                int(day_plot["summary"].get("los_eligible", 0) or 0)
-                + int(day_plot["summary"].get("ov1_eligible", 0) or 0)
-            )
-            if total_eligible == 0:
-                continue
-
-            day = day_info["day"]
-            filename = f"Site_{site_id}_Day_{day}_{plot_folder}.png"
-            plot_site_compliance_day(
-                day_plot["frame"],
-                site_id,
-                day,
-                p_rated=p_rated,
-                lso_threshold=float(method_row["los_threshold_used"]),
-                ov1_threshold=float(method_row["ov1_test_site"]),
-                overall_pass=method_row["overall_pass"],
-                day_summary=day_plot["summary"],
-                save_path=output_root / plot_folder / filename,
-            )
-            plotted_days += 1
-
-    print(
-        "Finished individual method plots:",
-        {
-            "method": method_key,
-            "shared_day_coverage_threshold_pct": DAY_COVERAGE_THRESHOLD * 100.0,
-            "plotted_sites": plotted_sites,
-            "plotted_days": plotted_days,
-            "output_root": str(output_root),
-        },
-    )
-
-
-def _plot_method_comparison(site_rows, site_details, circuit_details, all_data):
-    method_set_name = "__".join(PHASE_B_METHODS_TO_PLOT)
-    output_root = METHOD_PLOT_DIR / "comparison" / method_set_name
+def _plot_method_comparison(
+    site_rows,
+    site_details,
+    circuit_details,
+    all_data,
+    output_dir,
+    methods,
+):
+    method_set_name = "__".join(methods)
+    output_root = output_dir / "method_plots" / "comparison" / method_set_name
     bucket_counts = {bucket: 0 for bucket in COMPARISON_BUCKETS}
     site_counts = {bucket: 0 for bucket in COMPARISON_BUCKETS}
 
@@ -376,7 +337,7 @@ def _plot_method_comparison(site_rows, site_details, circuit_details, all_data):
         # The comparison buckets are the main browsing paths for multi-method
         # reviews: different outcomes, assessed/unassessed splits, or same
         # outcomes across the selected methods.
-        bucket = _comparison_bucket(method_rows)
+        bucket = _comparison_bucket(method_rows, methods)
         if bucket is None:
             continue
 
@@ -393,7 +354,12 @@ def _plot_method_comparison(site_rows, site_details, circuit_details, all_data):
 
         for day_info in eligible_day_behaviours:
             day = day_info["day"]
-            day_payload = _build_comparison_day_payload(day_info, p_rated, method_rows)
+            day_payload = _build_comparison_day_payload(
+                day_info,
+                p_rated,
+                method_rows,
+                methods,
+            )
             if day_payload is None:
                 continue
 
@@ -413,7 +379,7 @@ def _plot_method_comparison(site_rows, site_details, circuit_details, all_data):
     print(
         "Finished comparison plots:",
         {
-            "methods": PHASE_B_METHODS_TO_PLOT,
+            "methods": methods,
             "shared_day_coverage_threshold_pct": DAY_COVERAGE_THRESHOLD * 100.0,
             "site_counts": site_counts,
             "plot_counts": bucket_counts,
@@ -422,20 +388,25 @@ def _plot_method_comparison(site_rows, site_details, circuit_details, all_data):
     )
 
 
-def generate_method_plots():
-    # Load runtime inputs in the same direct style used by main.py.
-    site_details = pl.read_csv(DATA_DIR / "ebm_1_20221112_20221119_site_details.csv")
-    circuit_details = pl.read_csv(DATA_DIR / "ebm_1_20221112_20221119_circuit_details.csv")
+def generate_method_plots(output_dir=CONFORMANCE_OUTPUT_DIR):
+    """Generate the method comparison configured in config.py."""
+    output_dir = Path(output_dir)
+    methods = _comparison_methods()
+
+    # Load the same SAPN inputs used by the primary conformance entry point.
+    site_details = pl.read_csv(SITE_DETAILS_PATH)
+    circuit_details = pl.read_csv(CIRCUIT_DETAILS_PATH)
     all_data = loadCleanedSiteData()
 
-    site_rows = _load_method_rows()
-
-    # One selected method means individual plots; multiple selected methods
-    # switch the script into comparison plotting mode.
-    if len(PHASE_B_METHODS_TO_PLOT) == 1:
-        _plot_single_method(site_rows, site_details, circuit_details, all_data)
-    else:
-        _plot_method_comparison(site_rows, site_details, circuit_details, all_data)
+    site_rows = _load_method_rows(output_dir, methods)
+    _plot_method_comparison(
+        site_rows,
+        site_details,
+        circuit_details,
+        all_data,
+        output_dir,
+        methods,
+    )
 
 
 if __name__ == "__main__":

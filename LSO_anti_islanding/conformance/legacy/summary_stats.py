@@ -1,5 +1,7 @@
+"""Legacy summary implementations retained for historical reference."""
+
 import polars as pl
-from helperFuncs import ensure_list, add_event_date
+from .helper_funcs import ensure_list, add_event_date
 
 def summarize_multi_method_site_outputs(
     phase_b_summary_by_method_df: pl.DataFrame,

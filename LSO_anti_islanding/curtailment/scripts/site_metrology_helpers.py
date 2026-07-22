@@ -11,12 +11,12 @@ CONFORMANCE_DIR = Path(__file__).resolve().parents[2] / "conformance"
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from funcs import (
+from core.data_cleaning import (
     addLocalTStamp,
     addPolarityToPower,
     addValidVoltage,
-    mapCircuitDataToSite,
 )
+from core.site_day_preparation import map_circuit_data_to_site as mapCircuitDataToSite
 
 ADELAIDE_TZ = "Australia/Adelaide"
 POWER_W_TO_KW = 1000

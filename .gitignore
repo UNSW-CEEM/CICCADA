@@ -161,7 +161,10 @@ tests/darth/
 ciccada/
 
 SAPN2022_Analysis/curtailment/scripts/local_paths.py
+LSO_anti_islanding/curtailment/scripts/local_paths.py
 SAPN2022_Analysis/curtailment/outputs/
+LSO_anti_islanding/conformance/datasets/
+LSO_anti_islanding/conformance/updated results/
 /updated results/
 /All Results/
 *.parquet

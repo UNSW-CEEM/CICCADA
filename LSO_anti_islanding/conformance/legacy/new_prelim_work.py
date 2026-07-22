@@ -1,3 +1,5 @@
+"""Legacy preliminary data inspection retained for reference."""
+
 import polars as pl
 import sys
 from pathlib import Path

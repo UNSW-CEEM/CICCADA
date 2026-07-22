@@ -1,3 +1,5 @@
+"""Legacy never-reconnected event analysis retained for reference."""
+
 import polars as pl
 from datetime import timedelta
 from typing import Optional, List

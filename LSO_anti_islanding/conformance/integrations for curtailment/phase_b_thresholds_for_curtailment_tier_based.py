@@ -28,24 +28,33 @@ Important difference from ``phase_b_timestamp_detail_tier_based.csv``:
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import polars as pl
 
-from checkPVBehaviour import CheckPVBehaviour
-from funcs import (
+CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
+if str(CONFORMANCE_DIR) not in sys.path:
+    sys.path.insert(0, str(CONFORMANCE_DIR))
+
+from core.check_pv_behaviour import CheckPVBehaviour
+from sapn2022_workflow.sapn_paths import (
+    CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
-    loadCleanedSiteData,
-    mapCircuitDataToSite,
 )
-from nov2022_site_days import build_nov2022_site_day_long
+from sapn2022_workflow.workflow import (
+    load_cleaned_site_data as loadCleanedSiteData,
+)
+from sapn2022_workflow.nov2022_site_day_extraction import (
+    extract_nov2022_site_day as build_nov2022_site_day_long,
+)
+from core.site_day_preparation import map_circuit_data_to_site as mapCircuitDataToSite
 
 
 PHASE_B_SUMMARY_PATH = Path("updated results/site_compliance/phase_b_site_summary_tier_based.csv")
 SITE_THRESHOLDS_PATH = Path("updated results/site_compliance/site_thresholds_tier_based.csv")
-CIRCUIT_DETAILS_PATH = Path("Nov2022/ebm_1_20221112_20221119_circuit_details.csv")
 CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH # this is the cleaned circuit data parquet
 OUTPUT_DIR = Path("updated results/phase b info for curtailment/tier based")
 TIMESTAMP_OUTPUT_PATH = OUTPUT_DIR / "tier_based_timestamp_flags.csv"
@@ -150,9 +159,10 @@ def _load_assessed_sites() -> pl.DataFrame:
 def _prepare_inputs() -> tuple[pl.DataFrame, pl.LazyFrame]:
     """Load the circuit metadata and cleaned metrology needed for site rebuilds."""
     _require_file(CIRCUIT_DETAILS_PATH)
-    if not Path(f"{CLEANED_DATA_PATH}.parquet").exists():
+    if not CLEANED_DATA_PATH.exists():
         raise FileNotFoundError(
-            f"Missing cleaned site data at {CLEANED_DATA_PATH}.parquet. Run data_processing.py first."
+            f"Missing cleaned site data at {CLEANED_DATA_PATH}. "
+            "Run run_sapn2022_preprocessing.py first."
         )
 
     circuit_details = pl.read_csv(CIRCUIT_DETAILS_PATH)

@@ -1,3 +1,5 @@
+"""Helpers used only by archived summary and plotting code."""
+
 import polars as pl
 
 # Helper: ensure a list column becomes [] instead of null so explode works safely

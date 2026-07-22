@@ -1,3 +1,5 @@
+"""Legacy combined data helpers retained for historical reference."""
+
 import math
 from pathlib import Path
 

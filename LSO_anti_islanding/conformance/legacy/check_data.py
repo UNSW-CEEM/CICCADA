@@ -1,3 +1,5 @@
+"""Legacy duplicate-row helper retained for historical scripts."""
+
 import polars as pl
 
 def checkDupes(df, highest = False):
