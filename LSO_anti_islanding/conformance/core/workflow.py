@@ -1,42 +1,58 @@
-"""Load SAPN inputs and prepare eligible sites for the shared pipeline."""
+"""Dataset-neutral site and site-day preparation for conformance analysis."""
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
 
 import polars as pl
 
-from config import (
-    SAPN2022_DAY_COVERAGE_THRESHOLD,
-    SAPN2022_DAY_END,
-    SAPN2022_DAY_START,
-    SAPN2022_EVENT_DAYS,
-)
+from config import MAX_PV_SITE_NET_CIRCUITS, REQUIRED_SITE_METADATA_ROWS
 from core.check_pv_behaviour import CheckPVBehaviour
 from core.site_day_preparation import (
     calculate_site_day_voltage_signals,
     map_circuit_data_to_site,
     trim_site_day_analysis_window,
 )
-from sapn2022_workflow.nov2022_site_day_extraction import extract_nov2022_site_day
-from sapn2022_workflow.sapn_paths import (
-    CIRCUIT_DETAILS_PATH,
-    CLEANED_SITE_DATA_PATH,
-    SITE_DETAILS_PATH,
-)
-from sapn2022_workflow.site_day_filtering import summarize_nov2022_day_eligibility
 
 
-def load_cleaned_site_data(cleaned_path=CLEANED_SITE_DATA_PATH):
-    cleaned_path = Path(cleaned_path)
-    if not cleaned_path.exists():
-        raise FileNotFoundError(
-            f"Missing cleaned site data at {cleaned_path}. "
-            "Run run_sapn2022_preprocessing.py first."
+@dataclass(frozen=True)
+class DatasetDefinition:
+    """Dataset-specific components supplied to the shared site workflow."""
+
+    name: str
+    load_inputs: Callable[[], dict[str, Any]]
+    day_provider: Callable[[pl.DataFrame], list[tuple[Any, Any, Any]]]
+    extract_day: Callable[
+        [dict[str, Any], int, pl.DataFrame, Any, Any],
+        pl.DataFrame,
+    ]
+    eligibility_function: Callable[[pl.DataFrame, pl.DataFrame], dict[str, Any]]
+    output_dir: Path
+    coverage_threshold: float
+    exclusion_fields: tuple[str, ...]
+    excluded_day_schema: dict[str, pl.DataType]
+
+
+def build_workflow_inputs(site_details, circuit_details, all_data):
+    """Build the standard input bundle consumed by the shared workflow."""
+    required_site_columns = {"site_id", "capacity_kw"}
+    required_circuit_columns = {"site_id", "c_id", "con_type"}
+    missing_site_columns = required_site_columns.difference(site_details.columns)
+    missing_circuit_columns = required_circuit_columns.difference(
+        circuit_details.columns
+    )
+    if missing_site_columns:
+        raise ValueError(
+            "Site metadata is missing standard workflow columns: "
+            f"{sorted(missing_site_columns)}"
         )
-    return pl.scan_parquet(cleaned_path)
+    if missing_circuit_columns:
+        raise ValueError(
+            "Circuit metadata is missing standard workflow columns: "
+            f"{sorted(missing_circuit_columns)}"
+        )
 
-
-def build_site_selection_tables(site_details, circuit_details):
     site_metadata_rows = {
         row["site_id"]: int(row["site_metadata_rows"])
         for row in (
@@ -56,18 +72,9 @@ def build_site_selection_tables(site_details, circuit_details):
             .to_dicts()
         )
     }
-    return site_metadata_rows, pv_site_net_counts
-
-
-def load_sapn2022_inputs():
-    site_details = pl.read_csv(SITE_DETAILS_PATH)
-    circuit_details = pl.read_csv(CIRCUIT_DETAILS_PATH)
-    all_data = load_cleaned_site_data()
-    site_metadata_rows, pv_site_net_counts = build_site_selection_tables(
-        site_details, circuit_details
-    )
+    all_data_ldf = all_data if isinstance(all_data, pl.LazyFrame) else all_data.lazy()
     candidate_site_ids = (
-        all_data.select("c_id")
+        all_data_ldf.select("c_id")
         .unique()
         .join(
             circuit_details.select(["c_id", "site_id"]).unique().lazy(),
@@ -82,7 +89,7 @@ def load_sapn2022_inputs():
     return {
         "site_details": site_details,
         "circuit_details": circuit_details,
-        "all_data": all_data,
+        "all_data": all_data_ldf,
         "site_metadata_rows": site_metadata_rows,
         "pv_site_net_counts": pv_site_net_counts,
         "candidate_site_ids": candidate_site_ids,
@@ -94,17 +101,19 @@ def _round_up_to_half_kw(value_kw):
 
 
 def _metadata_capacity_kw(site_details, site_number):
-    site_row = site_details.filter(pl.col("site_id") == site_number).select("ac_cap_w")
+    site_row = site_details.filter(pl.col("site_id") == site_number).select(
+        "capacity_kw"
+    )
     if site_row.is_empty():
         return None
-    ac_cap_w = site_row["ac_cap_w"][0]
-    if ac_cap_w is None:
+    capacity_kw = site_row["capacity_kw"][0]
+    if capacity_kw is None:
         return None
     try:
-        ac_cap_kw = float(ac_cap_w) / 1000.0
+        capacity_kw = float(capacity_kw)
     except (TypeError, ValueError):
         return None
-    return ac_cap_kw if ac_cap_kw > 0 else None
+    return capacity_kw if capacity_kw > 0 else None
 
 
 def _robust_observed_peak_kw(day_behaviours):
@@ -115,34 +124,39 @@ def _robust_observed_peak_kw(day_behaviours):
             continue
         df = behaviour.circuitData
         power_cols = [
-            c for c in df.columns
-            if c.startswith("power")
-            and not c.endswith("_next")
-            and not c.endswith("_logic")
+            column
+            for column in df.columns
+            if column.startswith("power")
+            and not column.endswith("_next")
+            and not column.endswith("_logic")
         ]
         if not power_cols:
             continue
         site_power_frames.append(
             df.select(
                 pl.sum_horizontal([
-                    pl.col(c).cast(pl.Float64, strict=False).fill_null(0).clip(lower_bound=0)
-                    for c in power_cols
+                    pl.col(column)
+                    .cast(pl.Float64, strict=False)
+                    .fill_null(0)
+                    .clip(lower_bound=0)
+                    for column in power_cols
                 ]).alias("site_power_kw")
             )
         )
     if not site_power_frames:
-        return None, None
+        return None
     site_power = pl.concat(site_power_frames, how="vertical").filter(
         pl.col("site_power_kw") > 0
     )
     if site_power.is_empty():
-        return None, None
+        return None
     sample_count = site_power.height
     top_n = min(sample_count, max(20, math.ceil(sample_count * 0.01)))
-    top_slice = site_power.sort("site_power_kw", descending=True).head(top_n)
     return (
-        top_slice.select(pl.col("site_power_kw").median()).item(),
-        site_power.select(pl.col("site_power_kw").max()).item(),
+        site_power.sort("site_power_kw", descending=True)
+        .head(top_n)
+        .select(pl.col("site_power_kw").median())
+        .item()
     )
 
 
@@ -153,10 +167,14 @@ def rated_capacity_of_pv(
     metadata_tolerance=1.10,
     fallback_kw=5.0,
 ):
+    """Apply the shared metadata/observed-power rated-capacity policy."""
     metadata_kw = _metadata_capacity_kw(site_details, site_number)
-    robust_peak_kw, _ = _robust_observed_peak_kw(day_behaviours)
+    robust_peak_kw = _robust_observed_peak_kw(day_behaviours)
     if metadata_kw is not None:
-        if robust_peak_kw is None or robust_peak_kw <= metadata_kw * metadata_tolerance:
+        if (
+            robust_peak_kw is None
+            or robust_peak_kw <= metadata_kw * metadata_tolerance
+        ):
             return metadata_kw
         return _round_up_to_half_kw(robust_peak_kw)
     if robust_peak_kw is not None:
@@ -164,45 +182,44 @@ def rated_capacity_of_pv(
     return fallback_kw
 
 
-def collect_sapn2022_site_days(
-    site_number,
-    circuit_details,
-    all_data,
-    days_to_check=SAPN2022_EVENT_DAYS,
-):
+def _site_pv_data(site_number, inputs):
+    pv_circuit_ids = (
+        inputs["circuit_details"]
+        .filter(
+            (pl.col("site_id") == site_number)
+            & (pl.col("con_type") == "pv_site_net")
+        )
+        .select("c_id")
+        .unique()["c_id"]
+        .to_list()
+    )
+    if not pv_circuit_ids:
+        return pl.DataFrame()
+    return (
+        inputs["all_data"]
+        .filter(pl.col("c_id").is_in(pv_circuit_ids))
+        .collect()
+    )
+
+
+def collect_site_days(site_number, inputs, definition):
+    """Prepare every configured or discovered day for one site."""
     eligible_day_behaviours = []
     excluded_day_rows = []
     mapped_day_count = 0
-    local_timestamp_dtype = all_data.collect_schema()["local_tstamp"]
-    local_timezone = (
-        local_timestamp_dtype.time_zone
-        if isinstance(local_timestamp_dtype, pl.Datetime)
-        else None
-    )
+    site_data = _site_pv_data(site_number, inputs)
+    if site_data.is_empty():
+        return {
+            "eligible_day_behaviours": eligible_day_behaviours,
+            "excluded_day_rows": excluded_day_rows,
+            "mapped_day_count": mapped_day_count,
+        }
 
-    for day in days_to_check:
-        start_day = pl.datetime(
-            2022,
-            11,
-            day,
-            SAPN2022_DAY_START.hour,
-            SAPN2022_DAY_START.minute,
-            SAPN2022_DAY_START.second,
-            time_zone=local_timezone,
-        )
-        end_day = pl.datetime(
-            2022,
-            11,
-            day,
-            SAPN2022_DAY_END.hour,
-            SAPN2022_DAY_END.minute,
-            SAPN2022_DAY_END.second,
-            time_zone=local_timezone,
-        )
-        site_day_long = extract_nov2022_site_day(
-            all_data,
-            circuit_details,
+    for day_key, start_day, end_day in definition.day_provider(site_data):
+        site_day_long = definition.extract_day(
+            inputs,
             site_number,
+            site_data,
             start_day,
             end_day,
         )
@@ -217,14 +234,13 @@ def collect_sapn2022_site_days(
         )
         analysis_day_long = trim_site_day_analysis_window(site_day_long)
         analysis_day_df = trim_site_day_analysis_window(prepared_day_df)
-        eligibility = summarize_nov2022_day_eligibility(
+        eligibility = definition.eligibility_function(
             analysis_day_long,
             analysis_day_df,
-            coverage_threshold=SAPN2022_DAY_COVERAGE_THRESHOLD,
         )
         if eligibility["eligible"]:
             eligible_day_behaviours.append({
-                "day": day,
+                "day": day_key,
                 "behaviour": CheckPVBehaviour(
                     analysis_day_df,
                     volCol="voltage_valid",
@@ -232,21 +248,19 @@ def collect_sapn2022_site_days(
             })
             continue
 
-        excluded_day_rows.append({
+        excluded_row = {
             "site_id": site_number,
-            "day": day,
+            "day": day_key,
             "reason": eligibility["reason"],
-            "common_power_v10m_coverage_pct": eligibility[
-                "common_power_v10m_coverage_pct"
-            ],
-            "rows_common_power_v10m": eligibility["rows_common_power_v10m"],
-            "rows_with_power": eligibility["rows_with_power"],
-            "rows_with_v10m": eligibility["rows_with_v10m"],
-            "covered_seconds": eligibility["covered_seconds"],
-            "window_seconds": eligibility["window_seconds"],
-            "total_rows": eligibility["total_rows"],
-            "coverage_threshold_pct": SAPN2022_DAY_COVERAGE_THRESHOLD * 100.0,
+        }
+        excluded_row.update({
+            field: eligibility[field]
+            for field in definition.exclusion_fields
         })
+        excluded_row["coverage_threshold_pct"] = (
+            definition.coverage_threshold * 100.0
+        )
+        excluded_day_rows.append(excluded_row)
 
     return {
         "eligible_day_behaviours": eligible_day_behaviours,
@@ -255,23 +269,19 @@ def collect_sapn2022_site_days(
     }
 
 
-def prepare_sapn2022_site(site_number, inputs):
-    """Apply SAPN site/day policy and return one pipeline-ready site dictionary."""
+def prepare_site(site_number, inputs, definition):
+    """Return one pipeline-ready site or the reason it must be skipped."""
     metadata_row_count = inputs["site_metadata_rows"].get(site_number, 0)
     pv_site_net_count = inputs["pv_site_net_counts"].get(site_number, 0)
 
-    if metadata_row_count != 1:
+    if metadata_row_count != REQUIRED_SITE_METADATA_ROWS:
         return {"site_id": site_number, "skip_reason": "not_single_inverter"}
     if pv_site_net_count == 0:
         return {"site_id": site_number, "skip_reason": "no_pv_site_net"}
-    if pv_site_net_count > 3:
+    if pv_site_net_count > MAX_PV_SITE_NET_CIRCUITS:
         return {"site_id": site_number, "skip_reason": "more_than_3_pv_circuits"}
 
-    site_day_result = collect_sapn2022_site_days(
-        site_number,
-        inputs["circuit_details"],
-        inputs["all_data"],
-    )
+    site_day_result = collect_site_days(site_number, inputs, definition)
     base_result = {
         "site_id": site_number,
         "excluded_day_rows": site_day_result["excluded_day_rows"],

@@ -42,7 +42,7 @@ def _raw_parquet_paths(data_dir, cleaned_path):
     )
 
 
-def _load_circuit_details(path):
+def load_circuit_details(path=CIRCUIT_METADATA_PATH):
     circuit_details = pl.read_csv(path).rename({
         "circuit_id": "c_id",
         "circuit_polarity": "polarity",
@@ -83,7 +83,7 @@ def build_cleaned_site_data(
             f"source files alongside {circuit_metadata_path.name}."
         )
 
-    circuit_details = _load_circuit_details(circuit_metadata_path)
+    circuit_details = load_circuit_details(circuit_metadata_path)
     circuit_site_lookup = (
         circuit_details.filter(pl.col("site_id").is_not_null())
         .select(["c_id", "site_id", "con_type"])

@@ -87,7 +87,7 @@ def summarize_multi_method_site_outputs(phase_b_summary_by_method_df):
     return {"site_comparison": comparison}
 
 
-def build_output_tables(results):
+def build_output_tables(results, excluded_day_schema=None):
     tables = {
         "site_thresholds": results["site_thresholds"],
         "site_thresholds_by_method": results["site_thresholds_by_method"],
@@ -103,24 +103,24 @@ def build_output_tables(results):
         ],
     }
     excluded_rows = results["excluded_day_rows"]
+    if excluded_day_schema is None:
+        excluded_day_schema = {
+            "site_id": pl.Int64,
+            "day": pl.Int64,
+            "reason": pl.Utf8,
+            "common_power_v10m_coverage_pct": pl.Float64,
+            "rows_common_power_v10m": pl.Int64,
+            "rows_with_power": pl.Int64,
+            "rows_with_v10m": pl.Int64,
+            "covered_seconds": pl.Float64,
+            "window_seconds": pl.Float64,
+            "total_rows": pl.Int64,
+            "coverage_threshold_pct": pl.Float64,
+        }
     tables["excluded_site_days"] = (
         pl.DataFrame(excluded_rows)
         if excluded_rows
-        else pl.DataFrame(
-            schema={
-                "site_id": pl.Int64,
-                "day": pl.Int64,
-                "reason": pl.Utf8,
-                "common_power_v10m_coverage_pct": pl.Float64,
-                "rows_common_power_v10m": pl.Int64,
-                "rows_with_power": pl.Int64,
-                "rows_with_v10m": pl.Int64,
-                "covered_seconds": pl.Float64,
-                "window_seconds": pl.Float64,
-                "total_rows": pl.Int64,
-                "coverage_threshold_pct": pl.Float64,
-            }
-        )
+        else pl.DataFrame(schema=excluded_day_schema)
     )
 
     phase_b_summary = tables["phase_b_site_summary"]
@@ -164,12 +164,15 @@ def build_output_tables(results):
     return tables
 
 
-def write_outputs(results, output_dir):
+def write_outputs(results, output_dir, excluded_day_schema=None):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     threshold_plot_dir = output_dir / "threshold_distribution_plots"
     threshold_plot_dir.mkdir(parents=True, exist_ok=True)
-    tables = build_output_tables(results)
+    tables = build_output_tables(
+        results,
+        excluded_day_schema=excluded_day_schema,
+    )
 
     filenames = {
         "site_thresholds": PRIMARY_SITE_THRESHOLDS_NAME,

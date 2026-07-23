@@ -44,7 +44,7 @@ from sapn2022_workflow.sapn_paths import (
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
 )
-from sapn2022_workflow.workflow import (
+from sapn2022_workflow.adapter import (
     load_cleaned_site_data as loadCleanedSiteData,
 )
 from sapn2022_workflow.nov2022_site_day_extraction import (
