@@ -29,6 +29,7 @@ DEFAULT_CSV_PATH = "mape_under50_sites.csv"
 DEFAULT_METRICS_CSV_PATH = "mape_validation_metrics.csv"
 MODEL_MIN_P_NORM = 0.05
 
+# TBD -> 
 MAPE_MIN_ACTUAL_NORM = 0.20
 # at least XX validation intervals:
 DEFAULT_MIN_VAL_INTERVALS = 30
@@ -36,7 +37,7 @@ DEFAULT_MIN_VAL_INTERVALS = 30
 DEFAULT_MIN_VAL_DAYS = 3
 
 
-#####################################
+#######################
 ### TO PARAMETRISE ###
 #######################
 '''

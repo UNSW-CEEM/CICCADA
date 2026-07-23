@@ -131,8 +131,14 @@ def _insert_sql_basic(
     )
 
     rating_col = capacity_column(rating_basis)
-    max_p = vw_max_p_sql("V", rating_col)
-    tol   = tol_kw_sql(rating_col)
+
+    # Stabilise the floating-point site-average voltage before using the
+    # strict AS/NZS 4777.2 Volt-Watt exposure boundary.
+    v_scored = "round(V, 6)"
+    vw_exposed = f"{v_scored} > {VW_V1}"
+
+    max_p = vw_max_p_sql(v_scored, rating_col)
+    tol = tol_kw_sql(rating_col)
 
     return f"""
     INSERT INTO {target}
@@ -151,7 +157,7 @@ def _insert_sql_basic(
     scored AS (
         SELECT site_id, P_kW, V,
                {temporal_cols('t_stamp')},
-               CASE WHEN V > {VW_V1}
+               CASE WHEN V > {vw_exposed}
                     THEN greatest(0, P_kW - max_P_volt_watt)
                     ELSE NULL END AS nonconformance_voltwatt
         FROM limits
@@ -167,7 +173,7 @@ def _insert_sql_basic(
         sum(CASE WHEN nonconformance_voltwatt > 0 THEN 1 ELSE 0 END)
                                                         AS nonconformance_voltwatt_count,
         count(*)                                        AS all_intervals_count,
-        sum(CASE WHEN V > {VW_V1} THEN 1 ELSE 0 END)    AS total_count,   -- R13
+        sum(CASE WHEN {vw_exposed} THEN 1 ELSE 0 END)    AS total_count,   -- R13
         '{rating_basis}'                                AS rating_basis,
         '{voltage_aggregation}'                         AS voltage_aggregation,
         '{flex_selection}'                              AS flex_selection,
@@ -199,9 +205,17 @@ def _insert_sql_ghi(
     )
 
     rating_col = capacity_column(rating_basis)
-    max_p = vw_max_p_sql("V", rating_col)
+
+    # Must use exactly the same stable voltage and exposure test as Basic.
+    v_scored = "round(V, 6)"
+    vw_exposed = f"{v_scored} > {VW_V1}"
+
+    max_p = vw_max_p_sql(v_scored, rating_col)
     tol = tol_kw_sql(rating_col)
-    unc_pred = uncurtailed_partition_predicate(partitions, alias="a")
+    unc_pred = uncurtailed_partition_predicate(
+        partitions,
+        alias="a",
+    )
 
     return f"""
     INSERT INTO {target}
@@ -252,12 +266,12 @@ def _insert_sql_ghi(
             -- Missing counterfactual plus actual P at/below the limit is
             -- unknown, not evidence of conformity.
             CASE
-                WHEN V > {VW_V1}
+                WHEN {vw_exposed}
                      AND P_kW IS NOT NULL
                      AND P_kW > max_P_volt_watt
                 THEN P_kW - max_P_volt_watt
 
-                WHEN V > {VW_V1}
+                WHEN {vw_exposed}
                      AND P_kW IS NOT NULL
                      AND uncurtailed_P > max_P_volt_watt
                 THEN 0
@@ -269,7 +283,7 @@ def _insert_sql_ghi(
             -- sufficient counterfactual power was available, while actual P
             -- remained at or below the permitted Volt-Watt limit.
             CASE
-                WHEN V > {VW_V1}
+                WHEN {vw_exposed}
                      AND P_kW IS NOT NULL
                      AND uncurtailed_P > max_P_volt_watt
                      AND P_kW <= max_P_volt_watt
@@ -279,7 +293,7 @@ def _insert_sql_ghi(
             END AS curtailment_voltwattghi,
 
             CASE
-                WHEN V > {VW_V1}
+                WHEN {vw_exposed}
                      AND P_kW IS NOT NULL
                      AND (
                          P_kW > max_P_volt_watt
@@ -292,7 +306,7 @@ def _insert_sql_ghi(
             -- Track every exposed interval for which Stage 1 supplied no
             -- counterfactual, including intervals that remain unassessable.
             CASE
-                WHEN V > {VW_V1}
+                WHEN {vw_exposed}
                      AND uncurtailed_P IS NULL
                 THEN 1
                 ELSE 0
@@ -340,7 +354,7 @@ def _insert_sql_ghi(
 
         sum(
             CASE
-                WHEN V > {VW_V1} THEN 1
+                WHEN {vw_exposed} THEN 1
                 ELSE 0
             END
         ) AS total_count,
