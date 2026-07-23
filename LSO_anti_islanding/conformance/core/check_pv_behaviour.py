@@ -178,6 +178,7 @@ class CheckPVBehaviour:
                 "brackets": pl.DataFrame(),
                 "reconnects": pl.DataFrame(),
             }
+        timestamp_dtype = df.schema["local_tstamp"]
 
         disc_rows = (
             df.filter(pl.col("disconnect_edge") | pl.col("disconnect_edge_fallback"))
@@ -303,7 +304,7 @@ class CheckPVBehaviour:
                 schema={
                     "site_id": pl.Int64,
                     "event_id": pl.Int64,
-                    "ts_disc": pl.Datetime(time_zone="Australia/Adelaide"),
+                    "ts_disc": timestamp_dtype,
                     "edge_source": pl.Utf8,
                     "mech": pl.Utf8,
                     "v_los_recorded": pl.Float64,
@@ -318,7 +319,7 @@ class CheckPVBehaviour:
         ).with_columns([
             pl.col("site_id").cast(pl.Int64),
             pl.col("event_id").cast(pl.Int64),
-            pl.col("ts_disc").cast(pl.Datetime(time_zone="Australia/Adelaide")),
+            pl.col("ts_disc").cast(timestamp_dtype),
             pl.col("edge_source").cast(pl.Utf8),
             pl.col("mech").cast(pl.Utf8),
             pl.col("v_los_recorded").cast(pl.Float64),
@@ -338,8 +339,8 @@ class CheckPVBehaviour:
                     "event_id": pl.Int64,
                     "edge_source": pl.Utf8,
                     "mech": pl.Utf8,
-                    "ts_disc": pl.Datetime(time_zone="Australia/Adelaide"),
-                    "ts_rec": pl.Datetime(time_zone="Australia/Adelaide"),
+                    "ts_disc": timestamp_dtype,
+                    "ts_rec": timestamp_dtype,
                     "L": pl.Float64,
                     "U": pl.Float64,
                     "midpoint": pl.Float64,
@@ -351,8 +352,8 @@ class CheckPVBehaviour:
             pl.col("event_id").cast(pl.Int64),
             pl.col("edge_source").cast(pl.Utf8),
             pl.col("mech").cast(pl.Utf8),
-            pl.col("ts_disc").cast(pl.Datetime(time_zone="Australia/Adelaide")),
-            pl.col("ts_rec").cast(pl.Datetime(time_zone="Australia/Adelaide")),
+            pl.col("ts_disc").cast(timestamp_dtype),
+            pl.col("ts_rec").cast(timestamp_dtype),
             pl.col("L").cast(pl.Float64),
             pl.col("U").cast(pl.Float64),
             pl.col("midpoint").cast(pl.Float64),

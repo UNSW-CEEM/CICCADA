@@ -6,7 +6,6 @@ from matplotlib.ticker import MultipleLocator
 from matplotlib.patches import Patch
 from pathlib import Path
 import datetime as dt
-import zoneinfo
 import polars as pl
 import numpy as np
 
@@ -57,7 +56,11 @@ def _power_trace_label(power_cols, idx=None):
     return f"Power {idx}"
 
 
-def _format_plot_date(day_label):
+def _format_plot_date(day_label, timestamps=None):
+    if timestamps:
+        return timestamps[0].strftime("%d/%m/%Y")
+    if isinstance(day_label, (dt.date, dt.datetime)):
+        return day_label.strftime("%d/%m/%Y")
     try:
         return dt.date(2022, 11, int(day_label)).strftime("%d/%m/%Y")
     except (TypeError, ValueError):
@@ -95,7 +98,6 @@ def plot_site_compliance_day(
     if df.is_empty():
         return
 
-    tz = zoneinfo.ZoneInfo("Australia/Adelaide")
     power_cols = [
         c for c in df.columns
         if c.startswith("power")
@@ -245,7 +247,7 @@ def plot_site_compliance_day(
                 f"OV1 {ov1_compliant}/{ov1_eligible}"
             )
 
-    plot_date = _format_plot_date(day_label)
+    plot_date = _format_plot_date(day_label, x)
     title = f"Site example | Date: {plot_date} | {overall_label}"
     if day_label_text:
         title = f"{title}\n{day_label_text}"
@@ -283,11 +285,25 @@ def plot_site_compliance_day(
         v_ax.grid(True, which="major", axis="y", color=PLOT_COLORS["grid"], alpha=0.35)
         v_ax.spines["top"].set_visible(False)
 
-    day_start = dt.datetime(2022, 11, int(day_label), 6, 0, 0, tzinfo=tz)
-    day_end = dt.datetime(2022, 11, int(day_label), 18, 0, 0, tzinfo=tz)
+    plot_day = x[0].date()
+    plot_timezone = x[0].tzinfo
+    day_start = dt.datetime.combine(
+        plot_day,
+        dt.time(6, 0),
+        tzinfo=plot_timezone,
+    )
+    day_end = dt.datetime.combine(
+        plot_day,
+        dt.time(18, 0),
+        tzinfo=plot_timezone,
+    )
     bottom_axis.set_xlim(day_start, day_end)
-    bottom_axis.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 30], tz=tz))
-    bottom_axis.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=tz))
+    bottom_axis.xaxis.set_major_locator(
+        mdates.MinuteLocator(byminute=[0, 30], tz=plot_timezone)
+    )
+    bottom_axis.xaxis.set_major_formatter(
+        mdates.DateFormatter("%H:%M", tz=plot_timezone)
+    )
 
     if is_single_phase:
         lines, labels = ax_main.get_legend_handles_labels()
@@ -354,7 +370,6 @@ def plot_method_threshold_overlay_day(
     if df.is_empty():
         return
 
-    tz = zoneinfo.ZoneInfo(tz_name)
     power_cols = [
         c for c in df.columns
         if c.startswith("power")
@@ -520,7 +535,7 @@ def plot_method_threshold_overlay_day(
                 f'{method_info["label"]}: site {method_info["status"]} | day {day_status}'
             )
     method_status_text = " | ".join(method_status_parts)
-    plot_date = _format_plot_date(day_label)
+    plot_date = _format_plot_date(day_label, x)
     title = f"Site example | Date: {plot_date}"
     if method_status_text:
         title = f"{title}\n{method_status_text}"
@@ -554,11 +569,25 @@ def plot_method_threshold_overlay_day(
         v_ax.yaxis.set_minor_locator(MultipleLocator(1.0))
         v_ax.grid(True, which="major", axis="y", color=PLOT_COLORS["grid"], alpha=0.35)
 
-    day_start = dt.datetime(2022, 11, int(day_label), 6, 0, 0, tzinfo=tz)
-    day_end = dt.datetime(2022, 11, int(day_label), 18, 0, 0, tzinfo=tz)
+    plot_day = x[0].date()
+    plot_timezone = x[0].tzinfo
+    day_start = dt.datetime.combine(
+        plot_day,
+        dt.time(6, 0),
+        tzinfo=plot_timezone,
+    )
+    day_end = dt.datetime.combine(
+        plot_day,
+        dt.time(18, 0),
+        tzinfo=plot_timezone,
+    )
     bottom_axis.set_xlim(day_start, day_end)
-    bottom_axis.xaxis.set_major_locator(mdates.MinuteLocator(byminute=[0, 30], tz=tz))
-    bottom_axis.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=tz))
+    bottom_axis.xaxis.set_major_locator(
+        mdates.MinuteLocator(byminute=[0, 30], tz=plot_timezone)
+    )
+    bottom_axis.xaxis.set_major_formatter(
+        mdates.DateFormatter("%H:%M", tz=plot_timezone)
+    )
 
     if is_single_phase:
         lines, labels = ax_main.get_legend_handles_labels()

@@ -6,7 +6,6 @@ from pathlib import Path
 import polars as pl
 
 from config import (
-    LOCAL_TIMEZONE,
     SAPN2022_DAY_COVERAGE_THRESHOLD,
     SAPN2022_EVENT_DAYS,
 )
@@ -171,10 +170,32 @@ def collect_sapn2022_site_days(
     eligible_day_behaviours = []
     excluded_day_rows = []
     mapped_day_count = 0
+    local_timestamp_dtype = all_data.collect_schema()["local_tstamp"]
+    local_timezone = (
+        local_timestamp_dtype.time_zone
+        if isinstance(local_timestamp_dtype, pl.Datetime)
+        else None
+    )
 
     for day in days_to_check:
-        start_day = pl.datetime(2022, 11, day, 6, 0, 0, time_zone=LOCAL_TIMEZONE)
-        end_day = pl.datetime(2022, 11, day, 18, 0, 0, time_zone=LOCAL_TIMEZONE)
+        start_day = pl.datetime(
+            2022,
+            11,
+            day,
+            6,
+            0,
+            0,
+            time_zone=local_timezone,
+        )
+        end_day = pl.datetime(
+            2022,
+            11,
+            day,
+            18,
+            0,
+            0,
+            time_zone=local_timezone,
+        )
         site_day_long = extract_nov2022_site_day(
             all_data,
             circuit_details,

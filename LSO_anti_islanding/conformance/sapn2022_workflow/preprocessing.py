@@ -4,11 +4,13 @@ from pathlib import Path
 
 import polars as pl
 
+from config import LOCAL_TIMEZONE
 from core.data_cleaning import (
     addLocalTStamp,
     addPolarityToPower,
     addValidVoltage,
-    convertPowerToKw,
+    convertcWToKw,
+    deduplicateMeasurements,
 )
 from sapn2022_workflow.sapn_paths import (
     CIRCUIT_DETAILS_PATH,
@@ -30,9 +32,20 @@ def build_cleaned_site_data(
         raise FileNotFoundError(f"Missing circuit details at {circuit_details_path}.")
 
     circuit_details = pl.read_csv(circuit_details_path)
-    all_data = pl.scan_parquet(raw_path)
-    all_data = convertPowerToKw(all_data, convert=True)
-    all_data = addLocalTStamp(all_data, add=True)
+    mapped_circuit_ids = (
+        circuit_details.filter(pl.col("site_id").is_not_null())
+        .select("c_id")
+        .unique()
+        .lazy()
+    )
+    all_data = (
+        pl.scan_parquet(raw_path)
+        .join(mapped_circuit_ids, on="c_id", how="inner")
+        .with_columns(pl.lit(LOCAL_TIMEZONE).alias("timezone"))
+    )
+    all_data = deduplicateMeasurements(all_data)
+    all_data = convertcWToKw(all_data)
+    all_data = addLocalTStamp(all_data)
     all_data = addValidVoltage(all_data)
     all_data = addPolarityToPower(all_data, circuit_details)
 

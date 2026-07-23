@@ -46,7 +46,8 @@ def _prepare_cleaned_metrology(raw, circuitDetails, power_divisor, start_date, e
         ])
         .with_columns((pl.col("power") / power_divisor).alias("power"))
     )
-    cleaned = addLocalTStamp(cleaned, add=True)
+    cleaned = cleaned.with_columns(pl.lit(ADELAIDE_TZ).alias("timezone"))
+    cleaned = addLocalTStamp(cleaned)
     cleaned = addValidVoltage(cleaned)
     cleaned = addPolarityToPower(cleaned, circuitDetails)
 

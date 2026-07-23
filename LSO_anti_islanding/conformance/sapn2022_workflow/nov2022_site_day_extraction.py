@@ -1,35 +1,8 @@
-"""Extract and deduplicate one SAPN November 2022 site-day."""
+"""Extract one pre-cleaned SAPN November 2022 site-day."""
 
 import polars as pl
 
-
-def _dedupe_circuit_rows(df, highest=False):
-    dupes = (
-        df.group_by("local_tstamp")
-        .agg([
-            pl.count().alias("n_rows"),
-            pl.col("power").n_unique().alias("power_n_unique"),
-        ])
-        .filter(pl.col("n_rows") > 1)
-    )
-    same_power_count = dupes.filter(pl.col("power_n_unique") == 1).height
-    different_power_count = dupes.filter(pl.col("power_n_unique") > 1).height
-
-    if different_power_count > 0:
-        if highest is True:
-            df = df.group_by("local_tstamp").agg([
-                pl.col("power").max().alias("power"),
-                pl.all().exclude("power").first(),
-            ])
-        else:
-            bad_timestamps = (
-                dupes.filter(pl.col("power_n_unique") > 1).select("local_tstamp")
-            )
-            df = df.join(bad_timestamps, on="local_tstamp", how="anti")
-
-    if same_power_count > 0:
-        df = df.unique(subset=["local_tstamp"], keep="first")
-    return df.sort("local_tstamp")
+from core.data_cleaning import deduplicateMeasurements
 
 
 def extract_nov2022_site_day(
@@ -56,8 +29,8 @@ def extract_nov2022_site_day(
         return pl.DataFrame(
             schema={
                 "c_id": pl.Int64,
-                "local_tstamp": pl.Datetime(time_zone="Australia/Adelaide"),
-                "utc_tstamp": pl.Utf8,
+                "local_tstamp": pl.Datetime,
+                "utc_tstamp": pl.Datetime(time_zone="UTC"),
                 "duration": pl.Float64,
                 "power": pl.Float64,
                 "voltage_valid": pl.Float64,
@@ -78,8 +51,6 @@ def extract_nov2022_site_day(
         .filter(pl.col("local_tstamp").is_between(start_day, end_day, closed="both"))
         .collect()
     )
-    if site_day_df.is_empty():
-        return site_day_df
-    return site_day_df.group_by("c_id", maintain_order=True).map_groups(
-        _dedupe_circuit_rows
-    )
+    # The shared preprocessing step guarantees uniqueness for newly cleaned
+    # data. Keep this idempotent call so older cleaned parquets remain usable.
+    return deduplicateMeasurements(site_day_df).sort("local_tstamp")
