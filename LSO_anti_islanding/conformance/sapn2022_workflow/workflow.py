@@ -7,12 +7,15 @@ import polars as pl
 
 from config import (
     SAPN2022_DAY_COVERAGE_THRESHOLD,
+    SAPN2022_DAY_END,
+    SAPN2022_DAY_START,
     SAPN2022_EVENT_DAYS,
 )
 from core.check_pv_behaviour import CheckPVBehaviour
 from core.site_day_preparation import (
     calculate_site_day_voltage_signals,
     map_circuit_data_to_site,
+    trim_site_day_analysis_window,
 )
 from sapn2022_workflow.nov2022_site_day_extraction import extract_nov2022_site_day
 from sapn2022_workflow.sapn_paths import (
@@ -182,18 +185,18 @@ def collect_sapn2022_site_days(
             2022,
             11,
             day,
-            6,
-            0,
-            0,
+            SAPN2022_DAY_START.hour,
+            SAPN2022_DAY_START.minute,
+            SAPN2022_DAY_START.second,
             time_zone=local_timezone,
         )
         end_day = pl.datetime(
             2022,
             11,
             day,
-            18,
-            0,
-            0,
+            SAPN2022_DAY_END.hour,
+            SAPN2022_DAY_END.minute,
+            SAPN2022_DAY_END.second,
             time_zone=local_timezone,
         )
         site_day_long = extract_nov2022_site_day(
@@ -212,16 +215,18 @@ def collect_sapn2022_site_days(
             wide,
             voltage_prefix="voltage_valid",
         )
+        analysis_day_long = trim_site_day_analysis_window(site_day_long)
+        analysis_day_df = trim_site_day_analysis_window(prepared_day_df)
         eligibility = summarize_nov2022_day_eligibility(
-            site_day_long,
-            prepared_day_df,
+            analysis_day_long,
+            analysis_day_df,
             coverage_threshold=SAPN2022_DAY_COVERAGE_THRESHOLD,
         )
         if eligibility["eligible"]:
             eligible_day_behaviours.append({
                 "day": day,
                 "behaviour": CheckPVBehaviour(
-                    prepared_day_df,
+                    analysis_day_df,
                     volCol="voltage_valid",
                 ),
             })

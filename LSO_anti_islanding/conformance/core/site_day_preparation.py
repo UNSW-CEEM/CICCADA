@@ -1,8 +1,14 @@
 """Shared circuit mapping and voltage preparation for one site-day."""
 
+from datetime import time
+
 import polars as pl
 
-from config import VOLTAGE_ROLLING_WINDOW
+from config import (
+    SITE_DAY_ANALYSIS_START,
+    SITE_DAY_END,
+    VOLTAGE_ROLLING_WINDOW,
+)
 
 
 def map_circuit_data_to_site(site_day_long, site_number):
@@ -53,14 +59,29 @@ def calculate_site_day_voltage_signals(
             rolled_name = (
                 f"vmean_rolling_10m{column.replace(voltage_prefix, '', 1)}"
             )
+            valid_voltage = df.filter(pl.col(column).is_not_null())
+            if valid_voltage.is_empty():
+                df = df.with_columns(
+                    pl.lit(None).cast(pl.Float64).alias(rolled_name)
+                )
+                continue
+            first_voltage_timestamp = valid_voltage["local_tstamp"].min()
             rolled = (
-                df.filter(pl.col(column).is_not_null())
+                valid_voltage
                 .with_columns(
-                    pl.col(column)
-                    .rolling_mean_by(
+                    pl.col(column).rolling_mean_by(
                         by="local_tstamp",
                         window_size=rolling_window,
+                        closed="both",
+                    ).alias(rolled_name),
+                )
+                .with_columns(
+                    pl.when(
+                        pl.col("local_tstamp")
+                        >= pl.lit(first_voltage_timestamp).dt.offset_by(rolling_window)
                     )
+                    .then(pl.col(rolled_name))
+                    .otherwise(None)
                     .alias(rolled_name)
                 )
                 .select(["local_tstamp", rolled_name])
@@ -79,3 +100,16 @@ def calculate_site_day_voltage_signals(
         pl.lit(None).cast(pl.Float64).alias("v10m_avg"),
         pl.lit(None).cast(pl.Float64).alias("vinst_max"),
     ])
+
+
+def trim_site_day_analysis_window(
+    site_day_df,
+    start_time: time = SITE_DAY_ANALYSIS_START,
+    end_time: time = SITE_DAY_END,
+):
+    """Keep the inclusive local-time window used for eligibility and analysis."""
+    return site_day_df.filter(
+        pl.col("local_tstamp")
+        .dt.time()
+        .is_between(start_time, end_time, closed="both")
+    )
