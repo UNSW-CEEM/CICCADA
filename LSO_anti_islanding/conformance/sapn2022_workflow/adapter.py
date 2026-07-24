@@ -13,9 +13,6 @@ from config import (
     SAPN2022_EVENT_DAYS,
 )
 from core.workflow import DatasetDefinition, build_workflow_inputs
-from sapn2022_workflow.nov2022_site_day_extraction import (
-    extract_nov2022_site_day,
-)
 from sapn2022_workflow.sapn_paths import (
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
@@ -37,12 +34,26 @@ def load_cleaned_site_data(cleaned_path=CLEANED_SITE_DATA_PATH):
     return pl.scan_parquet(cleaned_path)
 
 
+def _capacity_w_to_kw(capacity_w):
+    if capacity_w is None:
+        return None
+    try:
+        return float(capacity_w) / 1_000.0
+    except (TypeError, ValueError):
+        return None
+
+
 def load_sapn2022_inputs():
-    site_details = pl.read_csv(SITE_DETAILS_PATH).with_columns(
-        (
-            pl.col("ac_cap_w").cast(pl.Float64, strict=False)
-            / 1_000.0
-        ).alias("capacity_kw")
+    site_details = pl.read_csv(SITE_DETAILS_PATH)
+    site_details = site_details.with_columns(
+        pl.Series(
+            "capacity_kw",
+            [
+                _capacity_w_to_kw(capacity_w)
+                for capacity_w in site_details["ac_cap_w"]
+            ],
+            dtype=pl.Float64,
+        )
     )
     circuit_details = pl.read_csv(CIRCUIT_DETAILS_PATH)
     all_data = load_cleaned_site_data()
@@ -83,22 +94,6 @@ def _sapn2022_days(site_data):
     ]
 
 
-def _extract_sapn2022_day(
-    inputs,
-    site_number,
-    site_data,
-    start_day,
-    end_day,
-):
-    return extract_nov2022_site_day(
-        site_data,
-        inputs["circuit_details"],
-        site_number,
-        start_day,
-        end_day,
-    )
-
-
 def _summarize_sapn2022_day(site_day_long, prepared_day_df):
     return summarize_nov2022_day_eligibility(
         site_day_long,
@@ -111,7 +106,6 @@ SAPN2022_DEFINITION = DatasetDefinition(
     name="sapn2022",
     load_inputs=load_sapn2022_inputs,
     day_provider=_sapn2022_days,
-    extract_day=_extract_sapn2022_day,
     eligibility_function=_summarize_sapn2022_day,
     output_dir=CONFORMANCE_OUTPUT_DIR,
     coverage_threshold=SAPN2022_DAY_COVERAGE_THRESHOLD,

@@ -11,7 +11,9 @@ from config import MAX_PV_SITE_NET_CIRCUITS, REQUIRED_SITE_METADATA_ROWS
 from core.check_pv_behaviour import CheckPVBehaviour
 from core.site_day_preparation import (
     calculate_site_day_voltage_signals,
+    extract_site_day,
     map_circuit_data_to_site,
+    select_site_pv_data,
     trim_site_day_analysis_window,
 )
 
@@ -23,10 +25,6 @@ class DatasetDefinition:
     name: str
     load_inputs: Callable[[], dict[str, Any]]
     day_provider: Callable[[pl.DataFrame], list[tuple[Any, Any, Any]]]
-    extract_day: Callable[
-        [dict[str, Any], int, pl.DataFrame, Any, Any],
-        pl.DataFrame,
-    ]
     eligibility_function: Callable[[pl.DataFrame, pl.DataFrame], dict[str, Any]]
     output_dir: Path
     coverage_threshold: float
@@ -182,32 +180,16 @@ def rated_capacity_of_pv(
     return fallback_kw
 
 
-def _site_pv_data(site_number, inputs):
-    pv_circuit_ids = (
-        inputs["circuit_details"]
-        .filter(
-            (pl.col("site_id") == site_number)
-            & (pl.col("con_type") == "pv_site_net")
-        )
-        .select("c_id")
-        .unique()["c_id"]
-        .to_list()
-    )
-    if not pv_circuit_ids:
-        return pl.DataFrame()
-    return (
-        inputs["all_data"]
-        .filter(pl.col("c_id").is_in(pv_circuit_ids))
-        .collect()
-    )
-
-
 def collect_site_days(site_number, inputs, definition):
     """Prepare every configured or discovered day for one site."""
     eligible_day_behaviours = []
     excluded_day_rows = []
     mapped_day_count = 0
-    site_data = _site_pv_data(site_number, inputs)
+    site_data = select_site_pv_data(
+        inputs["all_data"],
+        inputs["circuit_details"],
+        site_number,
+    )
     if site_data.is_empty():
         return {
             "eligible_day_behaviours": eligible_day_behaviours,
@@ -216,9 +198,7 @@ def collect_site_days(site_number, inputs, definition):
         }
 
     for day_key, start_day, end_day in definition.day_provider(site_data):
-        site_day_long = definition.extract_day(
-            inputs,
-            site_number,
+        site_day_long = extract_site_day(
             site_data,
             start_day,
             end_day,

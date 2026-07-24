@@ -12,24 +12,13 @@ from config import (
 )
 from core.workflow import DatasetDefinition, build_workflow_inputs
 from solar_analytics_workflow.preprocessing import load_circuit_details
-from solar_analytics_workflow.site_day_extraction import (
-    extract_solar_analytics_site_day,
-)
 from solar_analytics_workflow.site_day_filtering import (
     summarize_solar_analytics_day_eligibility,
 )
 from solar_analytics_workflow.solar_paths import (
     CLEANED_DATA_PATH,
-    CONFORMANCE_DIR,
+    CONFORMANCE_OUTPUT_DIR,
     SITE_METADATA_PATH,
-)
-
-
-CONFORMANCE_OUTPUT_DIR = (
-    CONFORMANCE_DIR
-    / "updated results"
-    / "solar_analytics"
-    / "site_compliance"
 )
 
 
@@ -89,21 +78,6 @@ def _solar_analytics_days(site_data):
     ]
 
 
-def _extract_solar_analytics_day(
-    inputs,
-    site_number,
-    site_data,
-    start_day,
-    end_day,
-):
-    return extract_solar_analytics_site_day(
-        site_data,
-        site_number,
-        start_day,
-        end_day,
-    )
-
-
 def _summarize_solar_analytics_day(site_day_long, prepared_day_df):
     del site_day_long
     return summarize_solar_analytics_day_eligibility(
@@ -116,7 +90,6 @@ SOLAR_ANALYTICS_DEFINITION = DatasetDefinition(
     name="solar_analytics",
     load_inputs=load_solar_analytics_inputs,
     day_provider=_solar_analytics_days,
-    extract_day=_extract_solar_analytics_day,
     eligibility_function=_summarize_solar_analytics_day,
     output_dir=CONFORMANCE_OUTPUT_DIR,
     coverage_threshold=SOLAR_ANALYTICS_DAY_COVERAGE_THRESHOLD,

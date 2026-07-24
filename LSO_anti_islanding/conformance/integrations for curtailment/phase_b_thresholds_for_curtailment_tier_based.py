@@ -47,10 +47,11 @@ from sapn2022_workflow.sapn_paths import (
 from sapn2022_workflow.adapter import (
     load_cleaned_site_data as loadCleanedSiteData,
 )
-from sapn2022_workflow.nov2022_site_day_extraction import (
-    extract_nov2022_site_day as build_nov2022_site_day_long,
+from core.site_day_preparation import (
+    extract_site_day,
+    map_circuit_data_to_site as mapCircuitDataToSite,
+    select_site_pv_data,
 )
-from core.site_day_preparation import map_circuit_data_to_site as mapCircuitDataToSite
 
 
 PHASE_B_SUMMARY_PATH = Path("updated results/site_compliance/phase_b_site_summary_tier_based.csv")
@@ -376,14 +377,13 @@ def main() -> None:
         los_threshold_used = float(site_row["los_threshold_used"])
         # ``ov1_work_site`` is the fixed site-level OV1 threshold used by Phase B.
         ov1_work_threshold = float(site_row["ov1_work_site"])
+        site_data = select_site_pv_data(all_data, circuit_details, site_id)
 
         site_day_frames: list[pl.DataFrame] = []
         for day in DAYS_TO_CHECK:
             start_day, end_day = _window_for_day(day)
-            site_day_long = build_nov2022_site_day_long(
-                all_data,
-                circuit_details,
-                site_id,
+            site_day_long = extract_site_day(
+                site_data,
                 start_day,
                 end_day,
             )
