@@ -104,25 +104,41 @@ def addLocalTStamp(data, timezone_column="timezone"):
     ])
 
 
-def addValidVoltage(df, Vmin=VALID_VOLTAGE_MIN, Vmax=VALID_VOLTAGE_MAX):
-    return (
-        df.with_columns(
-            pl.col("voltage").cast(pl.Float64, strict=False).alias("voltage_f")
+def addValidVoltage(
+    df,
+    Vmin=VALID_VOLTAGE_MIN,
+    Vmax=VALID_VOLTAGE_MAX,
+    *,
+    fallback_col=None,
+):
+    """Add an in-range voltage using an explicitly configured fallback."""
+    schema = df.collect_schema()
+    if "voltage" not in schema:
+        raise ValueError("Missing required voltage column 'voltage'.")
+    if fallback_col is not None and fallback_col not in schema:
+        raise ValueError(
+            f"Missing configured fallback voltage column {fallback_col!r}."
         )
-        .with_columns(
-            pl.when(
-                pl.col("voltage_f").is_not_null()
-                & pl.col("voltage_f").is_between(Vmin, Vmax)
-            )
-            .then(pl.col("voltage_f"))
-            .when(
-                pl.col("vmean").is_not_null()
-                & pl.col("vmean").is_between(Vmin, Vmax)
-            )
-            .then(pl.col("vmean"))
-            .otherwise(None)
-            .alias("voltage_valid")
+
+    df = df.with_columns(
+        pl.col("voltage").cast(pl.Float64, strict=False).alias("voltage_f")
+    )
+    valid_voltage = (
+        pl.when(
+            pl.col("voltage_f").is_not_null()
+            & pl.col("voltage_f").is_between(Vmin, Vmax)
         )
+        .then(pl.col("voltage_f"))
+    )
+    if fallback_col is not None:
+        fallback_voltage = pl.col(fallback_col).cast(pl.Float64, strict=False)
+        valid_voltage = valid_voltage.when(
+            fallback_voltage.is_not_null()
+            & fallback_voltage.is_between(Vmin, Vmax)
+        ).then(fallback_voltage)
+
+    return df.with_columns(
+        valid_voltage.otherwise(None).alias("voltage_valid")
     )
 
 

@@ -119,7 +119,6 @@ def build_cleaned_site_data(
             .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
             .alias("timezone")
         )
-        .with_columns(pl.col("voltage").alias("vmean"))
     )
     all_data = convertWToKw(all_data)
     all_data = addLocalTStamp(all_data)

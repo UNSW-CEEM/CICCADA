@@ -46,7 +46,7 @@ def build_cleaned_site_data(
     all_data = deduplicateMeasurements(all_data)
     all_data = convertcWToKw(all_data)
     all_data = addLocalTStamp(all_data)
-    all_data = addValidVoltage(all_data)
+    all_data = addValidVoltage(all_data, fallback_col="vmean")
     all_data = addPolarityToPower(all_data, circuit_details)
 
     cleaned_path = Path(cleaned_path)
