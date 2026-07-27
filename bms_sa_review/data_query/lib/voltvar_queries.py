@@ -387,3 +387,139 @@ def fetch_method_b_legacy(aq, config, params, site_id, year):
         WHERE m.Q_meas_kvar < 0
         ORDER BY m.t_stamp
     """, database=config.database)
+
+# ═════════════════════════════════════════════════════════════════════════
+# Fleet denominators for the Method A context (legacy-equivalent, read ts).
+# ═════════════════════════════════════════════════════════════════════════
+
+def fetch_eligible_context(aq, config, params):
+    """
+    Eligible denominator, one row per (site_id, year).
+
+    Same eligibility as Method A (voltage band + peak-hour + optional GHI
+    clear-sky) but WITHOUT the Q<0 / apparent-limit symptom filters.
+    Joins all_uncurtailedpv for the clear-sky potential generation.
+
+    Columns: year, site_id, n_eligible_intervals, eligible_potential_kWh
+    """
+    sd        = config.tables["structured_data"]
+    unc       = config.tables["all_uncurtailedpv"]
+    empirical = params.empirical_limit_basis
+    years_in  = ", ".join(str(int(y)) for y in params.years)
+    interval_h = config.interval_h
+
+    from analysis_contract import flex_sql
+    flex_pred = flex_sql(params.flex_selection, "sm2.flex_export_detected")
+
+    ghi_join = ghi_filter = ""
+    if params.apply_ghi_filter:
+        ghi_join = f"JOIN {sd} sd ON si.site_id = sd.site_id AND si.t_stamp = sd.t_stamp"
+        ghi_filter = (f"AND sd.GHI_cs > 0 "
+                      f"AND sd.GHI / sd.GHI_cs >= {params.ghi_cs_ratio_min}")
+
+    return aq(f"""
+        WITH site_meta AS (
+            SELECT DISTINCT m.site_id, m.circuit_id
+            FROM {config.metadata_table} m
+            JOIN (
+                SELECT site_id,
+                       bool_or(coalesce(flex_export_detected, False)) AS flex_export_detected
+                FROM {config.metadata_table} WHERE is_pv = True GROUP BY site_id
+            ) sm2 ON m.site_id = sm2.site_id
+            WHERE m.is_pv = True
+              AND m.{empirical} > 0
+              AND m.ac_capacity_kw > 0
+              AND m.ac_capacity_kw <= {params.max_ac_capacity_kw}
+              AND {flex_pred}
+        ),
+        d AS (
+            SELECT t.circuit_id, t.t_stamp,
+                   year(t.t_stamp + interval '10' hour) AS d_year,
+                   sm.site_id, t.voltage
+            FROM ts t
+            JOIN site_meta sm ON t.circuit_id = sm.circuit_id
+            WHERE t.is_pv = True
+              AND t.year IN ({years_in})
+              AND t.voltage > {params.v_low} AND t.voltage < {params.v_high}
+        ),
+        site_interval AS (
+            SELECT si.site_id, si.d_year AS year, si.t_stamp, max(si.voltage) AS V_max
+            FROM d si
+            {ghi_join}
+            WHERE hour(si.t_stamp + interval '10' hour)
+                  BETWEEN {params.peak_hour_start} AND {params.peak_hour_end}
+              {ghi_filter}
+            GROUP BY si.site_id, si.d_year, si.t_stamp
+        )
+        SELECT
+            si.year,
+            si.site_id,
+            count(*) AS n_eligible_intervals,
+            round(sum(coalesce(u.uncurtailed_P, 0)) * {interval_h}, 3)
+                AS eligible_potential_kWh
+        FROM site_interval si
+        LEFT JOIN {unc} u
+          ON u.site_id = si.site_id AND u.t_stamp = si.t_stamp
+        GROUP BY si.year, si.site_id
+    """, database=config.database)
+
+
+def fetch_all_timestamp_context(aq, config, params):
+    """
+    All-timestamp denominator, one row per (site_id, year).
+
+    Same site/capacity/flex cohort as Method A but WITHOUT voltage band,
+    peak-hour, GHI, Q, or apparent-limit filters — every observed PV
+    site-timestamp for the comparable fleet. Joins all_uncurtailedpv for
+    total potential generation.
+
+    Columns: year, site_id, n_all_intervals, all_potential_kWh
+    """
+    unc       = config.tables["all_uncurtailedpv"]
+    empirical = params.empirical_limit_basis
+    years_in  = ", ".join(str(int(y)) for y in params.years)
+    interval_h = config.interval_h
+
+    from analysis_contract import flex_sql
+    flex_pred = flex_sql(params.flex_selection, "sm2.flex_export_detected")
+
+    return aq(f"""
+        WITH site_meta AS (
+            SELECT DISTINCT m.site_id, m.circuit_id
+            FROM {config.metadata_table} m
+            JOIN (
+                SELECT site_id,
+                       bool_or(coalesce(flex_export_detected, False)) AS flex_export_detected
+                FROM {config.metadata_table} WHERE is_pv = True GROUP BY site_id
+            ) sm2 ON m.site_id = sm2.site_id
+            WHERE m.is_pv = True
+              AND m.{empirical} > 0
+              AND m.ac_capacity_kw > 0
+              AND m.ac_capacity_kw <= {params.max_ac_capacity_kw}
+              AND {flex_pred}
+        ),
+        d AS (
+            SELECT t.circuit_id, t.t_stamp,
+                   year(t.t_stamp + interval '10' hour) AS d_year,
+                   sm.site_id
+            FROM ts t
+            JOIN site_meta sm ON t.circuit_id = sm.circuit_id
+            WHERE t.is_pv = True
+              AND t.year IN ({years_in})
+        ),
+        site_interval AS (
+            SELECT d.site_id, d.d_year AS year, d.t_stamp
+            FROM d
+            GROUP BY d.site_id, d.d_year, d.t_stamp
+        )
+        SELECT
+            si.year,
+            si.site_id,
+            count(*) AS n_all_intervals,
+            round(sum(coalesce(u.uncurtailed_P, 0)) * {interval_h}, 3)
+                AS all_potential_kWh
+        FROM site_interval si
+        LEFT JOIN {unc} u
+          ON u.site_id = si.site_id AND u.t_stamp = si.t_stamp
+        GROUP BY si.year, si.site_id
+    """, database=config.database)
