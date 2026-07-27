@@ -113,112 +113,128 @@ def sensitivity_table(results):
 # ═════════════════════════════════════════════════════════════
 # Fleet summary — text presentation
 # ═════════════════════════════════════════════════════════════
-
 def print_fleet_summary(method_a_enriched, method_a_yearly,
-                        method_b_enriched, method_b_yearly, params):
+                        method_b_enriched, method_b_yearly, params,
+                        eligible_context=None, all_context=None):
     """
-    Print a formatted fleet summary combining Method A and Method B results.
+    Fleet summary contextualising BOTH methods.
 
-    Parameters
-    ----------
-    method_a_enriched : DataFrame
-        Output[0] of method_a_summary (site-year rows with 'affected' flag).
-    method_a_yearly : DataFrame
-        Output[1] of method_a_summary (one row per year).
-    method_b_enriched : DataFrame
-        Output[0] of method_b_summary (site-year rows with kWh columns).
-    method_b_yearly : DataFrame
-        Output[1] of method_b_summary (one row per year).
-    params : VoltVarParams
-        Detection parameters (used for header labels only).
+    Method A (apparent-limit symptom scan) = loose upper-bound proxy.
+    Method B (counterfactual attribution)  = tight, sun-limited estimate.
+
+    If eligible_context / all_context are supplied (from
+    fetch_eligible_context / fetch_all_timestamp_context), the Method A block
+    also reports the fleet denominators and %-of-potential-generation figures,
+    matching the legacy fleet summary. If omitted, those lines are skipped.
     """
-    years = list(params.years)
-
-    # ── Method A totals ─────────────────────────────────────────
-    n_eligible  = method_a_enriched.site_id.nunique()
-    n_symptom   = int(method_a_enriched.loc[method_a_enriched.affected, "site_id"].nunique())
-    total_elig  = int(method_a_enriched.eligible_count.sum())
-    total_symp  = int(method_a_enriched.symptom_count.sum())
-    total_proxy = method_a_enriched.headroom_displacement_kwh.sum()
-
-    # ── Method B totals ─────────────────────────────────────────
-    n_covered   = int(method_b_enriched.loc[
-        method_b_enriched.counterfactual_covered_count > 0, "site_id"
-    ].nunique())
-    n_t4        = int(method_b_enriched.loc[method_b_enriched.tier4_affected, "site_id"].nunique())
-    total_t4    = int(method_b_enriched.tier4_attributed_count.sum())
-    total_attr  = method_b_enriched.attributed_measured_q_kwh.sum()
-    total_pot   = method_b_enriched.covered_potential_kwh.sum()
-
     W = 88
+    interval_h = getattr(params, "interval_h", None)
+
+    # ── Method A core totals ────────────────────────────────────
+    n_elig_sites  = method_a_enriched.site_id.nunique()
+    n_symp_sites  = int(method_a_enriched.loc[method_a_enriched.affected, "site_id"].nunique())
+    tot_elig_int  = int(method_a_enriched.eligible_count.sum())
+    tot_symp_int  = int(method_a_enriched.symptom_count.sum())
+    tot_proxy_kwh = method_a_enriched.headroom_displacement_kwh.sum()
+
     print("=" * W)
-    print(f"VOLT-VAR CURTAILMENT — FLEET SUMMARY ({years})")
+    print(f"VOLT-VAR CURTAILMENT — FLEET SUMMARY ({list(params.years)})")
     print("=" * W)
     print()
-    print(f"Detection window: {params.v_low:.0f}–{params.v_high:.0f} V,  "
-          f"{params.peak_hour_start}:00–{params.peak_hour_end}:00 AEST,  "
+    print(f"Detection window: {params.v_low:.0f}-{params.v_high:.0f} V,  "
+          f"{params.peak_hour_start}:00-{params.peak_hour_end}:00 AEST,  "
           f"GHI filter {'ON' if params.apply_ghi_filter else 'OFF'},  "
           f"flex {params.flex_selection}")
     print()
 
-    print("Method A — apparent-limit symptom scan:")
-    print(f"  Eligible sites:                          {n_eligible:>10,}")
-    print(f"  Sites with ≥1 symptom interval:          {n_symptom:>10,}  "
-          f"({100 * n_symptom / n_eligible:.1f}%)" if n_eligible else "")
-    print(f"  Total eligible intervals:                {total_elig:>10,}")
-    print(f"  Total symptom intervals:                 {total_symp:>10,}  "
-          f"({100 * total_symp / total_elig:.4f}%)" if total_elig else "")
-    print(f"  Headroom displacement proxy:             {total_proxy:>10,.1f} kWh")
+    # ── Optional fleet denominators ─────────────────────────────
+    if all_context is not None:
+        n_all_sites   = all_context.site_id.nunique()
+        tot_all_int   = int(all_context.n_all_intervals.sum())
+        tot_all_pot   = all_context.all_potential_kWh.sum()
+        print("Denominator — all observed timestamps:")
+        print(f"  Comparable PV sites:                     {n_all_sites:>14,}")
+        print(f"  All observed site-intervals:             {tot_all_int:>14,}")
+        print(f"  All potential generation:                {tot_all_pot:>14,.0f} kWh")
+        print()
+
+    if eligible_context is not None:
+        n_el_sites  = eligible_context.site_id.nunique()
+        tot_el_int  = int(eligible_context.n_eligible_intervals.sum())
+        tot_el_pot  = eligible_context.eligible_potential_kWh.sum()
+        print("Denominator — eligible cases (peak-solar, V-band):")
+        print(f"  Eligible sites:                          {n_el_sites:>14,}")
+        print(f"  Eligible site-intervals:                 {tot_el_int:>14,}")
+        print(f"  Eligible potential generation:           {tot_el_pot:>14,.0f} kWh")
+        print()
+
+    # ── Method A numerator ──────────────────────────────────────
+    print("-" * W)
+    print("METHOD A — apparent-limit symptom scan  (loose upper-bound proxy)")
+    print("-" * W)
+    print(f"  Eligible sites:                          {n_elig_sites:>14,}")
+    print(f"  Sites showing symptom:                   {n_symp_sites:>14,}"
+          + (f"  ({100*n_symp_sites/n_elig_sites:.1f}% of eligible)" if n_elig_sites else ""))
+    print(f"  Eligible intervals (Method A cohort):    {tot_elig_int:>14,}")
+    print(f"  Symptom (flagged) intervals:             {tot_symp_int:>14,}"
+          + (f"  ({100*tot_symp_int/tot_elig_int:.4f}%)" if tot_elig_int else ""))
+    print(f"  Est. energy curtailed (Method A proxy):  {tot_proxy_kwh:>14,.1f} kWh")
+    if eligible_context is not None and tot_el_pot > 0:
+        print(f"  Share of eligible potential generation:  {100*tot_proxy_kwh/tot_el_pot:>14.4f}%")
+    if all_context is not None and tot_all_pot > 0:
+        print(f"  Share of all potential generation:       {100*tot_proxy_kwh/tot_all_pot:>14.4f}%")
     print()
 
-    print("Method B — counterfactual attribution:")
-    print(f"  Counterfactual-covered sites:             {n_covered:>10,}")
-    print(f"  Tier 4 affected sites:                    {n_t4:>10,}")
-    print(f"  Tier 4 attributed intervals:              {total_t4:>10,}")
-    print(f"  Attributed curtailment (measured Q):      {total_attr:>10,.1f} kWh")
-    print(f"  Covered potential generation:             {total_pot:>10,.0f} kWh")
-    if total_pot > 0:
-        print(f"  Attributed / covered potential:           "
-              f"{100 * total_attr / total_pot:>10.4f}%")
+    # ── Method B numerator ──────────────────────────────────────
+    n_cov_sites = int(method_b_enriched.loc[
+        method_b_enriched.counterfactual_covered_count > 0, "site_id"].nunique())
+    n_t4_sites  = int(method_b_enriched.loc[method_b_enriched.tier4_affected, "site_id"].nunique())
+    tot_t4_int  = int(method_b_enriched.tier4_attributed_count.sum())
+    tot_attr    = method_b_enriched.attributed_measured_q_kwh.sum()
+    tot_cov_pot = method_b_enriched.covered_potential_kwh.sum()
+
+    print("-" * W)
+    print("METHOD B — counterfactual attribution  (sun-limited, defensible estimate)")
+    print("-" * W)
+    print(f"  Counterfactual-covered sites:            {n_cov_sites:>14,}")
+    print(f"  Tier 4 affected sites:                   {n_t4_sites:>14,}")
+    print(f"  Tier 4 attributed intervals:             {tot_t4_int:>14,}")
+    print(f"  Attributed curtailment (measured Q):     {tot_attr:>14,.1f} kWh")
+    print(f"  Counterfactual-covered potential:        {tot_cov_pot:>14,.0f} kWh")
+    if tot_cov_pot > 0:
+        print(f"  Attributed / covered potential:          {100*tot_attr/tot_cov_pot:>14.4f}%")
     print()
 
+    # ── Method A vs Method B contrast ───────────────────────────
+    print("-" * W)
+    print("METHOD A vs METHOD B")
+    print("-" * W)
+    if tot_attr > 0:
+        print(f"  Method A proxy is {tot_proxy_kwh/tot_attr:>.1f}x the Method B attribution.")
+    print(f"  Method A over-counts because it assumes every interval where Q ate")
+    print(f"  circle-room was sun-limited; Method B only counts intervals where the")
+    print(f"  clear-sky counterfactual confirms real generation was lost.")
+    print()
+
+    # ── Year-by-year tables ─────────────────────────────────────
     print("=" * W)
     print("YEAR-BY-YEAR — METHOD A")
     print("=" * W)
-    display_a = method_a_yearly.copy()
+    a = method_a_yearly.copy()
+    if "headroom_displacement_proxy_kwh" in a:
+        a["headroom_displacement_proxy_kwh"] = a["headroom_displacement_proxy_kwh"].round(1)
     for c in ["symptom_site_pct", "symptom_interval_pct"]:
-        if c in display_a.columns:
-            display_a[c] = display_a[c].round(2)
-    if "headroom_displacement_proxy_kwh" in display_a.columns:
-        display_a["headroom_displacement_proxy_kwh"] = (
-            display_a["headroom_displacement_proxy_kwh"].round(1)
-        )
-    print(display_a.to_string(index=False))
+        if c in a: a[c] = a[c].round(2)
+    print(a.to_string(index=False))
     print()
 
     print("=" * W)
     print("YEAR-BY-YEAR — METHOD B")
     print("=" * W)
-    display_b = method_b_yearly.copy()
+    b = method_b_yearly.copy()
     for c in ["attributed_measured_q_kwh", "required_q_scenario_kwh",
               "counterfactual_covered_potential_kwh"]:
-        if c in display_b.columns:
-            display_b[c] = display_b[c].round(1)
-    if "attributed_pct_of_covered_potential" in display_b.columns:
-        display_b["attributed_pct_of_covered_potential"] = (
-            display_b["attributed_pct_of_covered_potential"].round(4)
-        )
-    print(display_b.to_string(index=False))
-    print()
-
-    # ── Top 10 site-years ───────────────────────────────────────
-    top = (method_b_enriched
-           .sort_values("attributed_measured_q_kwh", ascending=False)
-           .head(10)
-           [["site_id", "year", "tier4_attributed_count",
-             "attributed_measured_q_kwh", "covered_potential_kwh"]]
-           .copy())
-    print("=" * W)
-    print("TOP 10 SITE-YEARS BY ATTRIBUTED CURTAILMENT")
-    print("=" * W)
-    print(top.to_string(index=False))
+        if c in b: b[c] = b[c].round(1)
+    if "attributed_pct_of_covered_potential" in b:
+        b["attributed_pct_of_covered_potential"] = b["attributed_pct_of_covered_potential"].round(4)
+    print(b.to_string(index=False))
