@@ -86,13 +86,13 @@ AS4777 = {
 #
 TABLES = {
     # Stage 1 rebuilt
-    "structured_data":         "structured_data_v2",
-    "all_uncurtailedpv":       "all_uncurtailedpv_v2",
+    "structured_data":         "structured_data_v2_flex_included",
+    "all_uncurtailedpv":       "all_uncurtailedpv_v2_flex_included",
 
     # Stage 2 rebuilt
-    "conformance_voltvar":     "conformance_voltvar_v2",
-    "conformance_voltwatt":    "conformance_voltwatt_v2",
-    "conformance_voltwattghi": "conformance_voltwattghi_v2",
+    "conformance_voltvar":     "conformance_voltvar_v2_flex_included",
+    "conformance_voltwatt":    "conformance_voltwatt_v2_flex_included",
+    "conformance_voltwattghi": "conformance_voltwattghi_v2_flex_included",
 
     # NOT rebuilt. legacy, use with care
     "conformance_sust_op_3w":  "conformance_sust_op_3w",

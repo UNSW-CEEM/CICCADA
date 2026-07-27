@@ -17,7 +17,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Ignoring only a lib folder at the repository root:
+/lib/
 lib64/
 parts/
 sdist/
