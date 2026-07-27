@@ -13,6 +13,7 @@ from reporting.outputs import write_outputs
 from sapn2022_workflow.adapter import SAPN2022_DEFINITION
 from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_DEFINITION
 
+# clearly define dataset defintion here
 
 DATASET_DEFINITIONS = {
     SAPN2022_DEFINITION.name: SAPN2022_DEFINITION,
@@ -71,3 +72,10 @@ def main(dataset):
     print("Skipped (no day data):", len(skipped["no_day_data"]))
     print("Skipped (no eligible days):", len(skipped["no_eligible_days"]))
     return results
+
+
+# verify if the following 
+# from main_run_conformance import main
+
+# results = main(dataset="solar_analytics")
+results = main(dataset="sapn2022")

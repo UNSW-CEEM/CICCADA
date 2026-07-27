@@ -4,7 +4,7 @@ from pathlib import Path
 
 import polars as pl
 
-from config import PRIMARY_PHASE_B_METHOD
+from config import PHASE_B_METHODS, PRIMARY_PHASE_B_METHOD
 from reporting.plotting import (
     plot_site_threshold_distribution,
     plot_site_threshold_distribution_extremes,
@@ -14,6 +14,17 @@ from reporting.plotting import (
 PRIMARY_SITE_THRESHOLDS_NAME = f"site_thresholds_{PRIMARY_PHASE_B_METHOD}.csv"
 PRIMARY_PHASE_B_SUMMARY_NAME = f"phase_b_site_summary_{PRIMARY_PHASE_B_METHOD}.csv"
 PRIMARY_PHASE_B_DETAIL_NAME = f"phase_b_timestamp_detail_{PRIMARY_PHASE_B_METHOD}.csv"
+FIVE_METHOD_RESULTS_SUMMARY_NAME = "five_method_results_summary.xlsx"
+FIVE_METHOD_RESULTS_SUMMARY_SHEET_NAME = "summary"
+FIVE_METHOD_RESULTS_SUMMARY_COLUMNS = [
+    "#",
+    "Method",
+    "Assessed",
+    "Conformant",
+    "Non-conformant",
+    "Unassessed",
+    "Conformance % of assessed",
+]
 
 
 def summarize_multi_method_site_outputs(phase_b_summary_by_method_df):
@@ -85,6 +96,70 @@ def summarize_multi_method_site_outputs(phase_b_summary_by_method_df):
         .alias("all_methods_unassessed"),
     ])
     return {"site_comparison": comparison}
+
+
+def build_five_method_results_summary(phase_b_summary_by_method_df):
+    summary = pl.DataFrame({
+        "#": list(range(1, len(PHASE_B_METHODS) + 1)),
+        "Method": list(PHASE_B_METHODS),
+    })
+    if phase_b_summary_by_method_df is None or phase_b_summary_by_method_df.is_empty():
+        return summary.with_columns([
+            pl.lit(0, dtype=pl.Int64).alias("Assessed"),
+            pl.lit(0, dtype=pl.Int64).alias("Conformant"),
+            pl.lit(0, dtype=pl.Int64).alias("Non-conformant"),
+            pl.lit(0, dtype=pl.Int64).alias("Unassessed"),
+            pl.lit(None, dtype=pl.Float64).alias("Conformance % of assessed"),
+        ]).select(FIVE_METHOD_RESULTS_SUMMARY_COLUMNS)
+
+    counts = (
+        phase_b_summary_by_method_df.group_by("method_key")
+        .agg([
+            pl.len().alias("_total_rows"),
+            pl.col("overall_pass").is_not_null().sum().alias("Assessed"),
+            pl.col("overall_pass").eq(True).sum().alias("Conformant"),
+            pl.col("overall_pass").eq(False).sum().alias("Non-conformant"),
+        ])
+        .rename({"method_key": "Method"})
+    )
+    return (
+        summary.join(counts, on="Method", how="left")
+        .with_columns([
+            pl.col("_total_rows").fill_null(0).cast(pl.Int64),
+            pl.col("Assessed").fill_null(0).cast(pl.Int64),
+            pl.col("Conformant").fill_null(0).cast(pl.Int64),
+            pl.col("Non-conformant").fill_null(0).cast(pl.Int64),
+        ])
+        .with_columns([
+            (pl.col("_total_rows") - pl.col("Assessed")).alias("Unassessed"),
+            pl.when(pl.col("Assessed") > 0)
+            .then((pl.col("Conformant") / pl.col("Assessed") * 100).round(2))
+            .otherwise(pl.lit(None, dtype=pl.Float64))
+            .alias("Conformance % of assessed"),
+        ])
+        .drop("_total_rows")
+        .select(FIVE_METHOD_RESULTS_SUMMARY_COLUMNS)
+    )
+
+
+def write_five_method_results_summary(summary_table, output_path):
+    output_path = Path(output_path)
+    try:
+        summary_table.write_excel(
+            workbook=output_path,
+            worksheet=FIVE_METHOD_RESULTS_SUMMARY_SHEET_NAME,
+            column_formats={"Conformance % of assessed": "0.00"},
+            table_style=None,
+            autofit=True,
+            freeze_panes=(1, 0),
+            float_precision=2,
+        )
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "Writing five_method_results_summary.xlsx requires "
+            "'xlsxwriter' to be installed."
+        ) from exc
+    return output_path
 
 
 def build_output_tables(results, excluded_day_schema=None):
@@ -161,6 +236,9 @@ def build_output_tables(results, excluded_day_schema=None):
     tables["five_method_site_comparison"] = summarize_multi_method_site_outputs(
         tables["phase_b_site_summary_by_method"]
     )["site_comparison"]
+    tables["five_method_results_summary"] = build_five_method_results_summary(
+        tables["phase_b_site_summary_by_method"]
+    )
     return tables
 
 
@@ -197,6 +275,11 @@ def write_outputs(results, output_dir, excluded_day_schema=None):
     for table_name, filename in conditional_files.items():
         if not tables[table_name].is_empty():
             tables[table_name].write_csv(output_dir / filename)
+
+    write_five_method_results_summary(
+        tables["five_method_results_summary"],
+        output_dir / FIVE_METHOD_RESULTS_SUMMARY_NAME,
+    )
 
     los_stats = tables["los_site_threshold_stats"]
     ov1_stats = tables["ov1_site_threshold_stats"]

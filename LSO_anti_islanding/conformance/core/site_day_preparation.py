@@ -127,24 +127,14 @@ def calculate_site_day_voltage_signals(
                     pl.lit(None).cast(pl.Float64).alias(rolled_name)
                 )
                 continue
-            first_voltage_timestamp = valid_voltage["local_tstamp"].min()
             rolled = (
                 valid_voltage
                 .with_columns(
                     pl.col(column).rolling_mean_by(
                         by="local_tstamp",
                         window_size=rolling_window,
-                        closed="both",
+                        closed="right",
                     ).alias(rolled_name),
-                )
-                .with_columns(
-                    pl.when(
-                        pl.col("local_tstamp")
-                        >= pl.lit(first_voltage_timestamp).dt.offset_by(rolling_window)
-                    )
-                    .then(pl.col(rolled_name))
-                    .otherwise(None)
-                    .alias(rolled_name)
                 )
                 .select(["local_tstamp", rolled_name])
             )

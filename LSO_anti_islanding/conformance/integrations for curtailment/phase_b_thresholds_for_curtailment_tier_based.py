@@ -39,18 +39,20 @@ CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
+from config import SITE_DAY_END, SITE_DAY_EXTRACTION_START
 from core.check_pv_behaviour import CheckPVBehaviour
+from core.site_day_preparation import (
+    extract_site_day,
+    map_circuit_data_to_site as mapCircuitDataToSite,
+    select_site_pv_data,
+    trim_site_day_analysis_window,
+)
 from sapn2022_workflow.sapn_paths import (
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
 )
 from sapn2022_workflow.adapter import (
     load_cleaned_site_data as loadCleanedSiteData,
-)
-from core.site_day_preparation import (
-    extract_site_day,
-    map_circuit_data_to_site as mapCircuitDataToSite,
-    select_site_pv_data,
 )
 
 
@@ -173,9 +175,25 @@ def _prepare_inputs() -> tuple[pl.DataFrame, pl.LazyFrame]:
 
 
 def _window_for_day(day: int) -> tuple[datetime, datetime]:
-    """Return the local 06:00-18:00 analysis window for one November day."""
-    start_day = datetime(2022, 11, day, 6, 0, 0, tzinfo=LOCAL_TZ)
-    end_day = datetime(2022, 11, day, 18, 0, 0, tzinfo=LOCAL_TZ)
+    """Return the local 05:50-18:00 extraction window for one November day."""
+    start_day = datetime(
+        2022,
+        11,
+        day,
+        SITE_DAY_EXTRACTION_START.hour,
+        SITE_DAY_EXTRACTION_START.minute,
+        SITE_DAY_EXTRACTION_START.second,
+        tzinfo=LOCAL_TZ,
+    )
+    end_day = datetime(
+        2022,
+        11,
+        day,
+        SITE_DAY_END.hour,
+        SITE_DAY_END.minute,
+        SITE_DAY_END.second,
+        tzinfo=LOCAL_TZ,
+    )
     return start_day, end_day
 
 
@@ -205,6 +223,7 @@ def _add_rolling_voltage_metrics(
                 pl.col(col).rolling_mean_by(
                     by="local_tstamp",
                     window_size="10m",
+                    closed="right",
                 ).alias(rolled_name)
             )
             .select(["local_tstamp", rolled_name])
@@ -309,6 +328,7 @@ def _build_day_flag_frame(
         voltage_cols,
         vmean_cols,
     )
+    site_day_df = trim_site_day_analysis_window(site_day_df)
     site_day_df = _add_responsibility_flags(
         site_day_df,
         los_threshold_used=los_threshold_used,

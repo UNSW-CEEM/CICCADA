@@ -23,7 +23,16 @@ def build_cleaned_site_data(
     raw_path=RAW_SITE_DATA_PATH,
     circuit_details_path=CIRCUIT_DETAILS_PATH,
     cleaned_path=CLEANED_SITE_DATA_PATH,
+    *,
+    deduplicate=False,
 ):
+    """Build cleaned SAPN metrology with low peak-memory behaviour.
+
+    Whole-dataset deduplication is optional here because the SAPN raw parquet is
+    large enough for the anti-join implementation to exhaust memory. The
+    conformance workflow still applies the same duplicate policy later when it
+    slices each site-day in ``extract_site_day``.
+    """
     raw_path = Path(raw_path)
     if not raw_path.exists():
         raise FileNotFoundError(f"Missing raw processed site data at {raw_path}.")
@@ -43,7 +52,8 @@ def build_cleaned_site_data(
         .join(mapped_circuit_ids, on="c_id", how="inner")
         .with_columns(pl.lit(LOCAL_TIMEZONE).alias("timezone"))
     )
-    all_data = deduplicateMeasurements(all_data)
+    if deduplicate:
+        all_data = deduplicateMeasurements(all_data)
     all_data = convertcWToKw(all_data)
     all_data = addLocalTStamp(all_data)
     all_data = addValidVoltage(all_data, fallback_col="vmean")
