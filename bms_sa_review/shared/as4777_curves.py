@@ -262,9 +262,92 @@ def tol_kw_sql(capacity_col, tol_frac=_TOL):
     """Return the SQL fragment for 4% of the selected capacity-basis column."""
     return f"{tol_frac} * {capacity_col}"
 
+# ===========================================================================
+# 5. Volt-VAr CURVE ASSESSMENT: Q IMPACT RELATIVE TO NEAREST BAND EDGE
+# ===========================================================================
+
+def q_impact_nearest_edge(
+    q_kvar,
+    q_min_final,
+    q_max_final,
+    capability_assessable=True,
+    eps=1e-9,
+):
+    """
+    Normalise measured Q against the nearest permitted final band edge.
+
+    A positive result means Q is in the expected direction.
+    A negative result means Q is in the wrong direction.
+    Ties select Q_max_final.
+    """
+    if not capability_assessable:
+        return None
+
+    if abs(q_kvar - q_max_final) <= abs(q_kvar - q_min_final):
+        reference_edge = q_max_final
+    else:
+        reference_edge = q_min_final
+
+    if abs(q_max_final + q_min_final) <= eps:
+        direction = 1.0
+    else:
+        direction = (
+            ((reference_edge > 0) - (reference_edge < 0))
+            * ((q_kvar > 0) - (q_kvar < 0))
+        )
+
+    return (
+        direction
+        * abs(q_kvar)
+        / (abs(reference_edge) + eps)
+    )
+
+
+def q_impact_nearest_edge_sql(
+    q_col,
+    q_min_col,
+    q_max_col,
+    assessable_col,
+    eps=1e-9,
+):
+    """Athena/Trino equivalent of q_impact_nearest_edge()."""
+    return f"""
+        CASE
+            WHEN {assessable_col} = 0 THEN NULL
+
+            WHEN abs({q_col} - {q_max_col})
+              <= abs({q_col} - {q_min_col})
+            THEN
+                (
+                    CASE
+                        WHEN abs({q_max_col} + {q_min_col}) <= {eps}
+                            THEN 1
+                        ELSE sign({q_max_col}) * sign({q_col})
+                    END
+                )
+                * (
+                    abs({q_col})
+                    / (abs({q_max_col}) + {eps})
+                )
+
+            ELSE
+                (
+                    CASE
+                        WHEN abs({q_max_col} + {q_min_col}) <= {eps}
+                            THEN 1
+                        ELSE sign({q_min_col}) * sign({q_col})
+                    END
+                )
+                * (
+                    abs({q_col})
+                    / (abs({q_min_col}) + {eps})
+                )
+        END
+    """.strip()
+
 
 # ===========================================================================
-# 5. Quick self-test when run directly:  `python as4777_curves.py`
+# 6. Quick self-test when run directly:  `python as4777_curves.py`
 # ===========================================================================
 if __name__ == "__main__":
     S = 5.0  # 5 kW test inverter
