@@ -238,3 +238,121 @@ def print_fleet_summary(method_a_enriched, method_a_yearly,
     if "attributed_pct_of_covered_potential" in b:
         b["attributed_pct_of_covered_potential"] = b["attributed_pct_of_covered_potential"].round(4)
     print(b.to_string(index=False))
+
+# ═════════════════════════════════════════════════════════════════════════
+# Method A support for DNSP breakdown + legacy fleet-detail assembly.
+# ═════════════════════════════════════════════════════════════════════════
+
+def group_breakdown_a(method_a_enriched, meta, by, min_sites=20):
+    """
+    Method A version of group_breakdown: aggregate the symptom-scan proxy by a
+    metadata column (e.g. dnsp_name). Uses headroom_displacement_kwh (the
+    Method A proxy), NOT the counterfactual attribution.
+
+    Returns one row per group: n_sites, affected_sites, proxy_kwh,
+    affected_site_pct.
+    """
+    site = (method_a_enriched.groupby("site_id", as_index=False)
+        .agg(symptom_count=("symptom_count", "sum"),
+             proxy_kwh=("headroom_displacement_kwh", "sum")))
+    site["affected"] = site.symptom_count > 0
+    d = site.merge(meta, on="site_id", how="left", validate="one_to_one")
+    d[by] = d[by].fillna("Unknown")
+    out = (d.groupby(by, dropna=False)
+        .agg(n_sites=("site_id", "nunique"),
+             affected_sites=("affected", "sum"),
+             proxy_kwh=("proxy_kwh", "sum"))
+        .reset_index())
+    out["affected_site_pct"] = 100 * out.affected_sites / out.n_sites
+    return out[out.n_sites >= min_sites].sort_values("proxy_kwh", ascending=False)
+
+
+def build_method_a_context(method_a_enriched, eligible_context, all_context,
+                           interval_h):
+    """
+    Assemble the frames the legacy Method A fleet-detail figures need, from the
+    evidence-tier outputs.
+
+    Returns
+    -------
+    summary_by_year : per-year denominators + numerator + pct columns
+    overall_summary : single 'All years' roll-up row (same columns)
+    site_year_distribution : per (site_id, year) row with the derived pct /
+        energy columns and the denominator columns the histograms filter on
+    """
+    # ── site-year distribution (merge numerator + both denominators) ──────
+    a = method_a_enriched[["site_id", "year", "symptom_count",
+                           "headroom_displacement_kwh"]].copy()
+    e = eligible_context[["site_id", "year", "n_eligible_intervals",
+                          "eligible_potential_kWh"]].copy()
+    al = all_context[["site_id", "year", "n_all_intervals",
+                      "all_potential_kWh"]].copy()
+
+    d = a.merge(e, on=["site_id", "year"], how="outer") \
+         .merge(al, on=["site_id", "year"], how="outer")
+
+    for c in ["symptom_count", "headroom_displacement_kwh",
+              "n_eligible_intervals", "eligible_potential_kWh",
+              "n_all_intervals", "all_potential_kWh"]:
+        d[c] = d[c].fillna(0)
+
+    d["n_flagged_intervals"] = d["symptom_count"]
+    d["est_curtailed_kWh"] = d["headroom_displacement_kwh"]
+
+    def _safe(n, den):
+        return np.where(den > 0, n / den * 100, np.nan)
+
+    d["pct_eligible_timestamps_flagged"] = _safe(d.symptom_count, d.n_eligible_intervals)
+    d["pct_all_timestamps_flagged"]      = _safe(d.symptom_count, d.n_all_intervals)
+    d["pct_eligible_potential_generation_curtailed"] = _safe(d.est_curtailed_kWh, d.eligible_potential_kWh)
+    d["pct_all_potential_generation_curtailed"]      = _safe(d.est_curtailed_kWh, d.all_potential_kWh)
+    d["avg_est_curtailed_kW_when_flagged"] = np.where(
+        d.symptom_count > 0,
+        d.est_curtailed_kWh / (d.symptom_count * interval_h), np.nan)
+
+    # ── per-year summary ─────────────────────────────────────────────────
+    rows = []
+    for yr, g in d.groupby("year"):
+        flagged = g.symptom_count.sum()
+        ei = g.n_eligible_intervals.sum()
+        ai = g.n_all_intervals.sum()
+        ep = g.eligible_potential_kWh.sum()
+        ap = g.all_potential_kWh.sum()
+        est = g.est_curtailed_kWh.sum()
+        rows.append({
+            "year": int(yr),
+            "all_sites": int((g.n_all_intervals > 0).sum()),
+            "all_intervals": int(ai),
+            "all_potential_kWh": ap,
+            "eligible_sites": int((g.n_eligible_intervals > 0).sum()),
+            "eligible_intervals": int(ei),
+            "eligible_potential_kWh": ep,
+            "affected_sites": int((g.symptom_count > 0).sum()),
+            "flagged_intervals": int(flagged),
+            "est_curtailed_kWh": est,
+            "pct_eligible_intervals_flagged": 100 * flagged / ei if ei else np.nan,
+            "pct_all_intervals_flagged": 100 * flagged / ai if ai else np.nan,
+            "pct_eligible_potential_curtailed": 100 * est / ep if ep else np.nan,
+            "pct_all_potential_curtailed": 100 * est / ap if ap else np.nan,
+        })
+    summary_by_year = pd.DataFrame(rows).sort_values("year").reset_index(drop=True)
+
+    # ── overall 'All years' roll-up ──────────────────────────────────────
+    flagged = d.symptom_count.sum(); ei = d.n_eligible_intervals.sum()
+    ai = d.n_all_intervals.sum(); ep = d.eligible_potential_kWh.sum()
+    ap = d.all_potential_kWh.sum(); est = d.est_curtailed_kWh.sum()
+    overall_summary = pd.DataFrame([{
+        "year": "All years",
+        "all_sites": d.loc[d.n_all_intervals > 0, "site_id"].nunique(),
+        "all_intervals": int(ai), "all_potential_kWh": ap,
+        "eligible_sites": d.loc[d.n_eligible_intervals > 0, "site_id"].nunique(),
+        "eligible_intervals": int(ei), "eligible_potential_kWh": ep,
+        "affected_sites": d.loc[d.symptom_count > 0, "site_id"].nunique(),
+        "flagged_intervals": int(flagged), "est_curtailed_kWh": est,
+        "pct_eligible_intervals_flagged": 100 * flagged / ei if ei else np.nan,
+        "pct_all_intervals_flagged": 100 * flagged / ai if ai else np.nan,
+        "pct_eligible_potential_curtailed": 100 * est / ep if ep else np.nan,
+        "pct_all_potential_curtailed": 100 * est / ap if ap else np.nan,
+    }])
+
+    return summary_by_year, overall_summary, d

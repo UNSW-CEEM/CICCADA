@@ -467,3 +467,360 @@ def plot_yearly_comparison(method_a_yearly, method_b_yearly):
                  fontsize=14, weight="bold", y=1.01)
     plt.tight_layout()
     return fig
+
+# ═════════════════════════════════════════════════════════════════════════
+# Fleet summary volt-var method A vs method B comparison
+# ═════════════════════════════════════════════════════════════════════════
+
+def plot_fleet_summary(method_a_enriched, method_a_yearly,
+                       method_b_enriched, method_b_yearly, params,
+                       eligible_context=None, all_context=None):
+    """
+    One concise 2x2 figure contrasting Method A (screening proxy) and
+    Method B (counterfactual attribution) at fleet scale.
+
+      A. Energy cascade — potential generation -> Method A -> Method B (log x)
+      B. Method A vs Method B attributed energy, by year (log y)
+      C. Method B evidence-tier funnel (tier 1 -> tier 4 intervals)
+      D. Curtailment intensity — share of potential generation (%)
+
+    eligible_context / all_context are optional; if omitted, the denominator
+    bars in panels A and D are skipped.
+    """
+    def _kwh(x):
+        if x >= 1e6:  return f"{x/1e6:.1f}M"
+        if x >= 1e3:  return f"{x/1e3:.1f}k"
+        return f"{x:.0f}"
+
+    # ── Totals ──────────────────────────────────────────────────
+    a_proxy = method_a_enriched.headroom_displacement_kwh.sum()
+    b_attr  = method_b_enriched.attributed_measured_q_kwh.sum()
+    cov_pot = method_b_enriched.covered_potential_kwh.sum()
+    all_pot = all_context.all_potential_kWh.sum() if all_context is not None else None
+    elig_pot = eligible_context.eligible_potential_kWh.sum() if eligible_context is not None else None
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9), dpi=130)
+
+    # ── A. Energy cascade (log x) ───────────────────────────────
+    ax = axes[0, 0]
+    labels, values, colors = [], [], []
+    if all_pot is not None:
+        labels.append("All potential\ngeneration");     values.append(all_pot);  colors.append("#9ca3af")
+    if elig_pot is not None:
+        labels.append("Eligible potential\ngeneration"); values.append(elig_pot); colors.append("#6b7280")
+    labels.append("Method A\nproxy");        values.append(a_proxy); colors.append(PURPLE)
+    labels.append("Method B\nattribution");  values.append(b_attr);  colors.append(RED)
+
+    y = np.arange(len(labels))[::-1]
+    bars = ax.barh(y, values, color=colors)
+    ax.set_yticks(y); ax.set_yticklabels(labels, fontsize=9)
+    ax.set_xscale("log")
+    for yi, v in zip(y, values):
+        ax.text(v * 1.15, yi, _kwh(v) + " kWh", va="center", fontsize=8.5)
+    ax.set_xlim(right=max(values) * 4)
+    ax.set(xlabel="Energy (kWh, log scale)",
+           title="A. Energy cascade: potential → curtailment")
+    ax.grid(axis="x", color=GRID); ax.set_axisbelow(True)
+
+    # ── B. Method A vs B by year (log y grouped bars) ───────────
+    ax = axes[0, 1]
+    yrs = method_a_yearly["year"].astype(str).tolist()
+    x = np.arange(len(yrs)); w = 0.38
+    a_by = method_a_yearly["headroom_displacement_proxy_kwh"].values
+    b_by = (method_b_yearly.set_index("year")
+            .reindex(method_a_yearly["year"])
+            ["attributed_measured_q_kwh"].values)
+    ba = ax.bar(x - w/2, a_by, w, color=PURPLE, label="Method A proxy")
+    bb = ax.bar(x + w/2, b_by, w, color=RED,    label="Method B attribution")
+    ax.bar_label(ba, fmt="{:,.0f}", padding=2, fontsize=7.5)
+    ax.bar_label(bb, fmt="{:,.0f}", padding=2, fontsize=7.5)
+    ax.set_yscale("log")
+    ax.set_xticks(x); ax.set_xticklabels(yrs)
+    ax.set(ylabel="Curtailed energy (kWh, log)",
+           title="B. Method A vs B, by year")
+    ax.legend(fontsize=8, loc="upper right")
+    ax.grid(axis="y", color=GRID); ax.set_axisbelow(True)
+
+    # ── C. Evidence tier funnel ─────────────────────────────────
+    ax = axes[1, 0]
+    tier_cols = ["tier1_absorbing_intervals", "tier2_apparent_limit_intervals",
+                 "tier3_counterfactual_above_headroom_intervals",
+                 "tier4_attributed_intervals"]
+    tier_names = ["T1  absorbing (Q<0)", "T2  at apparent limit",
+                  "T3  counterfactual > headroom", "T4  attributed"]
+    tier_vals = [method_b_yearly[c].sum() for c in tier_cols]
+    shades = ["#c4b5fd", "#a78bfa", "#8b5cf6", PURPLE]
+    yy = np.arange(len(tier_names))[::-1]
+    tb = ax.barh(yy, tier_vals, color=shades)
+    ax.set_yticks(yy); ax.set_yticklabels(tier_names, fontsize=9)
+    for yi, v in zip(yy, tier_vals):
+        ax.text(v, yi, f" {v:,.0f}", va="center", fontsize=8.5)
+    ax.set_xlim(right=max(tier_vals) * 1.18)
+    ax.set(xlabel="Intervals",
+           title="C. Method B evidence-tier funnel")
+    ax.grid(axis="x", color=GRID); ax.set_axisbelow(True)
+
+    # ── D. Curtailment intensity (% of potential) ───────────────
+    ax = axes[1, 1]
+    ilabels, ivals, icolors = [], [], []
+    if elig_pot:
+        ilabels.append("Method A /\neligible potential"); ivals.append(100*a_proxy/elig_pot); icolors.append(PURPLE)
+    if all_pot:
+        ilabels.append("Method A /\nall potential");      ivals.append(100*a_proxy/all_pot);  icolors.append("#a78bfa")
+    if cov_pot:
+        ilabels.append("Method B /\ncovered potential");  ivals.append(100*b_attr/cov_pot);   icolors.append(RED)
+    xb = np.arange(len(ilabels))
+    ib = ax.bar(xb, ivals, color=icolors, width=0.6)
+    ax.bar_label(ib, fmt="{:.4f}%", padding=3, fontsize=8.5)
+    ax.set_xticks(xb); ax.set_xticklabels(ilabels, fontsize=8.5)
+    ax.set(ylabel="Share of potential generation (%)",
+           title="D. Curtailment intensity")
+    ax.set_ylim(top=max(ivals) * 1.25 if ivals else 1)
+    ax.grid(axis="y", color=GRID); ax.set_axisbelow(True)
+
+    fig.suptitle(
+        f"Fleet-wide Volt-VAr curtailment  |  {list(params.years)}  |  "
+        f"Method A proxy {_kwh(a_proxy)} kWh  vs  Method B attribution {_kwh(b_attr)} kWh "
+        f"({a_proxy/b_attr:.1f}×)",
+        fontsize=13, weight="bold", y=1.01)
+    plt.tight_layout()
+    return fig
+
+# ═════════════════════════════════════════════════════════════════════════
+# Method A vs B comparison plots + combined legacy Method A detail figure.
+# ═════════════════════════════════════════════════════════════════════════
+
+def _fmt_num(x, decimals=1):
+    if pd.isna(x): return "n/a"
+    if abs(x) >= 1_000_000: return f"{x/1_000_000:.{decimals}f}M"
+    if abs(x) >= 1_000:     return f"{x/1_000:.{decimals}f}k"
+    if abs(x) >= 10:        return f"{x:,.0f}"
+    if abs(x) >= 1:         return f"{x:,.1f}"
+    if abs(x) >= 0.01:      return f"{x:,.3f}"
+    return f"{x:,.5f}"
+
+
+def _fmt_pct(x, decimals=4):
+    if pd.isna(x): return "n/a"
+    if abs(x) >= 10: return f"{x:.1f}%"
+    if abs(x) >= 1:  return f"{x:.2f}%"
+    return f"{x:.{decimals}f}%"
+
+
+# ─────────────────────────────────────────────────────────────
+# Side-by-side DNSP breakdown: Method A proxy vs Method B attribution
+# ─────────────────────────────────────────────────────────────
+
+def plot_group_energy_compare(a_by, b_by, group_col,
+                              suptitle="Volt-VAr curtailment by DNSP"):
+    """
+    Two panels sharing DNSP order: Method A proxy energy (left, purple) and
+    Method B attributed energy (right, red).
+
+    a_by : output of vm.group_breakdown_a (has 'proxy_kwh')
+    b_by : output of vm.group_breakdown   (has 'attributed_kwh')
+    """
+    merged = (a_by[[group_col, "proxy_kwh"]]
+              .merge(b_by[[group_col, "attributed_kwh"]], on=group_col, how="outer")
+              .fillna(0)
+              .sort_values("attributed_kwh"))
+    order = merged[group_col].astype(str).tolist()
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, max(3.5, .42 * len(merged))),
+                             dpi=130, sharey=True)
+
+    b1 = axes[0].barh(order, merged["proxy_kwh"], color=PURPLE)
+    axes[0].bar_label(b1, fmt="{:,.0f}", padding=3, fontsize=8)
+    axes[0].set(xlabel="Method A proxy energy (kWh)",
+                title="A. Method A: Apparent-limit proxy")
+    axes[0].grid(axis="x", color=GRID); axes[0].set_axisbelow(True)
+
+    b2 = axes[1].barh(order, merged["attributed_kwh"], color=RED)
+    axes[1].bar_label(b2, fmt="{:,.0f}", padding=3, fontsize=8)
+    axes[1].set(xlabel="Method B attributed energy (kWh)",
+                title="B. Method B: Counterfactual attribution")
+    axes[1].grid(axis="x", color=GRID); axes[1].set_axisbelow(True)
+
+    fig.suptitle(suptitle, fontsize=13, weight="bold", y=1.01)
+    plt.tight_layout()
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────
+# Side-by-side concentration / Lorenz: Method A vs Method B
+# ─────────────────────────────────────────────────────────────
+
+def plot_concentration_compare(a_ranked, a_shares, a_total,
+                               b_ranked, b_shares, b_total):
+    """
+    Two Lorenz panels: Method A proxy (left, purple) and Method B attribution
+    (right, red). Each *_ranked is a vm.concentration() output with
+    site_share_pct / cumulative_energy_share_pct; *_shares its dict; *_total
+    the summed kWh for the annotation.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.4), dpi=130)
+
+    for ax, ranked, shares, total, colour, name in [
+        (axes[0], a_ranked, a_shares, a_total, PURPLE, "Method A (proxy)"),
+        (axes[1], b_ranked, b_shares, b_total, RED,    "Method B (attribution)"),
+    ]:
+        if ranked is None or ranked.empty:
+            ax.text(0.5, 0.5, "No positive sites", ha="center", va="center")
+            ax.set_title(name, weight="bold"); continue
+        ax.plot(ranked["site_share_pct"], ranked["cumulative_energy_share_pct"],
+                color=colour, lw=2.4)
+        ax.plot([0, 100], [0, 100], ls="--", lw=1, color="grey", alpha=0.6)
+        for x, y in shares.items():
+            ax.axvline(x, ls=":", lw=0.8, alpha=0.6)
+            ax.axhline(y, ls=":", lw=0.8, alpha=0.6)
+            ax.text(x + 1, y + 2, f"Top {x}% = {y:.1f}%", fontsize=8)
+        ax.set(xlim=(0, 100), ylim=(0, 100),
+               xlabel="Share of affected sites (%)",
+               ylabel="Cumulative share of curtailed energy (%)",
+               title=name)
+        ax.grid(True, color=GRID); ax.set_axisbelow(True)
+        ax.text(0.98, 0.05,
+                f"Affected sites: {len(ranked):,}\nTotal: {total:,.0f} kWh",
+                transform=ax.transAxes, ha="right", va="bottom", fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.35", facecolor="white",
+                          edgecolor="lightgrey", alpha=0.95))
+
+    fig.suptitle("Curtailment concentration across sites. Method A vs Method B",
+                 fontsize=13, weight="bold", y=1.02)
+    plt.tight_layout()
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────
+# Combined Method A fleet detail (legacy Figure 1 + Figure 2 in one block)
+# ─────────────────────────────────────────────────────────────
+
+def _hist_panel(ax, df, value_col, title, xlabel, bins, denominator_col=None):
+    d = df.copy()
+    mask = d[denominator_col].fillna(0) > 0 if (denominator_col in d.columns) else pd.Series(True, index=d.index)
+    pos = d[mask & (d[value_col].fillna(0) > 0)]
+    if pos.empty:
+        ax.set_title(title, fontsize=10.5, weight="bold")
+        ax.text(0.5, 0.5, "No positive values", ha="center", va="center")
+        ax.set_xlabel(xlabel); return
+    sns.histplot(data=pos, x=value_col, hue="year", bins=bins, element="step",
+                 stat="percent", common_norm=False, fill=True, alpha=0.22,
+                 linewidth=1.6, ax=ax)
+    ax.set_xscale("log")
+    ax.set_title(title, fontsize=10.5, weight="bold")
+    ax.set_xlabel(xlabel); ax.set_ylabel("Share of positive site-years, %")
+    ax.grid(axis="y", alpha=0.25)
+
+
+def plot_method_a_detail(summary_by_year, overall_summary, site_year_distribution):
+    """
+    Legacy Method A fleet detail, combined into ONE figure:
+      rows 1-2 : denominator funnels + year-by-year rates (was Figure 1)
+      rows 3-5 : positive-value distribution histograms (was Figure 2)
+
+    All Method A (symptom scan). Build the inputs with
+    vm.build_method_a_context(method_a_enriched, eligible_context,
+                              all_context, config.interval_h).
+    """
+    os0 = overall_summary.iloc[0]
+    splot = pd.concat([summary_by_year.assign(year=summary_by_year["year"].astype(str)),
+                       overall_summary], ignore_index=True)
+
+    fig = plt.figure(figsize=(15, 21), dpi=120)
+    gs = fig.add_gridspec(5, 2, hspace=0.42, wspace=0.22)
+
+    # A. timestamp funnel
+    ax = fig.add_subplot(gs[0, 0])
+    tv = pd.DataFrame({"c": ["All\nsite-intervals", "Eligible\nsite-intervals",
+                             "Flagged\nsite-intervals"],
+                       "v": [os0["all_intervals"], os0["eligible_intervals"],
+                             os0["flagged_intervals"]]})
+    ax.barh(tv["c"][::-1], tv["v"][::-1], color=sns.color_palette("Blues")[3])
+    ax.set_xscale("log"); ax.set_xlabel("5-min site-intervals (log)")
+    ax.set_title("A. Timestamp funnel: all → eligible → flagged", weight="bold")
+    for i, v in enumerate(tv["v"][::-1]): ax.text(v * 1.1, i, f"{v:,.0f}", va="center", fontsize=8.5)
+    ax.text(0.98, 0.05,
+            f"Flagged/eligible = {_fmt_pct(os0['pct_eligible_intervals_flagged'])}\n"
+            f"Flagged/all = {_fmt_pct(os0['pct_all_intervals_flagged'])}",
+            transform=ax.transAxes, ha="right", va="bottom", fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor="lightgrey"))
+    ax.grid(axis="x", color=GRID); ax.set_axisbelow(True)
+
+    # B. energy funnel
+    ax = fig.add_subplot(gs[0, 1])
+    ev = pd.DataFrame({"c": ["All potential\ngeneration", "Eligible potential\ngeneration",
+                             "Est. curtailed\nenergy"],
+                       "v": [os0["all_potential_kWh"], os0["eligible_potential_kWh"],
+                             os0["est_curtailed_kWh"]]})
+    ax.barh(ev["c"][::-1], ev["v"][::-1], color=sns.color_palette("Reds")[3])
+    ax.set_xscale("log"); ax.set_xlabel("Energy, kWh (log)")
+    ax.set_title("B. Energy funnel: all → eligible → curtailed", weight="bold")
+    for i, v in enumerate(ev["v"][::-1]): ax.text(v * 1.1, i, f"{_fmt_num(v)} kWh", va="center", fontsize=8.5)
+    ax.text(0.98, 0.05,
+            f"Curtailed/eligible = {_fmt_pct(os0['pct_eligible_potential_curtailed'])}\n"
+            f"Curtailed/all = {_fmt_pct(os0['pct_all_potential_curtailed'])}",
+            transform=ax.transAxes, ha="right", va="bottom", fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", edgecolor="lightgrey"))
+    ax.grid(axis="x", color=GRID); ax.set_axisbelow(True)
+
+    # C. year-by-year timestamp rates
+    ax = fig.add_subplot(gs[1, 0])
+    rdf = splot[["year", "pct_eligible_intervals_flagged", "pct_all_intervals_flagged"]].melt(
+        id_vars="year", var_name="metric", value_name="percent")
+    rdf["metric"] = rdf["metric"].map({"pct_eligible_intervals_flagged": "Flagged / eligible",
+                                       "pct_all_intervals_flagged": "Flagged / all"})
+    sns.pointplot(data=rdf, x="percent", y="year", hue="metric", dodge=0.35,
+                  markers="o", linestyles="", ax=ax)
+    ax.set_xscale("log"); ax.set_xlabel("Share of timestamps flagged (%, log)")
+    ax.xaxis.set_major_formatter(plt.matplotlib.ticker.FuncFormatter(lambda v, _: _fmt_pct(v)))
+    ax.set_ylabel(""); ax.set_title("C. Extent of detected symptoms", weight="bold")
+    ax.legend(title="", loc="lower center", fontsize=8)
+    yorder = list(splot["year"])
+    for _, r in rdf.iterrows():
+        if pd.notna(r["percent"]) and r["percent"] > 0:
+            ax.text(r["percent"] * 1.15, yorder.index(r["year"]),
+                    _fmt_pct(r["percent"]), va="center", fontsize=7.5)
+    ax.grid(True, color=GRID); ax.set_axisbelow(True)
+
+    # D. year-by-year energy rates
+    ax = fig.add_subplot(gs[1, 1])
+    edf = splot[["year", "pct_eligible_potential_curtailed", "pct_all_potential_curtailed"]].melt(
+        id_vars="year", var_name="metric", value_name="percent")
+    edf["metric"] = edf["metric"].map({"pct_eligible_potential_curtailed": "Curtailed / eligible",
+                                       "pct_all_potential_curtailed": "Curtailed / all"})
+    sns.pointplot(data=edf, x="percent", y="year", hue="metric", dodge=0.35,
+                  markers="o", linestyles="", ax=ax)
+    ax.set_xscale("log"); ax.set_xlabel("Share of potential generation curtailed (%, log)")
+    ax.xaxis.set_major_formatter(plt.matplotlib.ticker.FuncFormatter(lambda v, _: _fmt_pct(v)))
+    ax.set_ylabel(""); ax.set_title("D. Estimated energy impact", weight="bold")
+    ax.legend(title="", loc="lower center", fontsize=8)
+    yorder = list(splot["year"])
+    for _, r in edf.iterrows():
+        if pd.notna(r["percent"]) and r["percent"] > 0:
+            ax.text(r["percent"] * 1.15, yorder.index(r["year"]),
+                    _fmt_pct(r["percent"]), va="center", fontsize=7.5)
+    ax.grid(True, color=GRID); ax.set_axisbelow(True)
+
+    # E-J. distributions
+    dist = site_year_distribution.copy()
+    dist["year"] = dist["year"].astype(str)
+    metrics = [
+        ("pct_eligible_timestamps_flagged", "E. Extent vs eligible cases",
+         "Flagged / eligible site-intervals, %", np.logspace(-3, 2, 35), "n_eligible_intervals"),
+        ("pct_all_timestamps_flagged", "F. Extent vs all timestamps",
+         "Flagged / all site-intervals, %", np.logspace(-5, 1, 35), "n_all_intervals"),
+        ("est_curtailed_kWh", "G. Absolute curtailed energy",
+         "Est. curtailed energy per site-year, kWh", np.logspace(-2, 4, 35), "n_all_intervals"),
+        ("avg_est_curtailed_kW_when_flagged", "H. Avg curtailed power when flagged",
+         "Avg curtailed power during flagged intervals, kW", np.logspace(-3, 2, 35), "n_flagged_intervals"),
+        ("pct_eligible_potential_generation_curtailed", "I. Energy impact vs eligible gen",
+         "Curtailed / eligible potential, %", np.logspace(-4, 2, 35), "eligible_potential_kWh"),
+        ("pct_all_potential_generation_curtailed", "J. Energy impact vs all gen",
+         "Curtailed / all potential, %", np.logspace(-6, 1, 35), "all_potential_kWh"),
+    ]
+    positions = [(2, 0), (2, 1), (3, 0), (3, 1), (4, 0), (4, 1)]
+    for (r, c), (col, title, xlabel, bins, den) in zip(positions, metrics):
+        ax = fig.add_subplot(gs[r, c])
+        _hist_panel(ax, dist, col, title, xlabel, bins, den)
+
+    return fig
