@@ -48,6 +48,7 @@ from as4777_curves import (
     q_cap_absorbing_sql,
     q_conformance_floor_absorbing_sql,
     tol_kw_sql,
+    q_impact_nearest_edge_sql,
 )
 
 from stage2_common import (
@@ -200,6 +201,13 @@ def _insert_sql(
 
     tol = tol_kw_sql(rating_col)
 
+    q_impact_expr = q_impact_nearest_edge_sql(
+        "Q_kvar",
+        "Q_min_final",
+        "Q_max_final",
+        "capability_assessable",
+    )
+
     unc_pred = uncurtailed_partition_predicate(partitions, alias="a")
 
     return f"""
@@ -279,36 +287,8 @@ def _insert_sql(
             Q_max_final,
             Q_min_final,
 
-            CASE
-                WHEN capability_assessable = 0 THEN NULL
-                ELSE
-                    CASE
-                        WHEN abs(Q_kvar) / (abs(Q_max_final) + 1e-9)
-                          <= abs(Q_kvar) / (abs(Q_min_final) + 1e-9)
-                        THEN
-                            (
-                                CASE
-                                    WHEN Q_max_final + Q_min_final = 0 THEN 1
-                                    ELSE sign(Q_max_final) * sign(Q_kvar)
-                                END
-                            )
-                            * (
-                                abs(Q_kvar)
-                                / (abs(Q_max_final) + 1e-9)
-                            )
-                        ELSE
-                            (
-                                CASE
-                                    WHEN Q_max_final + Q_min_final = 0 THEN 1
-                                    ELSE sign(Q_min_final) * sign(Q_kvar)
-                                END
-                            )
-                            * (
-                                abs(Q_kvar)
-                                / (abs(Q_min_final) + 1e-9)
-                            )
-                    END
-            END AS Q_impact
+            {q_impact_expr} AS Q_impact
+
         FROM clamped
     ),
 

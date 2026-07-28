@@ -5,6 +5,7 @@ import pandas as pd
 from shared.as4777_curves import (
     q_cap_absorbing_sql,
     q_conformance_floor_absorbing_sql,
+    q_impact_nearest_edge_sql,
     tol_kw_sql,
     vvar_required_q_sql,
     vw_max_p_sql,
@@ -16,11 +17,18 @@ from shared.pipeline_options import (
     voltage_aggregate_sql,
 )
 
-from shared.ciccada_config import AS4777
+from shared.ciccada_config import AS4777, TABLES
 
-def fetch_stored_day_verdict(site_id, date, aq_func, database):
+def fetch_stored_day_verdict(
+    site_id,
+    date,
+    aq_func,
+    database,
+    table=None,
+):
     """Return the stored Volt-VAr result for one site and date."""
     date = pd.Timestamp(date)
+    table = table or TABLES["conformance_voltvar"]
 
     return aq_func(
         f"""
@@ -36,7 +44,7 @@ def fetch_stored_day_verdict(site_id, date, aq_func, database):
             low_power_count,
             low_power_exposed_count,
             all_intervals_count
-        FROM conformance_voltvar_v2
+        FROM {table}
         WHERE site_id = {site_id}
           AND year = {date.year}
           AND month = {date.month}
@@ -58,6 +66,14 @@ def recompute_vvar_day(site_id, date, aq_func, database):
         "ac_capacity_kw",
     )
     tol = tol_kw_sql("ac_capacity_kw")
+
+    q_impact_expr = q_impact_nearest_edge_sql(
+        "Q_kvar",
+        "Q_min_final",
+        "Q_max_final",
+        "capability_assessable",
+    )
+
     qcap_p_min = AS4777["QCAP"]["P_MIN"]
 
     return aq_func(
@@ -137,36 +153,7 @@ def recompute_vvar_day(site_id, date, aq_func, database):
         q_impact AS (
             SELECT
                 *,
-                CASE
-                    WHEN capability_assessable = 0 THEN NULL
-                    ELSE
-                        CASE
-                            WHEN abs(Q_kvar) / (abs(Q_max_final) + 1e-9)
-                            <= abs(Q_kvar) / (abs(Q_min_final) + 1e-9)
-                            THEN
-                                (
-                                    CASE
-                                        WHEN Q_max_final + Q_min_final = 0 THEN 1
-                                        ELSE sign(Q_max_final) * sign(Q_kvar)
-                                    END
-                                )
-                                * (
-                                    abs(Q_kvar)
-                                    / (abs(Q_max_final) + 1e-9)
-                                )
-                            ELSE
-                                (
-                                    CASE
-                                        WHEN Q_max_final + Q_min_final = 0 THEN 1
-                                        ELSE sign(Q_min_final) * sign(Q_kvar)
-                                    END
-                                )
-                                * (
-                                    abs(Q_kvar)
-                                    / (abs(Q_min_final) + 1e-9)
-                                )
-                        END
-                END AS Q_impact
+                {q_impact_expr} AS Q_impact
             FROM clamped
         )
         SELECT
@@ -452,10 +439,15 @@ def summarise_recomputed_day(intervals):
     return interval_summary, status_summary
 
 
-def fetch_fleet_day_night_summary(aq_func, database):
-    """Return fleet-wide stored Volt-VAr results by day/night."""
+def fetch_fleet_day_night_summary(
+    aq_func,
+    database,
+    table=None,
+):
+    table = table or TABLES["conformance_voltvar"]
+
     return aq_func(
-        """
+        f"""
         SELECT
             day_night,
             sum(total_count) AS total,
@@ -463,7 +455,7 @@ def fetch_fleet_day_night_summary(aq_func, database):
             sum(Q_inactive_count) AS inactive,
             sum(Q_significant_shortfall_count) AS shortfall,
             sum(Q_near_conformant_count) AS near_conformant
-        FROM conformance_voltvar_v2
+        FROM {table}
         GROUP BY day_night
         ORDER BY day_night
         """,
