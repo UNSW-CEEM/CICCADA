@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ausgrid-analysis"
+version = "0.1.0"
+description = "Local, auditable foundation pipeline for Ausgrid AMI DER telemetry."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=1.2,<2",
+    "pandas>=2.2,<4",
+    "openpyxl>=3.1,<4",
+    "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.9,<1",
+]
+notebook = [
+    "ipykernel>=6,<8",
+    "jupyterlab>=4,<5",
+    "matplotlib>=3.8,<4",
+]
+
+[project.scripts]
+ausgrid-foundation = "ausgrid_analysis.foundation:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,41 @@
+[paths]
+telemetry_parquet = 'C:\Users\z3553082\OneDrive - UNSW\Documents\CICCADA - Data\Ausgrid\ausgrid_pv_combined.parquet'
+metadata_workbook = 'C:\Users\z3553082\OneDrive - UNSW\Documents\CICCADA - Data\Ausgrid\ausgrid_meta.xlsx'
+derived_root = 'C:\Users\z3553082\OneDrive - UNSW\Documents\CICCADA - Data\Ausgrid\derived'
+
+[metadata]
+sheet_name = "Cust_DER_Network Data"
+id_column = "Unique Number ID"
+
+[telemetry]
+site_column = "serial"
+timestamp_column = "MeasureTime"
+phase_column = "Vphase"
+voltage_column = "Volts"
+current_column = "Curr"
+reactive_power_column = "ReactPow"
+active_power_column = "ActivePow"
+source_month_column = "month"
+source_file_column = "source_file"
+
+[assumptions]
+# Working hypotheses. Raw fields are always retained, so either sign can be
+# changed later without re-reading the source CSV files.
+active_export_sign = -1
+reactive_absorbing_sign = -1
+source_timezone = "UTC"
+local_timezone = "Australia/Sydney"
+power_sample_type = "instantaneous"
+measurement_location = "unknown"
+
+[quality]
+voltage_min_v = 0.0
+voltage_max_v = 300.0
+duplicate_float_tolerance = 0.000001
+
+[processing]
+site_bucket_count = 32
+threads = 4
+memory_limit = "8GB"
+parquet_compression = "zstd"
+
