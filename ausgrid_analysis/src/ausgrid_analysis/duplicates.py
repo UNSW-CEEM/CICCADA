@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .config import FoundationConfig, SourceScope
 from .db import (
     connect,
     duplicate_audit_path,
     duplicate_summary_path,
+    prepare_output_directory,
     prepare_output_file,
     scope_root,
 )
@@ -24,6 +27,50 @@ from .schemas import (
 
 def conflicting_rows_path(config: FoundationConfig, scope: SourceScope) -> Path:
     return scope_root(config, scope) / "audit" / "conflicting_duplicate_rows.parquet"
+
+
+def duplicate_chunk_directory(
+    config: FoundationConfig,
+    scope: SourceScope,
+    run_id: str,
+) -> Path:
+    return config.paths.temp_directory / f"duplicate_chunks_{scope.label}_{run_id}"
+
+
+def _month_windows(
+    first_timestamp: datetime,
+    last_timestamp: datetime,
+) -> list[tuple[str, datetime, datetime]]:
+    cursor = first_timestamp.replace(
+        day=1,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    final_month = last_timestamp.replace(
+        day=1,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    windows: list[tuple[str, datetime, datetime]] = []
+    while cursor <= final_month:
+        if cursor.month == 12:
+            next_month = cursor.replace(
+                year=cursor.year + 1,
+                month=1,
+            )
+        else:
+            next_month = cursor.replace(month=cursor.month + 1)
+        windows.append((cursor.strftime("%Y-%m"), cursor, next_month))
+        cursor = next_month
+    return windows
+
+
+def _timestamp_sql(value: datetime) -> str:
+    return f"TIMESTAMP '{value:%Y-%m-%d %H:%M:%S}'"
 
 
 def duplicate_audit_query(source_sql: str, tolerance: float) -> str:
@@ -76,18 +123,96 @@ def run_duplicate_audit(
         config.quality.duplicate_float_tolerance,
     )
 
+    chunk_dir: Path | None = None
     connection = connect(config)
     try:
-        connection.execute(
-            f"""
-            COPY ({audit_sql})
-            TO {sql_string(audit_path)}
-            (
-                FORMAT PARQUET,
-                COMPRESSION {config.processing.parquet_compression}
+        if scope.is_full:
+            # A whole-year GROUP BY has nearly one group per source row and can
+            # exhaust memory. Timestamp-month windows are disjoint for the
+            # canonical key, so auditing them separately cannot split a
+            # duplicate key. Fewer threads also reduce aggregate state.
+            audit_threads = min(config.processing.threads, 2)
+            connection.execute(f"SET threads = {audit_threads}")
+            bounds = connection.execute(
+                f"""
+                SELECT min(measure_time), max(measure_time)
+                FROM ({source_sql}) AS source
+                """
+            ).fetchone()
+            if bounds[0] is None or bounds[1] is None:
+                connection.execute(
+                    f"""
+                    COPY ({audit_sql})
+                    TO {sql_string(audit_path)}
+                    (
+                        FORMAT PARQUET,
+                        COMPRESSION {config.processing.parquet_compression}
+                    )
+                    """
+                )
+            else:
+                chunk_dir = prepare_output_directory(
+                    config,
+                    duplicate_chunk_directory(
+                        config,
+                        scope,
+                        uuid4().hex,
+                    ),
+                    overwrite=False,
+                )
+                chunk_dir.mkdir(parents=True, exist_ok=True)
+                for label, start, end in _month_windows(
+                    bounds[0],
+                    bounds[1],
+                ):
+                    logger.info("Auditing duplicate keys for %s", label)
+                    monthly_source_sql = f"""
+                        SELECT *
+                        FROM ({source_sql}) AS source
+                        WHERE measure_time >= {_timestamp_sql(start)}
+                          AND measure_time < {_timestamp_sql(end)}
+                    """.strip()
+                    monthly_audit_sql = duplicate_audit_query(
+                        monthly_source_sql,
+                        config.quality.duplicate_float_tolerance,
+                    )
+                    chunk_path = chunk_dir / f"duplicate_keys_{label}.parquet"
+                    connection.execute(
+                        f"""
+                        COPY ({monthly_audit_sql})
+                        TO {sql_string(chunk_path)}
+                        (
+                            FORMAT PARQUET,
+                            COMPRESSION {config.processing.parquet_compression}
+                        )
+                        """
+                    )
+
+                chunk_glob = str(chunk_dir / "*.parquet")
+                connection.execute(
+                    f"""
+                    COPY (
+                        SELECT *
+                        FROM read_parquet({sql_string(chunk_glob)})
+                    )
+                    TO {sql_string(audit_path)}
+                    (
+                        FORMAT PARQUET,
+                        COMPRESSION {config.processing.parquet_compression}
+                    )
+                    """
+                )
+        else:
+            connection.execute(
+                f"""
+                COPY ({audit_sql})
+                TO {sql_string(audit_path)}
+                (
+                    FORMAT PARQUET,
+                    COMPRESSION {config.processing.parquet_compression}
+                )
+                """
             )
-            """
-        )
         connection.execute(
             f"""
             COPY (
@@ -144,6 +269,19 @@ def run_duplicate_audit(
         }
     finally:
         connection.close()
+        if chunk_dir is not None and chunk_dir.exists():
+            try:
+                shutil.rmtree(chunk_dir)
+            except OSError as exc:
+                # Windows/OneDrive can briefly retain a directory handle after
+                # DuckDB closes its parquet readers. The next run uses a new
+                # unique directory, so a delayed cleanup must not invalidate a
+                # completed audit.
+                logger.warning(
+                    "Could not remove temporary duplicate chunks at %s: %s",
+                    chunk_dir,
+                    exc,
+                )
 
     payload = {
         "created_utc": datetime.now(timezone.utc).isoformat(),

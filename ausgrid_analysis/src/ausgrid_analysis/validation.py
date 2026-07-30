@@ -48,7 +48,9 @@ def validate_canonical_phase(
                     CASE WHEN duplicate_class = 'conflicting_duplicate'
                         THEN row_count ELSE 0 END
                 ), 0) AS conflicting_rows_quarantined,
-                count_if(duplicate_class = 'conflicting_duplicate')
+                coalesce(count_if(
+                    duplicate_class = 'conflicting_duplicate'
+                ), 0)
                     AS conflicting_duplicate_keys
             FROM read_parquet({sql_string(audit_path)})
             """
@@ -157,4 +159,3 @@ def validate_canonical_phase(
     if failures:
         raise RuntimeError("Canonical validation failed: " + "; ".join(failures))
     return payload
-
