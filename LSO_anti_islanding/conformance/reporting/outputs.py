@@ -16,6 +16,13 @@ PRIMARY_PHASE_B_SUMMARY_NAME = f"phase_b_site_summary_{PRIMARY_PHASE_B_METHOD}.c
 PRIMARY_PHASE_B_DETAIL_NAME = f"phase_b_timestamp_detail_{PRIMARY_PHASE_B_METHOD}.csv"
 FIVE_METHOD_RESULTS_SUMMARY_NAME = "five_method_results_summary.xlsx"
 FIVE_METHOD_RESULTS_SUMMARY_SHEET_NAME = "summary"
+FIVE_METHOD_RESULTS_SUMMARY_METHOD_LABELS = {
+    "default": "default",
+    "original": "original_raw",
+    "tier_based": "confidence_tier",
+    "old_sweep": "old_sweep",
+    "blended": "blended",
+}
 FIVE_METHOD_RESULTS_SUMMARY_COLUMNS = [
     "#",
     "Method",
@@ -101,7 +108,11 @@ def summarize_multi_method_site_outputs(phase_b_summary_by_method_df):
 def build_five_method_results_summary(phase_b_summary_by_method_df):
     summary = pl.DataFrame({
         "#": list(range(1, len(PHASE_B_METHODS) + 1)),
-        "Method": list(PHASE_B_METHODS),
+        "method_key": list(PHASE_B_METHODS),
+        "Method": [
+            FIVE_METHOD_RESULTS_SUMMARY_METHOD_LABELS[method_key]
+            for method_key in PHASE_B_METHODS
+        ],
     })
     if phase_b_summary_by_method_df is None or phase_b_summary_by_method_df.is_empty():
         return summary.with_columns([
@@ -120,10 +131,9 @@ def build_five_method_results_summary(phase_b_summary_by_method_df):
             pl.col("overall_pass").eq(True).sum().alias("Conformant"),
             pl.col("overall_pass").eq(False).sum().alias("Non-conformant"),
         ])
-        .rename({"method_key": "Method"})
     )
     return (
-        summary.join(counts, on="Method", how="left")
+        summary.join(counts, on="method_key", how="left")
         .with_columns([
             pl.col("_total_rows").fill_null(0).cast(pl.Int64),
             pl.col("Assessed").fill_null(0).cast(pl.Int64),
@@ -137,7 +147,7 @@ def build_five_method_results_summary(phase_b_summary_by_method_df):
             .otherwise(pl.lit(None, dtype=pl.Float64))
             .alias("Conformance % of assessed"),
         ])
-        .drop("_total_rows")
+        .drop(["method_key", "_total_rows"])
         .select(FIVE_METHOD_RESULTS_SUMMARY_COLUMNS)
     )
 

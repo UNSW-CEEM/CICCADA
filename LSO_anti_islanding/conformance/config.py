@@ -38,6 +38,7 @@ PHASE_B_COMPLIANCE_THRESHOLD_PCT = 90.0
 
 # Plot the primary Phase B method during the main conformance run.
 GENERATE_SITE_PLOTS_DEFAULT = True
+PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS = False
 
 # Optionally generate comparison plots after the by-method CSVs are written.
 GENERATE_METHOD_COMPARISON_PLOTS = True

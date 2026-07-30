@@ -80,6 +80,7 @@ def _day_status_label(day_compliant_ts, day_eligible_ts, threshold_pct=90.0):
     day_status = "conformant" if day_pct >= threshold_pct else "non-conformant"
     return day_status, day_pct
 
+
 def plot_site_compliance_day(
     df: pl.DataFrame,
     site_number,
@@ -90,6 +91,7 @@ def plot_site_compliance_day(
     ov1_threshold: float | None,
     overall_pass,
     day_summary: dict | None = None,
+    plot_no_eligible_timestamp_days: bool = False,
     save_path: str | Path | None = None,
 ):
     """
@@ -106,6 +108,14 @@ def plot_site_compliance_day(
     ]
     if not power_cols:
         return
+
+    if day_summary is not None:
+        total_eligible = (
+            int(day_summary.get("los_eligible", 0) or 0)
+            + int(day_summary.get("ov1_eligible", 0) or 0)
+        )
+        if total_eligible == 0 and not plot_no_eligible_timestamp_days:
+            return
 
     plot_df = df.sort("local_tstamp")
     if "site_power" not in plot_df.columns:

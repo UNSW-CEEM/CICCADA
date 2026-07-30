@@ -5,6 +5,7 @@ from functools import partial
 from config import (
     GENERATE_METHOD_COMPARISON_PLOTS,
     GENERATE_SITE_PLOTS_DEFAULT,
+    PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS,
 )
 from core.pipeline import run_conformance
 from core.workflow import prepare_site
@@ -47,6 +48,7 @@ def main(dataset):
         candidate_site_ids=inputs["candidate_site_ids"],
         prepare_site=prepare_dataset_site,
         generate_site_plots=GENERATE_SITE_PLOTS_DEFAULT,
+        plot_no_eligible_timestamp_days=PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS,
         site_plot_dir=definition.output_dir / "overall_site_plots",
     )
     write_outputs(
@@ -77,5 +79,5 @@ def main(dataset):
 # verify if the following 
 # from main_run_conformance import main
 
-# results = main(dataset="solar_analytics")
-results = main(dataset="sapn2022")
+results = main(dataset="solar_analytics")
+# results = main(dataset="sapn2022")

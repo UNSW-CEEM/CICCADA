@@ -19,6 +19,7 @@ def run_conformance(
     methods=PHASE_B_METHODS,
     primary_method=PRIMARY_PHASE_B_METHOD,
     generate_site_plots=False,
+    plot_no_eligible_timestamp_days=False,
     site_plot_dir=None,
 ):
     """Run Phase A once and Phase B for every method across one dataset.
@@ -122,6 +123,7 @@ def run_conformance(
                     ov1_threshold=primary_thresholds["ov1_test_site"],
                     overall_pass=summary["overall_pass"],
                     day_summary=day_plot["summary"],
+                    plot_no_eligible_timestamp_days=plot_no_eligible_timestamp_days,
                     save_path=(
                         site_plot_dir
                         / plot_folder
