@@ -9,9 +9,8 @@
 - Duplicate resolution is explicit and auditable.
 - Conflicting measurements are quarantined, not averaged.
 - Sample outputs cannot contaminate full-run outputs.
-- A result is not considered valid merely because a script completed.
 - Jupyter notebooks are the primary review-and-run orchestrators.
-- Notebooks call tested modules; calculations are not duplicated inside plots.
+- Notebooks call tested modules. Calculations are not duplicated inside plots.
 
 ## Pipeline
 

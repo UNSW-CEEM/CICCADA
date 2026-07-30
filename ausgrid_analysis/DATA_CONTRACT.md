@@ -5,12 +5,12 @@
 Configured source:
 
 ```text
-C:\Users\z3553082\OneDrive - UNSW\Documents\CICCADA - Data\Ausgrid\ausgrid_pv_combined.parquet
+C:\Users\{id}\{drive}\Documents\{project} - Data\{dnsp}\{dnsp}_pv_combined.parquet
 ```
 
 Required columns:
 
-| Provider column | Meaning used in Delivery 1 | Canonical field |
+| Provider column | Meaning | Canonical field |
 |---|---|---|
 | `serial` | anonymised site/customer identifier | `serial` |
 | `MeasureTime` | naive representation of a UTC/GMT instant | `timestamp_utc` |
@@ -30,7 +30,7 @@ affected by numeric operations.
 Configured workbook:
 
 ```text
-C:\Users\z3553082\OneDrive - UNSW\Documents\CICCADA - Data\Ausgrid\ausgrid_meta.xlsx
+C:\Users\{id}\{drive}\Documents\{project} - Data\{dnsp}\{dnsp}_meta.xlsx
 ```
 
 Configured sheet:
@@ -45,10 +45,9 @@ separate:
 - `approved_capacity_kw`;
 - `solar_capacity_kw`;
 - `battery_inverter_capacity_kw`;
-- `s_rated_kva` — null until a defensible source is available.
+- `s_rated_kva`: null until a defensible source is available.
 
-Neither approved capacity nor solar capacity is silently treated as inverter
-rated apparent power.
+Neither approved capacity nor solar capacity is silently treated as inverter rated apparent power.
 
 ## Nulls
 

@@ -1,4 +1,4 @@
-# Ausgrid analysis — Delivery 1 foundation pipeline
+# Delivery 1 foundation pipeline
 
 This package builds an auditable local foundation for the Ausgrid AMI DER
 dataset. It does **not** calculate Volt‑VAr or Volt‑Watt conformance yet.
@@ -22,10 +22,6 @@ Delivery 1:
 
 The source parquet and workbook are read-only. Derived outputs are created only
 when **you** run the pipeline.
-
-The downloaded code folder can live wherever you choose. The example
-configuration writes generated data under the external Ausgrid data directory,
-not inside the CICCADA repository.
 
 ## Why DuckDB
 

@@ -116,9 +116,13 @@ def run_duplicate_audit(
                 count(*) AS duplicate_keys,
                 coalesce(sum(row_count), 0) AS rows_in_duplicate_keys,
                 coalesce(sum(row_count - 1), 0) AS repeated_rows_above_one_per_key,
-                count_if(duplicate_class = 'identical_duplicate')
+                coalesce(count_if(
+                    duplicate_class = 'identical_duplicate'
+                ), 0)
                     AS identical_duplicate_keys,
-                count_if(duplicate_class = 'conflicting_duplicate')
+                coalesce(count_if(
+                    duplicate_class = 'conflicting_duplicate'
+                ), 0)
                     AS conflicting_duplicate_keys,
                 coalesce(sum(
                     CASE WHEN duplicate_class = 'identical_duplicate'
@@ -128,7 +132,8 @@ def run_duplicate_audit(
                     CASE WHEN duplicate_class = 'conflicting_duplicate'
                         THEN row_count ELSE 0 END
                 ), 0) AS conflicting_rows_to_quarantine,
-                count_if(source_file_count > 1) AS cross_file_duplicate_keys
+                coalesce(count_if(source_file_count > 1), 0)
+                    AS cross_file_duplicate_keys
             FROM read_parquet({sql_string(audit_path)})
             """
         ).fetchone()
@@ -162,4 +167,3 @@ def run_duplicate_audit(
         summary["conflicting_duplicate_keys"],
     )
     return payload
-
