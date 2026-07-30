@@ -48,6 +48,30 @@ def validation_output_path(config: FoundationConfig, scope: SourceScope) -> Path
     return scope_root(config, scope) / "audit" / "canonical_validation.json"
 
 
+def delivery2_root(config: FoundationConfig, scope: SourceScope) -> Path:
+    return scope_root(config, scope) / "delivery2"
+
+
+def site_phase_profile_path(config: FoundationConfig, scope: SourceScope) -> Path:
+    return delivery2_root(config, scope) / "site_phase_profile.parquet"
+
+
+def site_profile_path(config: FoundationConfig, scope: SourceScope) -> Path:
+    return delivery2_root(config, scope) / "site_profile.parquet"
+
+
+def structured_phase_output_path(config: FoundationConfig, scope: SourceScope) -> Path:
+    return delivery2_root(config, scope) / "structured_phase_intervals"
+
+
+def structured_site_output_path(config: FoundationConfig, scope: SourceScope) -> Path:
+    return delivery2_root(config, scope) / "structured_site_intervals"
+
+
+def delivery2_validation_path(config: FoundationConfig, scope: SourceScope) -> Path:
+    return scope_root(config, scope) / "audit" / "delivery2_validation.json"
+
+
 def ensure_within_derived(config: FoundationConfig, path: Path) -> Path:
     """Resolve a generated path and prove that it is below derived_root."""
 
