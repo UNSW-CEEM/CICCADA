@@ -50,3 +50,15 @@ Read and visualise Volt-VAr and Volt-Watt conformance and curtailment results at
 fleet, site, phase, voltage, month and cohort levels. Keep conformance,
 observability and counterfactual-supported curtailment as separate questions.
 
+## Irradiance and decomposition
+
+Notebooks:
+
+- `notebooks/03a_build_analysis_cohort.ipynb`
+- `notebooks/03b_assess_irradiance_coverage.ipynb`
+
+Build an auditable modelling cohort, assess BOM/NCI temporal coverage, map
+substation coordinates to BOM grid points, and stop at an explicit suitability
+gate before implementing load–PV decomposition. The previous dedicated
+PV-circuit GHI model is not applied directly to Ausgrid net-meter power.
+
