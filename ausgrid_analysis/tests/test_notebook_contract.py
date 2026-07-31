@@ -43,7 +43,7 @@ def test_foundation_notebook_has_stages_visuals_and_full_run_gate() -> None:
         compile("".join(cell["source"]), f"notebook-cell-{index}", "exec")
 
 
-def test_delivery2_notebooks_are_bounded_compilable_and_locked() -> None:
+def test_structured_telemetry_notebooks_are_bounded_compilable_and_locked() -> None:
     project_root = Path(__file__).resolve().parents[1]
     notebook_dir = project_root / "notebooks"
     sources: dict[str, str] = {}
@@ -63,6 +63,6 @@ def test_delivery2_notebooks_are_bounded_compilable_and_locked() -> None:
 
     assert "MAX_ROWS" in sources["02a_explore_canonical.ipynb"]
     builder = sources["02b_build_structured_intervals.ipynb"]
-    assert "RUN DELIVERY 2 FULL" in builder
+    assert "RUN STRUCTURED TELEMETRY FULL" in builder
     assert "FULL_RUN_CONFIRMATION" in builder
     assert "formal_inverter_conformance_assessable" in builder

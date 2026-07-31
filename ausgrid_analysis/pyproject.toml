@@ -28,7 +28,7 @@ notebook = [
 
 [project.scripts]
 ausgrid-foundation = "ausgrid_analysis.foundation:main"
-ausgrid-delivery2 = "ausgrid_analysis.delivery2:main"
+ausgrid-structured = "ausgrid_analysis.structured_pipeline:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -10,21 +10,21 @@
 6. Review phase mappings, battery/cohort counts, interval previews and validation.
 7. Only then type the exact full-run confirmation.
 
-Your existing `analysis.toml` remains valid. The optional `[delivery2]` section in
+Your existing `analysis.toml` remains valid. The optional `[structured_telemetry]` section in
 `analysis.example.toml` exposes the phase-profile thresholds. Because Ausgrid has
 confirmed the voltage is at the revenue meter, setting
 `measurement_location = "revenue_meter"` is recommended.
 
 ## Outputs
 
-Under the selected scope's `delivery2/` directory:
+Under the selected scope's `structured_telemetry/` directory:
 
 - `site_phase_profile.parquet`: one row per observed site/phase.
 - `site_profile.parquet`: one row per site with candidate DER phases and confidence.
 - `structured_phase_intervals/`: canonical rows plus time, measurement and mapping flags.
 - `structured_site_intervals/`: one row per site/timestamp with safe phase aggregation.
 
-The validation report is `audit/delivery2_validation.json`. Site-level complete
+The validation report is `audit/structured_telemetry_validation.json`. Site-level complete
 power is null when an inferred DER phase is missing; missing values are never
 silently treated as zero.
 

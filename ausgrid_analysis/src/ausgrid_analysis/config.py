@@ -86,8 +86,8 @@ class ProcessingConfig:
 
 
 @dataclass(frozen=True)
-class Delivery2Config:
-    """Profiling defaults; all can be overridden in an optional [delivery2] table."""
+class StructuredTelemetryConfig:
+    """Profiling defaults; all can be overridden in an optional [structured_telemetry] table."""
 
     daytime_start_hour: int = 10
     daytime_end_hour: int = 14
@@ -140,7 +140,7 @@ class FoundationConfig:
     assumptions: AssumptionConfig
     quality: QualityConfig
     processing: ProcessingConfig
-    delivery2: Delivery2Config = field(default_factory=Delivery2Config)
+    structured_telemetry: StructuredTelemetryConfig = field(default_factory=StructuredTelemetryConfig)
 
     def validate(self, *, check_inputs: bool = False) -> FoundationConfig:
         for name, sign in (
@@ -160,24 +160,27 @@ class FoundationConfig:
             raise ValueError("threads must be positive")
         if not self.processing.parquet_compression:
             raise ValueError("parquet_compression cannot be empty")
-        d2 = self.delivery2
+        settings = self.structured_telemetry
         for name in (
             "daytime_start_hour",
             "daytime_end_hour",
             "nighttime_start_hour",
             "nighttime_end_hour",
         ):
-            value = getattr(d2, name)
+            value = getattr(settings, name)
             if value < 0 or value > 24:
                 raise ValueError(f"{name} must be between 0 and 24")
-        if d2.daytime_start_hour >= d2.daytime_end_hour:
+
+        if settings.daytime_start_hour >= settings.daytime_end_hour:
             raise ValueError("daytime_start_hour must be before daytime_end_hour")
-        if d2.nighttime_start_hour >= d2.nighttime_end_hour:
+
+        if settings.nighttime_start_hour >= settings.nighttime_end_hour:
             raise ValueError("nighttime_start_hour must be before nighttime_end_hour")
+
         if not (
             0
-            <= d2.phase_mapping_medium_margin_ratio
-            <= d2.phase_mapping_high_margin_ratio
+            <= settings.phase_mapping_medium_margin_ratio
+            <= settings.phase_mapping_high_margin_ratio
         ):
             raise ValueError("phase-mapping margin ratios are inconsistent")
 
@@ -230,9 +233,9 @@ def load_config(path: str | Path, *, check_inputs: bool = False) -> FoundationCo
     assumptions = _required_section(data, "assumptions")
     quality = _required_section(data, "quality")
     processing = _required_section(data, "processing")
-    delivery2 = data.get("delivery2", {})
-    if not isinstance(delivery2, dict):
-        raise ValueError("[delivery2] must be a TOML table")
+    structured_telemetry = data.get("structured_telemetry", {})
+    if not isinstance(structured_telemetry, dict):
+        raise ValueError("[structured_telemetry] must be a TOML table")
 
     config = FoundationConfig(
         paths=PathConfig(
@@ -245,6 +248,6 @@ def load_config(path: str | Path, *, check_inputs: bool = False) -> FoundationCo
         assumptions=AssumptionConfig(**assumptions),
         quality=QualityConfig(**quality),
         processing=ProcessingConfig(**processing),
-        delivery2=Delivery2Config(**delivery2),
+        structured_telemetry=StructuredTelemetryConfig(**structured_telemetry),
     )
     return config.validate(check_inputs=check_inputs)

@@ -33,7 +33,7 @@ def build_structured_phase(
     canonical = canonical_output_path(config, scope)
     profiles = site_profile_path(config, scope)
     if not canonical.is_dir() or not profiles.is_file():
-        raise FileNotFoundError("Canonical data and Delivery 2 profiles are required")
+        raise FileNotFoundError("Canonical data and Structured telemetry profiles are required")
     output = prepare_output_directory(
         config, structured_phase_output_path(config, scope), overwrite=overwrite
     )
@@ -78,7 +78,7 @@ def build_structured_phase(
                 s.phase_mapping_method,
                 s.phase_mapping_confidence,
                 s.phase_mapping_assessable,
-                s.delivery2_primary_cohort,
+                s.solar_only_mapped_cohort,
                 'net_meter' AS measurement_basis,
                 'revenue_meter' AS voltage_measurement_location,
                 false AS formal_inverter_conformance_assessable
@@ -165,7 +165,7 @@ def build_structured_site(
                     any_value(phase_mapping_method) AS phase_mapping_method,
                     any_value(phase_mapping_confidence) AS phase_mapping_confidence,
                     any_value(phase_mapping_assessable) AS phase_mapping_assessable,
-                    any_value(delivery2_primary_cohort) AS delivery2_primary_cohort,
+                    any_value(solar_only_mapped_cohort) AS solar_only_mapped_cohort,
                     count(*) AS observed_phase_rows,
                     count_if(power_measurement_available) AS measured_power_phase_rows,
                     count_if(is_inferred_der_phase) AS expected_der_phase_rows,

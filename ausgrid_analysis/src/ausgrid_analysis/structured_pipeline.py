@@ -1,4 +1,4 @@
-"""Command-line orchestration for Delivery 2."""
+"""Command-line orchestration for structured telemetry."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from typing import Any
 
 from .config import load_config
 from .db import scope_root
-from .delivery2_profiles import build_site_profiles
-from .delivery2_structured import build_structured_phase, build_structured_site
-from .delivery2_validation import validate_delivery2
+from .telemetry_profiles import build_site_profiles
+from .structured_intervals import build_structured_phase, build_structured_site
+from .structured_validation import validate_structured_telemetry
 from .logging_utils import write_json
 
 
-def run_delivery2(
+def run_structured_pipeline(
     config,
     scope,
     *,
@@ -24,7 +24,7 @@ def run_delivery2(
     profiles = build_site_profiles(config, scope, overwrite=overwrite)
     phase = build_structured_phase(config, scope, overwrite=overwrite)
     site = build_structured_site(config, scope, overwrite=overwrite)
-    validation = validate_delivery2(config, scope)
+    validation = validate_structured_telemetry(config, scope)
     payload = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "scope": scope.label,
@@ -33,10 +33,10 @@ def run_delivery2(
         "structured_site": site,
         "validation_status": validation["status"],
     }
-    manifest = scope_root(config, scope) / "_manifests" / "delivery2_run.json"
+    manifest = scope_root(config, scope) / "_manifests" / "structured_telemetry_run.json"
     write_json(manifest, payload)
     if validation["status"] != "pass":
-        raise RuntimeError(f"Delivery 2 validation failed: {validation['failures']}")
+        raise RuntimeError(f"Structured telemetry validation failed: {validation['failures']}")
     return payload
 
 
@@ -49,7 +49,7 @@ def main() -> None:
     args = parser.parse_args()
     config = load_config(args.config, check_inputs=False)
     scope = config.scope(args.month, args.site_bucket)
-    run_delivery2(config, scope, overwrite=args.overwrite)
+    run_structured_pipeline(config, scope, overwrite=args.overwrite)
 
 
 if __name__ == "__main__":

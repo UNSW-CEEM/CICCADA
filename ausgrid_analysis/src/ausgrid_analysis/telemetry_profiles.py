@@ -29,7 +29,7 @@ def _phase_profile_query(config: FoundationConfig, scope: SourceScope) -> str:
     source = canonical_output_path(config, scope)
     if not source.is_dir():
         raise FileNotFoundError(f"Canonical dataset is missing: {source}")
-    d2 = config.delivery2
+    d2 = config.structured_telemetry
     return f"""
         WITH c AS (
             SELECT *
@@ -94,7 +94,7 @@ def derive_site_profiles(
     """Infer candidate DER phases without silently promoting them to truth."""
 
     rows: list[dict[str, Any]] = []
-    d2 = config.delivery2
+    d2 = config.structured_telemetry
     for serial, group in phase_profiles.groupby("serial", sort=True):
         group = group.sort_values("phase").copy()
         available = group.loc[group["power_measurement_available"].fillna(False)]
@@ -179,7 +179,7 @@ def derive_site_profiles(
                 "phase_mapping_margin_ratio": margin_ratio,
                 "top_solar_signature_w": top_signature,
                 "phase_mapping_assessable": mapping_assessable,
-                "delivery2_primary_cohort": bool(
+                "solar_only_mapped_cohort": bool(
                     metadata_available
                     and cohort == "solar_only"
                     and not has_battery
@@ -238,10 +238,10 @@ def build_site_profiles(
             str(k): int(v)
             for k, v in site_frame["phase_mapping_confidence"].value_counts().items()
         },
-        "primary_cohort_sites": int(site_frame["delivery2_primary_cohort"].sum()),
+        "primary_cohort_sites": int(site_frame["solar_only_mapped_cohort"].sum()),
         "battery_sites": int(site_frame["has_battery"].sum()),
         "site_phase_profile": str(phase_path),
         "site_profile": str(site_path),
     }
-    logger.info("Delivery 2 profiles written: %s sites", summary["sites"])
+    logger.info("Structured telemetry profiles written: %s sites", summary["sites"])
     return summary

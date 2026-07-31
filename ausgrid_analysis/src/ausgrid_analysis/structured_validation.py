@@ -1,4 +1,4 @@
-"""Structural and methodological validation for Delivery 2 outputs."""
+"""Structural and methodological validation for Structured telemetry outputs."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from .config import FoundationConfig, SourceScope
 from .db import (
     canonical_output_path,
     connect,
-    delivery2_validation_path,
+    structured_validation_path,
     site_profile_path,
     structured_phase_output_path,
     structured_site_output_path,
@@ -22,7 +22,7 @@ def _glob(path) -> str:
     return str(path / "**" / "*.parquet")
 
 
-def validate_delivery2(
+def validate_structured_telemetry(
     config: FoundationConfig,
     scope: SourceScope,
 ) -> dict[str, Any]:
@@ -123,7 +123,7 @@ def validate_delivery2(
             ]
         profile_row = connection.execute(
             f"""SELECT count(*), count_if(has_battery),
-                count_if(delivery2_primary_cohort),
+                count_if(solar_only_mapped_cohort),
                 count_if(phase_mapping_confidence='high'),
                 count_if(phase_mapping_confidence='medium'),
                 count_if(phase_mapping_confidence='low'),
@@ -165,9 +165,9 @@ def validate_delivery2(
     if incomplete_nonnull:
         failures.append("incomplete DER-phase sums were converted to numbers")
     if phase_formal or site_formal:
-        failures.append("Delivery 2 incorrectly marks formal conformance assessable")
+        failures.append("Structured telemetry incorrectly marks formal conformance assessable")
     if phase_basis or site_basis:
-        failures.append("Delivery 2 contains a non-net-meter measurement basis")
+        failures.append("Structured telemetry contains a non-net-meter measurement basis")
     if unexpected_offsets:
         failures.append("local timestamp offset is not AEST/AEDT")
 
@@ -206,5 +206,5 @@ def validate_delivery2(
             "comparison_basis": "net_meter_only_no_formal_curve_comparison",
         },
     }
-    write_json(delivery2_validation_path(config, scope), payload)
+    write_json(structured_validation_path(config, scope), payload)
     return payload

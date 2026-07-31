@@ -20,12 +20,12 @@ from ausgrid_analysis.db import (
     site_profile_path,
     structured_site_output_path,
 )
-from ausgrid_analysis.delivery2_profiles import build_site_profiles
-from ausgrid_analysis.delivery2_structured import (
+from ausgrid_analysis.structured_telemetry_profiles import build_site_profiles
+from ausgrid_analysis.structured_telemetry_structured import (
     build_structured_phase,
     build_structured_site,
 )
-from ausgrid_analysis.delivery2_validation import validate_delivery2
+from ausgrid_analysis.structured_telemetry_validation import validate_structured_telemetry
 from ausgrid_analysis.metadata import metadata_output_path
 
 
@@ -92,7 +92,7 @@ def _write_inputs(config: FoundationConfig, scope: SourceScope) -> None:
     connection.close()
 
 
-def test_delivery2_structures_and_validates_without_claiming_conformance(tmp_path) -> None:
+def test_structured_telemetry_structures_and_validates_without_claiming_conformance(tmp_path) -> None:
     config = _config(tmp_path)
     scope = SourceScope(bucket_count=4)
     _write_inputs(config, scope)
@@ -100,7 +100,7 @@ def test_delivery2_structures_and_validates_without_claiming_conformance(tmp_pat
     build_site_profiles(config, scope)
     build_structured_phase(config, scope)
     build_structured_site(config, scope)
-    validation = validate_delivery2(config, scope)
+    validation = validate_structured_telemetry(config, scope)
 
     assert validation["status"] == "pass"
     assert validation["structured_phase_rows"] == 4
