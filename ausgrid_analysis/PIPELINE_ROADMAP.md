@@ -34,21 +34,27 @@ solar-resource and uncurtailed-power estimates, and visualise model diagnostics.
 
 This delivery remains optional until irradiance suitability is established.
 
-## Delivery 4 — mechanism result tables
+## Mechanism result tables
 
-Planned notebook: `notebooks/04_build_conformance_results.ipynb`
+Notebook: `notebooks/04_build_mechanism_results.ipynb`
 
-Build test-slice and full result tables for Volt-VAr, Volt-Watt, response
-observability and counterfactual-supported curtailment. Every result table will
-have denominator, uniqueness, coverage and provenance checks.
+Run an empirical P/Q sign review, verify Python/SQL curve parity, and build
+separate Volt-VAr net-meter-proxy, Volt-Watt net-meter-proxy and response-
+observability tables as deterministic-slice and deliberate full runs. Validate
+denominators, result keys, coverage and provenance. Magnitude results use only
+verified `s_rated_kva`; absent ratings remain `not_assessable`. Counterfactual-
+supported curtailment is not built while methodology gate 7 is unmet.
 
-## Delivery 5 — results analysis
+## Results analysis
 
-Planned notebook: `notebooks/05_results_analysis.ipynb`
+Planned notebook: `notebooks/05_analyse_mechanism_results.ipynb`
 
-Read and visualise Volt-VAr and Volt-Watt conformance and curtailment results at
-fleet, site, phase, voltage, month and cohort levels. Keep conformance,
-observability and counterfactual-supported curtailment as separate questions.
+Read and visualise Volt-VAr proxy results, Volt-Watt proxy results and response
+observability independently at fleet, site, phase, voltage, month and cohort
+levels. Do not blend conformance, observability or future counterfactual-
+supported curtailment into one score. Until a curtailment method is explicitly
+chosen and validated, show it as unavailable.
+
 
 ## Irradiance and decomposition
 

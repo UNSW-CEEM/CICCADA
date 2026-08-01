@@ -20,12 +20,12 @@ from ausgrid_analysis.db import (
     site_profile_path,
     structured_site_output_path,
 )
-from ausgrid_analysis.structured_telemetry_profiles import build_site_profiles
-from ausgrid_analysis.structured_telemetry_structured import (
+from ausgrid_analysis.telemetry_profiles import build_site_profiles
+from ausgrid_analysis.structured_intervals import (
     build_structured_phase,
     build_structured_site,
 )
-from ausgrid_analysis.structured_telemetry_validation import validate_structured_telemetry
+from ausgrid_analysis.structured_validation import validate_structured_telemetry
 from ausgrid_analysis.metadata import metadata_output_path
 
 

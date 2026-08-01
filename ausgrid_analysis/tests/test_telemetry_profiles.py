@@ -14,7 +14,7 @@ from ausgrid_analysis.config import (
     QualityConfig,
     TelemetryConfig,
 )
-from ausgrid_analysis.structure_telemetry_profiles import derive_site_profiles
+from ausgrid_analysis.telemetry_profiles import derive_site_profiles
 
 
 def _config(tmp_path: Path) -> FoundationConfig:

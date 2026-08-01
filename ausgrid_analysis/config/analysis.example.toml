@@ -39,3 +39,15 @@ threads = 4
 memory_limit = "8GB"
 parquet_compression = "zstd"
 
+# Append this table to config/analysis.example.toml.
+[mechanism_analysis]
+voltage_aggregate = "avg"
+capacity_basis = "s_rated_kva"
+tolerance_fraction = 0.04
+voltage_bin_width_v = 1.0
+sign_audit_month = "2025-01"
+sign_audit_site_count = 3
+minimum_response_intervals = 12
+minimum_response_voltage_span_v = 3.0
+active_sign_review_state = "unverified"
+reactive_sign_review_state = "unverified"
