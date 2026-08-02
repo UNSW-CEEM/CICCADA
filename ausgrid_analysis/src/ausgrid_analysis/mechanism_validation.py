@@ -12,6 +12,7 @@ from .db import (
     structured_site_output_path,
 )
 from .logging_utils import write_json
+from .mechanism_config import MechanismAnalysisConfig
 from .mechanism_paths import (
     mechanism_validation_path,
     response_observability_path,
@@ -28,13 +29,21 @@ def _glob(path) -> str:
 def validate_mechanism_results(
     config: FoundationConfig,
     scope: SourceScope,
+    mechanism: MechanismAnalysisConfig | None = None,
 ) -> dict[str, Any]:
-    """Validate all three Delivery 4 tables without blending their questions."""
+    """Validate all three Delivery 4 tables without blending their questions.
+
+    ``mechanism=None`` (or the default der_inferred basis) validates the
+    original, unnamespaced output location. Pass the same MechanismAnalysisConfig
+    used to build an all_phases run to validate that separate, namespaced set
+    instead -- response_observability is always the shared table (see
+    build_response_observability's docstring).
+    """
 
     site = structured_site_output_path(config, scope)
     phase = structured_phase_output_path(config, scope)
-    vv = voltvar_results_path(config, scope)
-    vw = voltwatt_results_path(config, scope)
+    vv = voltvar_results_path(config, scope, mechanism)
+    vw = voltwatt_results_path(config, scope, mechanism)
     response = response_observability_path(config, scope)
     for path in (site, phase):
         if not path.is_dir():
@@ -206,6 +215,8 @@ def validate_mechanism_results(
     payload: dict[str, Any] = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "scope": scope.label,
+        "phase_scope_basis": mechanism.phase_scope_basis if mechanism else "der_inferred",
+        "methodology_id": mechanism.methodology_id if mechanism else None,
         "status": "pass" if not failures else "fail",
         "failures": failures,
         "structured_site_rows": source_site_rows,
@@ -235,5 +246,5 @@ def validate_mechanism_results(
         "counterfactual_supported_curtailment": "not_built_gate_7_unmet",
         "monthly_coverage": monthly,
     }
-    write_json(mechanism_validation_path(config, scope), payload)
+    write_json(mechanism_validation_path(config, scope, mechanism), payload)
     return payload

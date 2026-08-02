@@ -64,19 +64,19 @@ def build_sign_diagnostics(
         raise FileNotFoundError(eligibility)
 
     candidate_path = prepare_output_file(
-        config, sign_candidate_days_path(config), overwrite=overwrite
+        config, sign_candidate_days_path(config, mechanism), overwrite=overwrite
     )
     site_path = prepare_output_file(
-        config, sign_site_intervals_path(config), overwrite=overwrite
+        config, sign_site_intervals_path(config, mechanism), overwrite=overwrite
     )
     phase_path = prepare_output_file(
-        config, sign_phase_intervals_path(config), overwrite=overwrite
+        config, sign_phase_intervals_path(config, mechanism), overwrite=overwrite
     )
 
     comparison_voltage = f"s.{mechanism.comparison_voltage_column}"
-    q_generator = q_generator_from_absorbing_sql(
-        "s.q_absorbing_der_phase_net_complete_var"
-    )
+    p_export_column = mechanism.comparison_p_column
+    q_absorbing_column = mechanism.comparison_q_absorbing_column
+    q_generator = q_generator_from_absorbing_sql(f"s.{q_absorbing_column}")
     site_relation = (
         f"read_parquet({sql_string(_glob(site_root))}, hive_partitioning=true)"
     )
@@ -98,15 +98,15 @@ def build_sign_diagnostics(
                 max({comparison_voltage}) AS maximum_voltage_v,
                 count_if(
                     {comparison_voltage} BETWEEN 253.0 AND 258.0
-                    AND s.p_export_der_phase_net_complete_w > 0
+                    AND s.{p_export_column} > 0
                 ) AS n_high_voltage_export_intervals,
-                max(s.p_export_der_phase_net_complete_w) AS maximum_export_w
+                max(s.{p_export_column}) AS maximum_export_w
             FROM {site_relation} s
             JOIN {eligibility_relation} e USING (serial)
             WHERE s.year_utc = {year}
               AND s.month_utc = {month}
               AND {_core_site_gate_sql("e")}
-              AND s.der_phase_power_complete
+              AND {mechanism.power_scope_complete_sql}
               AND {comparison_voltage} IS NOT NULL
             GROUP BY s.serial, s.local_date
             HAVING maximum_voltage_v >= 253.0
@@ -160,10 +160,10 @@ def build_sign_diagnostics(
             s.voltage_a_v,
             s.voltage_b_v,
             s.voltage_c_v,
-            s.p_export_der_phase_net_complete_w AS p_export_net_proxy_w,
-            s.q_absorbing_der_phase_net_complete_var AS q_absorbing_net_proxy_var,
+            s.{p_export_column} AS p_export_net_proxy_w,
+            s.{q_absorbing_column} AS q_absorbing_net_proxy_var,
             {q_generator} AS q_generator_net_proxy_var,
-            s.der_phase_power_complete,
+            {mechanism.power_scope_complete_sql} AS power_scope_complete,
             {sql_string(mechanism.voltage_basis_label)} AS voltage_basis,
             'net_meter_proxy' AS measurement_basis,
             'revenue_meter' AS voltage_measurement_location

@@ -34,6 +34,63 @@ def test_voltage_and_capacity_choices_are_restricted() -> None:
         ).validate()
 
 
+def test_phase_scope_basis_is_restricted_and_defaults_der_inferred() -> None:
+    default = MechanismAnalysisConfig().validate()
+    assert default.phase_scope_basis == "der_inferred"
+    assert default.comparison_p_column == "p_export_der_phase_net_complete_w"
+    assert default.comparison_q_absorbing_column == (
+        "q_absorbing_der_phase_net_complete_var"
+    )
+    assert default.power_scope_complete_sql == "s.der_phase_power_complete"
+    assert default.phase_scope_sql == "coalesce(e.inferred_der_phases, 'unmapped')"
+    # methodology_id must be unchanged from before phase_scope_basis existed,
+    # so every already-built der_inferred output stays reusable/comparable.
+    assert "__phase_" not in default.methodology_id
+
+    all_phases = MechanismAnalysisConfig(phase_scope_basis="all_phases").validate()
+    assert all_phases.comparison_p_column == "p_export_net_observed_w"
+    assert all_phases.comparison_q_absorbing_column == "q_absorbing_net_observed_var"
+    assert all_phases.power_scope_complete_sql == (
+        "(s.measured_power_phase_rows = s.observed_phase_rows "
+        "AND s.observed_phase_rows > 0)"
+    )
+    assert all_phases.phase_scope_sql == "'all_phases'"
+    assert "__phase_all_phases__" in all_phases.methodology_id
+    assert all_phases.methodology_id != default.methodology_id
+
+    with pytest.raises(ValueError, match="phase_scope_basis"):
+        MechanismAnalysisConfig(phase_scope_basis="single_phase_only").validate()
+
+
+def test_phase_scope_basis_namespaces_only_the_non_default_path(tmp_path) -> None:
+    from ausgrid_analysis.config import (
+        AssumptionConfig, FoundationConfig, MetadataConfig, PathConfig,
+        ProcessingConfig, QualityConfig, TelemetryConfig,
+    )
+    from ausgrid_analysis.mechanism_paths import voltvar_results_path
+
+    config = FoundationConfig(
+        paths=PathConfig(tmp_path / "raw.parquet", tmp_path / "meta.xlsx", tmp_path / "derived"),
+        metadata=MetadataConfig("Sheet1", "ID"),
+        telemetry=TelemetryConfig("serial", "time", "phase", "voltage", "current", "q", "p", "month", "file"),
+        assumptions=AssumptionConfig(-1, -1, "UTC", "Australia/Sydney", "instantaneous", "revenue_meter"),
+        quality=QualityConfig(0.0, 300.0, 1e-6),
+        processing=ProcessingConfig(4, 1, "1GB", "zstd"),
+    )
+    scope = config.scope(None, None)
+    default_path = voltvar_results_path(config, scope)
+    explicit_default_path = voltvar_results_path(
+        config, scope, MechanismAnalysisConfig()
+    )
+    all_phases_path = voltvar_results_path(
+        config, scope, MechanismAnalysisConfig(phase_scope_basis="all_phases")
+    )
+    assert default_path == explicit_default_path
+    assert all_phases_path != default_path
+    assert "phase_scope_all_phases" in str(all_phases_path)
+    assert "phase_scope_all_phases" not in str(default_path)
+
+
 def test_signs_must_be_independently_ready() -> None:
     config = MechanismAnalysisConfig(
         active_sign_review_state=(

@@ -82,10 +82,12 @@ def _base_site_sql(
 ) -> str:
     site, _, eligibility = _check_inputs(config, scope)
     voltage = f"s.{mechanism.comparison_voltage_column}"
+    p_export = f"s.{mechanism.comparison_p_column}"
+    q_absorbing = f"s.{mechanism.comparison_q_absorbing_column}"
     # This is the one site-level conversion from the persisted positive-
     # absorbing source.  It cross-references schemas.normalize_reactive_power.
     q_generator = q_generator_from_absorbing_sql(
-        "s.q_absorbing_der_phase_net_complete_var"
+        f"s.{mechanism.comparison_q_absorbing_column}"
     )
     width = mechanism.voltage_bin_width_v
     return f"""
@@ -95,7 +97,7 @@ def _base_site_sql(
             s.timestamp_local,
             s.year_utc,
             s.month_utc,
-            coalesce(e.inferred_der_phases, 'unmapped') AS phase_scope,
+            {mechanism.phase_scope_sql} AS phase_scope,
             {voltage} AS comparison_voltage_v,
             CASE WHEN {voltage} IS NOT NULL
                 THEN floor({voltage} / {width}) * {width}
@@ -103,13 +105,16 @@ def _base_site_sql(
             s.der_voltage_min_valid_v,
             s.der_voltage_mean_valid_v,
             s.der_voltage_max_valid_v,
+            s.voltage_min_valid_v,
+            s.voltage_mean_valid_v,
+            s.voltage_max_valid_v,
             s.voltage_a_v,
             s.voltage_b_v,
             s.voltage_c_v,
-            s.p_export_der_phase_net_complete_w AS p_export_net_proxy_w,
-            s.q_absorbing_der_phase_net_complete_var AS q_absorbing_net_proxy_var,
+            {p_export} AS p_export_net_proxy_w,
+            {q_absorbing} AS q_absorbing_net_proxy_var,
             {q_generator} AS q_generator_net_proxy_var,
-            s.der_phase_power_complete,
+            {mechanism.power_scope_complete_sql} AS power_scope_complete,
             ({_core_site_gate_sql("e")}) AS site_eligible,
             e.analysis_cohort,
             coalesce(e.has_battery, false) AS has_battery,
@@ -156,7 +161,7 @@ def _voltvar_sql(
             CASE
                 WHEN NOT site_eligible THEN 'ineligible_site'
                 WHEN comparison_voltage_v IS NULL
-                  OR NOT der_phase_power_complete
+                  OR NOT power_scope_complete
                   OR p_export_net_proxy_w IS NULL
                   OR q_generator_net_proxy_var IS NULL THEN 'missing_input'
                 WHEN comparison_voltage_v BETWEEN {VOLT_VAR.v2} AND {VOLT_VAR.v3}
@@ -285,7 +290,7 @@ def _voltwatt_sql(
             CASE
                 WHEN NOT site_eligible THEN 'ineligible_site'
                 WHEN comparison_voltage_v IS NULL
-                  OR NOT der_phase_power_complete
+                  OR NOT power_scope_complete
                   OR p_export_net_proxy_w IS NULL THEN 'missing_input'
                 WHEN comparison_voltage_v <= {VOLT_WATT.v1} THEN 'not_activated'
                 WHEN NOT {sign_ready} THEN 'sign_unverified'
@@ -532,7 +537,7 @@ def build_voltvar_results(
     """Build Volt-VAr proxy results; absent verified capacity stays unassessable."""
 
     mechanism.validate()
-    output = voltvar_results_path(config, scope)
+    output = voltvar_results_path(config, scope, mechanism)
     rows = _copy_query(
         config, _voltvar_sql(config, scope, mechanism), output, overwrite=overwrite
     )
@@ -549,7 +554,7 @@ def build_voltwatt_results(
     """Build Volt-Watt proxy results without claiming below-ceiling conformance."""
 
     mechanism.validate()
-    output = voltwatt_results_path(config, scope)
+    output = voltwatt_results_path(config, scope, mechanism)
     rows = _copy_query(
         config, _voltwatt_sql(config, scope, mechanism), output, overwrite=overwrite
     )
@@ -563,7 +568,13 @@ def build_response_observability(
     *,
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Build independent phase-month response-observability diagnostics."""
+    """Build independent phase-month response-observability diagnostics.
+
+    Deliberately not namespaced by phase_scope_basis: this table already
+    reports every actual telemetry phase (DER-inferred or not, tagged via
+    is_inferred_der_phase in the status columns), so it is unaffected by the
+    Volt-VAr/Volt-Watt phase-scope choice and stays a single shared table.
+    """
 
     mechanism.validate()
     output = response_observability_path(config, scope)

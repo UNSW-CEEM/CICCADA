@@ -62,11 +62,14 @@ def _write_inputs(config: FoundationConfig) -> None:
     site = pd.DataFrame(
         [
             ["rated", utc_a, repeated_local, 2025, 4, 254.0, 253.0, 253.5,
-             254.0, 253.0, None, 4000.0, 1000.0, True],
+             254.0, 253.0, None, 4000.0, 1000.0, True,
+             254.0, 253.0, 253.5, 4000.0, 1000.0, 1, 1],
             ["rated", utc_b, repeated_local, 2025, 4, 260.0, 258.0, 259.0,
-             260.0, 258.0, 260.0, 2000.0, 3000.0, True],
+             260.0, 258.0, 260.0, 2000.0, 3000.0, True,
+             260.0, 258.0, 259.333333, 2000.0, 3000.0, 2, 2],
             ["unrated", utc_a, repeated_local, 2025, 4, 255.0, 254.0, 254.5,
-             255.0, None, None, 3000.0, 1500.0, True],
+             255.0, None, None, 3000.0, 1500.0, True,
+             255.0, 254.0, 254.5, 3000.0, 1500.0, 1, 1],
         ],
         columns=[
             "serial", "timestamp_utc", "timestamp_local", "year_utc",
@@ -76,6 +79,12 @@ def _write_inputs(config: FoundationConfig) -> None:
             "p_export_der_phase_net_complete_w",
             "q_absorbing_der_phase_net_complete_var",
             "der_phase_power_complete",
+            # all_phases-basis equivalents (phase_scope_basis="all_phases"
+            # is not exercised by this test, but the columns must exist --
+            # production data always carries both column sets).
+            "voltage_max_valid_v", "voltage_min_valid_v", "voltage_mean_valid_v",
+            "p_export_net_observed_w", "q_absorbing_net_observed_var",
+            "observed_phase_rows", "measured_power_phase_rows",
         ],
     )
     phase = pd.DataFrame(

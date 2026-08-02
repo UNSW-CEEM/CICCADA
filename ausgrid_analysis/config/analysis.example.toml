@@ -42,6 +42,10 @@ parquet_compression = "zstd"
 # Append this table to config/analysis.example.toml.
 [mechanism_analysis]
 voltage_aggregate = "avg"
+# der_inferred (default) = DER-mapped phase(s) only; all_phases = every
+# phase regardless of DER mapping, a named sensitivity/comparison track.
+# See docs/MECHANISM_RESULTS.md.
+phase_scope_basis = "der_inferred"
 capacity_basis = "s_rated_kva"
 tolerance_fraction = 0.04
 voltage_bin_width_v = 1.0
