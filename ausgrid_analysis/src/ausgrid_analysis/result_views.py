@@ -99,12 +99,28 @@ VOLTWATT_DENOMINATOR_COLUMNS: tuple[str, ...] = (
 )
 
 VOLTVAR_STATUS_COLUMNS: tuple[str, ...] = (
-    "n_proxy_within_curve_band",
-    "n_proxy_q_adverse",
-    "n_proxy_q_inactive",
-    "n_proxy_q_significant_shortfall",
-    "n_proxy_q_near_conformant",
-    "n_proxy_q_major_surplus",
+    "n_conformant",
+    "n_adverse",
+    "n_inactive",
+    "n_major_deficit",
+    "n_minor_deviation",
+    "n_major_surplus",
+)
+
+# Reviewed project conformance methodology (not a code-derived split -- a
+# deliberate business rule): non-conformance groups 'wrong direction', 'no
+# response' and 'not enough response'; conformance groups 'exactly on
+# curve', 'close enough' and 'more than required'. Both are always reported
+# alongside the six raw buckets, never in place of them.
+VOLTVAR_NON_CONFORMANCE_COLUMNS: tuple[str, ...] = (
+    "n_adverse",
+    "n_inactive",
+    "n_major_deficit",
+)
+VOLTVAR_CONFORMANCE_COLUMNS: tuple[str, ...] = (
+    "n_conformant",
+    "n_minor_deviation",
+    "n_major_surplus",
 )
 
 VOLTWATT_STATUS_COLUMNS: tuple[str, ...] = (
@@ -490,7 +506,66 @@ def voltvar_status_view(
     """
     frame = _run_query(config, query)
     frame = _add_fractions(frame, "n_assessable", VOLTVAR_STATUS_COLUMNS, "assessable")
+    frame["n_conformance"] = frame[list(VOLTVAR_CONFORMANCE_COLUMNS)].sum(axis=1)
+    frame["n_non_conformance"] = frame[list(VOLTVAR_NON_CONFORMANCE_COLUMNS)].sum(axis=1)
+    frame = _add_fractions(
+        frame, "n_assessable", ("n_conformance", "n_non_conformance"), "assessable"
+    )
     frame["low_denominator_warning"] = frame["n_assessable"] < minimum_denominator
+    return frame
+
+
+def voltvar_site_conformance_view(
+    config: FoundationConfig,
+    scope: SourceScope,
+    *,
+    mechanism: MechanismAnalysisConfig | None = None,
+    conformance_threshold: float = 0.5,
+) -> pd.DataFrame:
+    """Per-site conformance rollup: is *this site's own* majority of
+    assessable Volt-VAr intervals conformant or not, using the same
+    conformance/non-conformance grouping as ``voltvar_status_view``
+    (conformance = conformant + minor_deviation + major_surplus;
+    non-conformance = adverse + inactive + major_deficit).
+
+    A site with zero assessable intervals (e.g. every row is
+    ``capacity_unavailable`` under this track) is reported as
+    ``site_status='not_assessable'`` -- it is never silently folded into
+    "non-conformant". ``conformance_threshold`` (default 0.5, strict
+    majority of that site's own assessable intervals) is a deliberate,
+    explicit judgment call, not a derived constant -- change it per caller
+    if a different rule is wanted.
+    """
+
+    path = _require_file(
+        voltvar_results_path(config, scope, mechanism), "Volt-VAr proxy results"
+    )
+    sum_cols = ",\n            ".join(
+        f"sum({c}) AS {c}" for c in ("n_assessable", *VOLTVAR_STATUS_COLUMNS)
+    )
+    query = f"""
+        SELECT serial, {sum_cols}
+        FROM read_parquet({sql_string(str(path))})
+        GROUP BY serial
+        ORDER BY serial
+    """
+    frame = _run_query(config, query)
+    frame["n_conformance"] = frame[list(VOLTVAR_CONFORMANCE_COLUMNS)].sum(axis=1)
+    frame["n_non_conformance"] = frame[list(VOLTVAR_NON_CONFORMANCE_COLUMNS)].sum(axis=1)
+
+    n_assessable = frame["n_assessable"].astype("Float64")
+    safe_denominator = n_assessable.mask(n_assessable == 0)
+    frame["conformance_fraction"] = (
+        frame["n_conformance"].astype("Float64") / safe_denominator
+    )
+
+    assessable_mask = frame["n_assessable"] > 0
+    site_status = pd.Series("not_assessable", index=frame.index, dtype="object")
+    site_status.loc[assessable_mask] = frame.loc[assessable_mask, "conformance_fraction"].apply(
+        lambda fraction: "conformant" if fraction >= conformance_threshold else "non_conformant"
+    )
+    frame["site_status"] = site_status
+    frame["conformance_threshold"] = conformance_threshold
     return frame
 
 
@@ -555,6 +630,86 @@ def voltwatt_status_view(
     frame = _add_fractions(frame, "n_assessable", VOLTWATT_STATUS_COLUMNS, "assessable")
     frame["low_denominator_warning"] = frame["n_assessable"] < minimum_denominator
     return frame
+
+
+def fleet_summary_view(
+    config: FoundationConfig,
+    scope: SourceScope,
+    *,
+    mechanism_name: str,
+    mechanism: MechanismAnalysisConfig | None = None,
+) -> pd.Series:
+    """One-row fleet-level KPI summary for a Volt-VAr or Volt-Watt track.
+
+    Reports: sites analysed (eligible: solar_only, no battery, no controlled
+    load, high-confidence phase mapping, full power coverage -- see
+    ``core_site_gate_sql``), total timestamps analysed, sites/timestamps
+    that crossed the mechanism's activation threshold ("required a
+    response"), and -- Volt-VAr only -- timestamps where a response was
+    actually observed (``proxy_curve_status != 'inactive'`` among assessable
+    rows, i.e. ``n_responded`` on the Volt-VAr table).
+
+    Volt-Watt has no analogous "had a response" figure and this function
+    deliberately does not fabricate one: being below the Volt-Watt ceiling
+    is not evidence of curtailment (there is no counterfactual P to compare
+    against -- see the table's own ``interpretation_guardrail`` column), so
+    ``n_timestamps_with_response``/``pct_timestamps_with_response`` are
+    returned as ``None`` for Volt-Watt.
+    """
+
+    is_voltwatt = (
+        mechanism_name.lower().startswith("volt-watt")
+        or mechanism_name.lower().startswith("voltwatt")
+    )
+    path_fn = voltwatt_results_path if is_voltwatt else voltvar_results_path
+    path = _require_file(path_fn(config, scope, mechanism), f"{mechanism_name} proxy results")
+    query = f"""
+        WITH per_site AS (
+            SELECT serial,
+                sum(n_source_intervals) AS n_source_intervals,
+                sum(n_ineligible_site) AS n_ineligible_site,
+                sum(n_source_intervals - n_ineligible_site - n_missing_input - n_not_activated)
+                    AS n_requiring_response
+            FROM read_parquet({sql_string(str(path))})
+            GROUP BY serial
+        )
+        SELECT
+            coalesce(count(DISTINCT serial) FILTER (WHERE n_ineligible_site = 0), 0)
+                AS n_sites_analyzed,
+            coalesce(sum(n_source_intervals) FILTER (WHERE n_ineligible_site = 0), 0)
+                AS n_timestamps_analyzed,
+            coalesce(count(DISTINCT serial) FILTER (WHERE n_requiring_response > 0), 0)
+                AS n_sites_requiring_response,
+            coalesce(sum(n_requiring_response), 0) AS n_timestamps_requiring_response
+        FROM per_site
+    """
+    summary = _run_query(config, query).iloc[0]
+    n_requiring = int(summary["n_timestamps_requiring_response"])
+
+    n_with_response: int | None = None
+    if not is_voltwatt:
+        responded = _run_query(
+            config,
+            f"SELECT coalesce(sum(n_responded), 0) AS n "
+            f"FROM read_parquet({sql_string(str(path))})",
+        ).iloc[0]
+        n_with_response = int(responded["n"])
+
+    return pd.Series(
+        {
+            "mechanism": mechanism_name,
+            "n_sites_analyzed": int(summary["n_sites_analyzed"]),
+            "n_timestamps_analyzed": int(summary["n_timestamps_analyzed"]),
+            "n_sites_requiring_response": int(summary["n_sites_requiring_response"]),
+            "n_timestamps_requiring_response": n_requiring,
+            "n_timestamps_with_response": n_with_response,
+            "pct_timestamps_with_response": (
+                round(100.0 * n_with_response / n_requiring, 2)
+                if n_with_response is not None and n_requiring
+                else None
+            ),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

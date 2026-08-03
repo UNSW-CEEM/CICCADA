@@ -264,17 +264,29 @@ def _voltvar_sql(
         FROM bands
     ),
     classified AS (
+        -- Q_impact = signed ratio of measured generator-convention Q to the
+        -- nearest edge of the tolerance-clamped required band (effectively
+        -- Q_kvar / Q_voltvar, sign-adjusted for direction match -- see
+        -- q_impact_nearest_edge_sql). Every assessable row is classified
+        -- into exactly one of six buckets: 'conformant' when measured Q
+        -- falls inside the tolerance-clamped required band itself, else one
+        -- of five Q_IMPACT_THRESHOLDS buckets describing how far outside
+        -- the band it fell and in which direction. This mirrors the
+        -- reviewed project conformance methodology: non-conformance is
+        -- adverse + inactive + major_deficit; conformance is
+        -- conformant + minor_deviation + major_surplus (see
+        -- result_views.voltvar_status_view's conformance rollup columns).
         SELECT *,
             CASE
                 WHEN denominator_status <> 'assessable' THEN denominator_status
                 WHEN q_generator_net_proxy_var BETWEEN q_min_final_var
                                                    AND q_max_final_var
-                    THEN 'proxy_within_curve_band'
-                WHEN q_impact < {threshold_1} THEN 'proxy_q_adverse'
-                WHEN q_impact <= {threshold_2} THEN 'proxy_q_inactive'
-                WHEN q_impact < {threshold_3} THEN 'proxy_q_significant_shortfall'
-                WHEN q_impact <= {threshold_4} THEN 'proxy_q_near_conformant'
-                ELSE 'proxy_q_major_surplus'
+                    THEN 'conformant'
+                WHEN q_impact < {threshold_1} THEN 'adverse'
+                WHEN q_impact <= {threshold_2} THEN 'inactive'
+                WHEN q_impact < {threshold_3} THEN 'major_deficit'
+                WHEN q_impact <= {threshold_4} THEN 'minor_deviation'
+                ELSE 'major_surplus'
             END AS proxy_curve_status
         FROM scored
     )
@@ -300,16 +312,14 @@ def _voltvar_sql(
         count_if(denominator_status = 'below_minimum_active_power')
             AS n_below_minimum_active_power,
         count_if(denominator_status = 'assessable') AS n_assessable,
-        count_if(proxy_curve_status = 'proxy_within_curve_band')
-            AS n_proxy_within_curve_band,
-        count_if(proxy_curve_status = 'proxy_q_adverse') AS n_proxy_q_adverse,
-        count_if(proxy_curve_status = 'proxy_q_inactive') AS n_proxy_q_inactive,
-        count_if(proxy_curve_status = 'proxy_q_significant_shortfall')
-            AS n_proxy_q_significant_shortfall,
-        count_if(proxy_curve_status = 'proxy_q_near_conformant')
-            AS n_proxy_q_near_conformant,
-        count_if(proxy_curve_status = 'proxy_q_major_surplus')
-            AS n_proxy_q_major_surplus,
+        count_if(proxy_curve_status = 'conformant') AS n_conformant,
+        count_if(proxy_curve_status = 'adverse') AS n_adverse,
+        count_if(proxy_curve_status = 'inactive') AS n_inactive,
+        count_if(proxy_curve_status = 'major_deficit') AS n_major_deficit,
+        count_if(proxy_curve_status = 'minor_deviation') AS n_minor_deviation,
+        count_if(proxy_curve_status = 'major_surplus') AS n_major_surplus,
+        count_if(denominator_status = 'assessable' AND proxy_curve_status <> 'inactive')
+            AS n_responded,
         avg(q_impact) FILTER (WHERE denominator_status = 'assessable')
             AS mean_q_impact,
         {sql_string(mechanism.methodology_id)} AS methodology_id,

@@ -84,12 +84,12 @@ def validate_mechanism_results(
                 ), 0) AS denominator_difference,
                 coalesce(sum(
                     n_assessable
-                    - n_proxy_within_curve_band
-                    - n_proxy_q_adverse
-                    - n_proxy_q_inactive
-                    - n_proxy_q_significant_shortfall
-                    - n_proxy_q_near_conformant
-                    - n_proxy_q_major_surplus
+                    - n_conformant
+                    - n_adverse
+                    - n_inactive
+                    - n_major_deficit
+                    - n_minor_deviation
+                    - n_major_surplus
                 ), 0) AS classification_difference,
                 (SELECT coalesce(sum(n - 1), 0) FROM (
                     SELECT count(*) n

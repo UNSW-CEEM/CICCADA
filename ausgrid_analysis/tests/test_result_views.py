@@ -74,12 +74,13 @@ def _voltvar_row(**overrides) -> dict:
         n_capacity_unavailable=0,
         n_below_minimum_active_power=0,
         n_assessable=10,
-        n_proxy_within_curve_band=6,
-        n_proxy_q_adverse=1,
-        n_proxy_q_inactive=1,
-        n_proxy_q_significant_shortfall=1,
-        n_proxy_q_near_conformant=1,
-        n_proxy_q_major_surplus=0,
+        n_conformant=5,
+        n_adverse=1,
+        n_inactive=1,
+        n_major_deficit=1,
+        n_minor_deviation=1,
+        n_major_surplus=1,
+        n_responded=9,
         mean_q_impact=0.1,
         methodology_id=_DEFAULT_METHODOLOGY_ID,
         measurement_basis="net_meter_proxy",
@@ -183,12 +184,13 @@ def views(tmp_path):
             n_source_intervals=5,
             n_ineligible_site=5,
             n_assessable=0,
-            n_proxy_within_curve_band=0,
-            n_proxy_q_adverse=0,
-            n_proxy_q_inactive=0,
-            n_proxy_q_significant_shortfall=0,
-            n_proxy_q_near_conformant=0,
-            n_proxy_q_major_surplus=0,
+            n_conformant=0,
+            n_adverse=0,
+            n_inactive=0,
+            n_major_deficit=0,
+            n_minor_deviation=0,
+            n_major_surplus=0,
+            n_responded=0,
             mean_q_impact=None,
         ),
     ]
@@ -275,7 +277,7 @@ def test_validate_result_views_catches_a_broken_classification(tmp_path) -> None
     config = _config(tmp_path)
     scope = config.scope(None, None)
     mechanism = MechanismAnalysisConfig().validate()
-    broken = _voltvar_row(n_assessable=10, n_proxy_within_curve_band=3)  # 3 != 10
+    broken = _voltvar_row(n_assessable=10, n_adverse=3)  # 5+3+1+1+1+1=12 != 10
     _write_parquet([broken], voltvar_results_path(config, scope, mechanism))
     _write_parquet([_voltwatt_row()], voltwatt_results_path(config, scope, mechanism))
     _write_parquet([_response_row()], response_observability_path(config, scope))

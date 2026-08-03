@@ -54,15 +54,35 @@ DENOMINATOR_LABELS: dict[str, str] = {
 }
 
 STATUS_LABELS: dict[str, str] = {
-    "n_proxy_within_curve_band": "proxy_within_curve_band",
-    "n_proxy_q_adverse": "proxy_q_adverse",
-    "n_proxy_q_inactive": "proxy_q_inactive",
-    "n_proxy_q_significant_shortfall": "proxy_q_significant_shortfall",
-    "n_proxy_q_near_conformant": "proxy_q_near_conformant",
-    "n_proxy_q_major_surplus": "proxy_q_major_surplus",
+    "n_conformant": "Conformant",
+    "n_adverse": "Adverse",
+    "n_inactive": "Inactive",
+    "n_major_deficit": "Major deficit",
+    "n_minor_deviation": "Minor deviation",
+    "n_major_surplus": "Major surplus",
+    "n_non_conformance": "Non-conformance",
+    "n_conformance": "Conformance",
     "n_proxy_exceeds_curve_ceiling": "proxy_exceeds_curve_ceiling",
     "n_proxy_does_not_exceed_curve_ceiling": "proxy_does_not_exceed_curve_ceiling",
 }
+
+# Left-to-right order for the Volt-VAr 6-bucket Q_impact scheme, grouped by
+# the reviewed conformance methodology: the first three are the
+# non-conformance group (wrong direction / no response / not enough
+# response), the last three are the conformance group (exactly on curve /
+# close enough / more than required). plot_voltvar_classification_by_track
+# draws a divider between the two groups using this split.
+VOLTVAR_NON_CONFORMANCE_ORDER: tuple[str, ...] = (
+    "n_adverse",
+    "n_inactive",
+    "n_major_deficit",
+)
+VOLTVAR_CONFORMANCE_ORDER: tuple[str, ...] = (
+    "n_conformant",
+    "n_minor_deviation",
+    "n_major_surplus",
+)
+VOLTVAR_STATUS_ORDER: tuple[str, ...] = VOLTVAR_NON_CONFORMANCE_ORDER + VOLTVAR_CONFORMANCE_ORDER
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +295,163 @@ def plot_status_breakdown(
         minimum_denominator=minimum_denominator,
         ax=ax,
     )
+
+
+def voltvar_classification_counts_by_track(
+    status_frames: Mapping[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """Raw interval counts (not fractions) for the 6-bucket classification,
+    one row per bucket, one column per track -- the number-of-timestamps
+    table to sit next to ``plot_voltvar_classification_by_track``'s
+    fraction-based chart.
+
+    ``status_frames`` maps track name -> a single-row frame from
+    ``voltvar_status_view(config, scope, mechanism=...)`` (no
+    ``dimensions``, i.e. the fleet total for that track).
+    """
+
+    rows = []
+    for track_name, frame in status_frames.items():
+        if frame is None or frame.empty:
+            continue
+        totals = frame.iloc[0]
+        for column in VOLTVAR_STATUS_ORDER:
+            rows.append(
+                {
+                    "track": track_name,
+                    "bucket": STATUS_LABELS[column],
+                    "n_intervals": int(totals.get(column, 0) or 0),
+                }
+            )
+    if not rows:
+        return pd.DataFrame(columns=["bucket"]).set_index("bucket")
+    counts = pd.DataFrame(rows).pivot(index="bucket", columns="track", values="n_intervals")
+    return counts.reindex([STATUS_LABELS[c] for c in VOLTVAR_STATUS_ORDER])
+
+
+def plot_voltvar_classification_by_track(
+    status_frames: Mapping[str, pd.DataFrame],
+    *,
+    ax: Axes | None = None,
+) -> Axes:
+    """One simple grouped bar chart: Q_impact classification x track.
+
+    ``status_frames`` maps track name -> a single-row frame from
+    ``voltvar_status_view(config, scope, mechanism=...)`` (no ``dimensions``,
+    i.e. the fleet total for that track). Each bar group is one of the six
+    buckets (Adverse/Inactive/Major deficit | Conformant/Minor deviation/
+    Major surplus); a vertical divider marks the reviewed
+    non-conformance/conformance split. Bars within a group are the tracks,
+    coloured consistently. This panel shows *fractions* of n_assessable --
+    call ``voltvar_classification_counts_by_track`` for the underlying
+    timestamp counts. Deliberately a single flat panel rather than one
+    subplot per track -- start simple, add facets later only if needed.
+    """
+
+    ax = _new_axes(ax, figsize=(9.5, 4.5))
+    rows = []
+    for track_name, frame in status_frames.items():
+        if frame is None or frame.empty:
+            continue
+        totals = frame.iloc[0]
+        n_assessable = float(totals.get("n_assessable", 0) or 0)
+        for column in VOLTVAR_STATUS_ORDER:
+            count = float(totals.get(column, 0) or 0)
+            rows.append(
+                {
+                    "track": track_name,
+                    "bucket": STATUS_LABELS[column],
+                    "fraction": (count / n_assessable) if n_assessable else float("nan"),
+                    "n_assessable": n_assessable,
+                }
+            )
+    if not rows:
+        return _empty_panel(ax, "No status frames provided -- nothing to plot")
+
+    plot_frame = pd.DataFrame(rows)
+    pivot = plot_frame.pivot(index="bucket", columns="track", values="fraction")
+    pivot = pivot.reindex([STATUS_LABELS[c] for c in VOLTVAR_STATUS_ORDER])
+    pivot.plot.bar(ax=ax, width=0.8)
+    ax.set_ylabel("fraction of n_assessable (timestamps)")
+    ax.set_xlabel("Q_impact classification (sign x Q_kvar / Q_voltvar)")
+    ax.set_title("Volt-VAr Q_impact classification by track", pad=22)
+    ax.tick_params(axis="x", rotation=0)
+    ax.legend(title="track", fontsize=8)
+    # Divider between the non-conformance group (first 3 bars) and the
+    # conformance group (last 3) -- reviewed methodology, see
+    # result_views.VOLTVAR_NON_CONFORMANCE_COLUMNS/VOLTVAR_CONFORMANCE_COLUMNS.
+    ax.axvline(len(VOLTVAR_NON_CONFORMANCE_ORDER) - 0.5, color="black", linewidth=1.0, linestyle="--")
+    ax.text(
+        (len(VOLTVAR_NON_CONFORMANCE_ORDER) - 1) / 2, 1.07, "non-conformance",
+        transform=ax.get_xaxis_transform(), ha="center", fontsize=8, color="firebrick",
+    )
+    ax.text(
+        len(VOLTVAR_NON_CONFORMANCE_ORDER) + (len(VOLTVAR_CONFORMANCE_ORDER) - 1) / 2, 1.07,
+        "conformance", transform=ax.get_xaxis_transform(), ha="center", fontsize=8, color="darkgreen",
+    )
+
+    n_by_track = plot_frame.drop_duplicates("track").set_index("track")["n_assessable"]
+    caption = " | ".join(f"{t}: n_assessable={int(n):,}" for t, n in n_by_track.items())
+    ax.text(
+        0.0, -0.22, caption, transform=ax.transAxes,
+        fontsize=7, color="dimgray", ha="left", va="top",
+    )
+    return ax
+
+
+def plot_voltwatt_classification_by_track(
+    status_frames: Mapping[str, pd.DataFrame],
+    *,
+    ax: Axes | None = None,
+) -> Axes:
+    """One simple grouped bar chart: Volt-Watt curve status x track.
+
+    ``status_frames`` maps track name -> a single-row frame from
+    ``voltwatt_status_view(config, scope, mechanism=...)`` (no
+    ``dimensions``, i.e. the fleet total for that track). Mirrors
+    ``plot_voltvar_classification_by_track``'s layout, but never relabels
+    ``proxy_does_not_exceed_curve_ceiling`` as conformance -- household load
+    can suppress net export below the ceiling regardless of inverter
+    behaviour, so both raw status names are shown verbatim.
+    """
+
+    ax = _new_axes(ax, figsize=(7.0, 4.5))
+    rows = []
+    for track_name, frame in status_frames.items():
+        if frame is None or frame.empty:
+            continue
+        totals = frame.iloc[0]
+        n_assessable = float(totals.get("n_assessable", 0) or 0)
+        for column in VOLTWATT_STATUS_COLUMNS:
+            count = float(totals.get(column, 0) or 0)
+            rows.append(
+                {
+                    "track": track_name,
+                    "bucket": STATUS_LABELS.get(column, column),
+                    "fraction": (count / n_assessable) if n_assessable else float("nan"),
+                    "n_assessable": n_assessable,
+                }
+            )
+    if not rows:
+        return _empty_panel(ax, "No status frames provided -- nothing to plot")
+
+    plot_frame = pd.DataFrame(rows)
+    pivot = plot_frame.pivot(index="bucket", columns="track", values="fraction")
+    pivot = pivot.reindex([STATUS_LABELS.get(c, c) for c in VOLTWATT_STATUS_COLUMNS])
+    pivot.plot.bar(ax=ax, width=0.7)
+    ax.set_ylabel("fraction of n_assessable (timestamps)")
+    ax.set_xlabel("Volt-Watt proxy curve status")
+    ax.set_title("Volt-Watt curve status by track")
+    ax.tick_params(axis="x", rotation=15)
+    ax.legend(title="track", fontsize=8)
+
+    n_by_track = plot_frame.drop_duplicates("track").set_index("track")["n_assessable"]
+    caption = " | ".join(f"{t}: n_assessable={int(n):,}" for t, n in n_by_track.items())
+    ax.text(
+        0.0, -0.30, caption, transform=ax.transAxes,
+        fontsize=7, color="dimgray", ha="left", va="top",
+    )
+    return ax
 
 
 def plot_monthly_coverage(
