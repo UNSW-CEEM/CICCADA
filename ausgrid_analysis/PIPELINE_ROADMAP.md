@@ -47,13 +47,15 @@ supported curtailment is not built while methodology gate 7 is unmet.
 
 ## Results analysis
 
-Planned notebook: `notebooks/05_analyse_mechanism_results.ipynb`
+Notebook: `notebooks/05_analyse_mechanism_results.ipynb`
 
 Read and visualise Volt-VAr proxy results, Volt-Watt proxy results and response
 observability independently at fleet, site, phase, voltage, month and cohort
-levels. Do not blend conformance, observability or future counterfactual-
-supported curtailment into one score. Until a curtailment method is explicitly
-chosen and validated, show it as unavailable.
+levels, via `src/ausgrid_analysis/result_views.py` and `result_plots.py`. Does
+not blend conformance, observability or future counterfactual-supported
+curtailment into one score; curtailment is shown as an explicit `unavailable
+— methodology gate 7 unmet` panel. Inspects both `phase_scope_basis` tracks
+(`der_inferred` and `all_phases`) side by side wherever both exist.
 
 
 ## Irradiance and decomposition

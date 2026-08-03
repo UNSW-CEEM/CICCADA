@@ -23,6 +23,33 @@ SIGN_READY_STATES = {
 PHASE_SCOPE_BASES = {"der_inferred", "all_phases"}
 
 
+# ``s_rated_kva`` is the only *verified* basis -- it is null for this fleet
+# (see DATA_CONTRACT.md), so magnitude assessment stays honestly unassessable
+# under it today. The two proxy bases below are a separate, explicit user
+# decision (2026-08-03) to run a full sweep despite that, with the bias of
+# each proxy clearly named and documented rather than silently accepted:
+#   solar_capacity_kw_proxy -> DC panel nameplate from metadata. Known to
+#       systematically OVERSTATE true inverter S_rated (residential DC:AC
+#       oversizing is common), which widens every tolerance band/ceiling and
+#       biases the assessment lenient.
+#   p99_net_export_proxy    -> the configured percentile (default 99th) of
+#       observed net-export power per site, computed empirically from the
+#       full structured_site_intervals history by capacity_proxy.py. Known
+#       to UNDERSTATE true inverter S_rated (net export is generation minus
+#       house load, so it is always <= true generation), which biases the
+#       assessment conservative. Never confused with a verified rating --
+#       see capacity_proxy.py's module docstring for exactly how it is
+#       computed and joined in.
+# Building both brackets the true (unknown) S_rated between a lenient and a
+# conservative estimate; neither is treated as ground truth.
+CAPACITY_METADATA_COLUMNS = {
+    "s_rated_kva": "s_rated_kva",
+    "solar_capacity_kw_proxy": "solar_capacity_kw",
+}
+CAPACITY_EMPIRICAL_BASES = {"p99_net_export_proxy"}
+CAPACITY_BASES = set(CAPACITY_METADATA_COLUMNS) | CAPACITY_EMPIRICAL_BASES
+
+
 @dataclass(frozen=True)
 class MechanismAnalysisConfig:
     """Method choices that must never be redefined inside a query or plot."""
@@ -30,6 +57,7 @@ class MechanismAnalysisConfig:
     voltage_aggregate: str = "max"
     capacity_basis: str = "s_rated_kva"
     phase_scope_basis: str = "der_inferred"
+    capacity_proxy_percentile: float = 0.99
     tolerance_fraction: float = 0.04
     voltage_bin_width_v: float = 1.0
     sign_audit_month: str = "2025-01"
@@ -46,11 +74,15 @@ class MechanismAnalysisConfig:
             raise ValueError(
                 f"phase_scope_basis must be one of {sorted(PHASE_SCOPE_BASES)}"
             )
-        if self.capacity_basis != "s_rated_kva":
+        if self.capacity_basis not in CAPACITY_BASES:
             raise ValueError(
-                "Delivery 4 permits only verified s_rated_kva. "
-                "A proxy/sensitivity basis requires a separate user decision."
+                f"capacity_basis must be one of {sorted(CAPACITY_BASES)}. "
+                "Delivery 4's original default is only verified s_rated_kva; "
+                "any proxy/sensitivity basis must be one of these explicitly "
+                "named, separately-decided tracks -- never a silent stand-in."
             )
+        if not 0.0 < self.capacity_proxy_percentile < 1.0:
+            raise ValueError("capacity_proxy_percentile must be strictly between 0 and 1")
         if self.tolerance_fraction <= 0:
             raise ValueError("tolerance_fraction must be positive")
         if self.voltage_bin_width_v <= 0:
@@ -133,6 +165,41 @@ class MechanismAnalysisConfig:
         return f"{aggregate_word}_{scope_word}_revenue_meter_voltage"
 
     @property
+    def capacity_is_empirical(self) -> bool:
+        """True for a capacity_basis computed from telemetry (capacity_proxy.py),
+        as opposed to a direct metadata pass-through (s_rated_kva,
+        solar_capacity_kw_proxy).
+        """
+        return self.capacity_basis in CAPACITY_EMPIRICAL_BASES
+
+    @property
+    def capacity_metadata_column(self) -> str | None:
+        """site_eligibility column supplying capacity_reference_va, for the
+        two metadata pass-through bases. ``None`` for an empirical basis --
+        that value comes from capacity_proxy.py's output table instead, via
+        a separate join (see mechanism_results.py's _base_site_sql).
+        """
+        return CAPACITY_METADATA_COLUMNS.get(self.capacity_basis)
+
+    @property
+    def capacity_basis_label(self) -> str:
+        """Short human-readable description of the configured capacity basis,
+        for methodology tables/subtitles -- never silently implies 'verified'
+        for a proxy basis.
+        """
+        if self.capacity_basis == "s_rated_kva":
+            return "verified s_rated_kva (null for this fleet today)"
+        if self.capacity_basis == "solar_capacity_kw_proxy":
+            return "DC solar nameplate proxy (known lenient bias vs true S_rated)"
+        if self.capacity_basis == "p99_net_export_proxy":
+            pct = self.capacity_proxy_percentile * 100
+            return (
+                f"empirical P{pct:g} observed net-export proxy "
+                "(known conservative bias vs true S_rated)"
+            )
+        raise ValueError(f"no label defined for capacity_basis={self.capacity_basis!r}")
+
+    @property
     def active_sign_ready(self) -> bool:
         return self.active_sign_review_state in SIGN_READY_STATES
 
@@ -151,11 +218,18 @@ class MechanismAnalysisConfig:
             "" if self.phase_scope_basis == "der_inferred"
             else f"__phase_{self.phase_scope_basis}"
         )
+        # capacity_basis was always part of this id (default 's_rated_kva'),
+        # so every existing string is unchanged. The percentile segment only
+        # appears for the empirical basis, so two different percentiles
+        # (e.g. p99 vs p95) never collide on the same id/path.
+        capacity_segment = self.capacity_basis
+        if self.capacity_basis in CAPACITY_EMPIRICAL_BASES:
+            capacity_segment += f"_p{self.capacity_proxy_percentile * 100:g}"
         return (
             "net_meter_proxy"
             f"__voltage_{self.voltage_aggregate}"
             f"{phase_segment}"
-            f"__capacity_{self.capacity_basis}"
+            f"__capacity_{capacity_segment}"
             f"__tol_{self.tolerance_fraction:g}"
         )
 

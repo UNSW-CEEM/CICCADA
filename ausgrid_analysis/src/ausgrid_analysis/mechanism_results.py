@@ -32,6 +32,7 @@ from .db import (
 )
 from .mechanism_config import MechanismAnalysisConfig
 from .mechanism_paths import (
+    capacity_proxy_path,
     response_observability_path,
     voltvar_results_path,
     voltwatt_results_path,
@@ -48,7 +49,12 @@ def _bool_sql(value: bool) -> str:
     return "true" if value else "false"
 
 
-def _core_site_gate_sql(alias: str = "e") -> str:
+def core_site_gate_sql(alias: str = "e") -> str:
+    """The one eligibility gate every mechanism-adjacent builder shares.
+
+    Public (used by capacity_proxy.py too) so the gate definition can never
+    silently drift between the two builders.
+    """
     return " AND ".join(
         (
             f"coalesce({alias}.gate_solar_only, false)",
@@ -58,6 +64,10 @@ def _core_site_gate_sql(alias: str = "e") -> str:
             f"coalesce({alias}.gate_power_coverage, false)",
         )
     )
+
+
+def _core_site_gate_sql(alias: str = "e") -> str:
+    return core_site_gate_sql(alias)
 
 
 def _check_inputs(
@@ -75,6 +85,44 @@ def _check_inputs(
     return site, phase, eligibility
 
 
+def _capacity_sql(
+    config: FoundationConfig,
+    scope: SourceScope,
+    mechanism: MechanismAnalysisConfig,
+) -> tuple[str, str, str]:
+    """Return (capacity_reference_va_sql, capacity_source_sql, extra_join_sql)
+    for the configured capacity_basis.
+
+    ``s_rated_kva`` and ``solar_capacity_kw_proxy`` are plain metadata
+    pass-throughs from the ``e`` (site_eligibility) alias already joined in
+    ``_base_site_sql`` -- both are kW/kVA, hence the ``* 1000.0``. The
+    empirical basis instead LEFT JOINs capacity_proxy.py's own output
+    (already in watts, no conversion) on a new ``c`` alias.
+    """
+    if mechanism.capacity_basis == "s_rated_kva":
+        return (
+            "e.s_rated_kva * 1000.0",
+            "coalesce(e.s_rated_source, 'unavailable')",
+            "",
+        )
+    if mechanism.capacity_basis == "solar_capacity_kw_proxy":
+        return (
+            "e.solar_capacity_kw * 1000.0",
+            sql_string(mechanism.capacity_basis),
+            "",
+        )
+    if mechanism.capacity_is_empirical:
+        proxy = capacity_proxy_path(config, scope, mechanism)
+        if not proxy.is_file():
+            raise FileNotFoundError(
+                f"{proxy} -- run capacity_proxy.build_capacity_proxy(config, scope, "
+                "mechanism) first; mechanism_results.py never builds it implicitly."
+            )
+        join = f"LEFT JOIN read_parquet({sql_string(str(proxy))}) c USING (serial)"
+        return ("c.capacity_proxy_va", "c.capacity_source", join)
+    raise ValueError(f"no capacity SQL defined for capacity_basis={mechanism.capacity_basis!r}")
+
+
 def _base_site_sql(
     config: FoundationConfig,
     scope: SourceScope,
@@ -90,6 +138,9 @@ def _base_site_sql(
         f"s.{mechanism.comparison_q_absorbing_column}"
     )
     width = mechanism.voltage_bin_width_v
+    capacity_reference_sql, capacity_source_sql, extra_join = _capacity_sql(
+        config, scope, mechanism
+    )
     return f"""
         SELECT
             s.serial,
@@ -120,12 +171,13 @@ def _base_site_sql(
             coalesce(e.has_battery, false) AS has_battery,
             e.controlled_load_status,
             e.phase_mapping_confidence,
-            e.s_rated_kva * 1000.0 AS capacity_reference_va,
-            e.s_rated_source AS capacity_source
+            {capacity_reference_sql} AS capacity_reference_va,
+            {capacity_source_sql} AS capacity_source
         FROM read_parquet(
             {sql_string(_glob(site))}, hive_partitioning=true
         ) s
         LEFT JOIN read_parquet({sql_string(eligibility)}) e USING (serial)
+        {extra_join}
     """.strip()
 
 
@@ -234,6 +286,8 @@ def _voltvar_sql(
         voltage_bin_lower_v,
         any_value(analysis_cohort) AS analysis_cohort,
         any_value(phase_mapping_confidence) AS phase_mapping_confidence,
+        any_value(capacity_source) AS capacity_source,
+        any_value(capacity_reference_va) AS capacity_reference_va,
         min(comparison_voltage_v) AS minimum_comparison_voltage_v,
         max(comparison_voltage_v) AS maximum_comparison_voltage_v,
         count(*) AS n_source_intervals,
@@ -326,6 +380,8 @@ def _voltwatt_sql(
         voltage_bin_lower_v,
         any_value(analysis_cohort) AS analysis_cohort,
         any_value(phase_mapping_confidence) AS phase_mapping_confidence,
+        any_value(capacity_source) AS capacity_source,
+        any_value(capacity_reference_va) AS capacity_reference_va,
         min(comparison_voltage_v) AS minimum_comparison_voltage_v,
         max(comparison_voltage_v) AS maximum_comparison_voltage_v,
         count(*) AS n_source_intervals,
