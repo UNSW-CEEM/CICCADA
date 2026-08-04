@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from .analysis_cohort import site_eligibility_path
 from .as4777_curves import (
     Q_CAPABILITY,
@@ -181,11 +183,19 @@ def _base_site_sql(
     """.strip()
 
 
-def _voltvar_sql(
+def _voltvar_scored_cte_sql(
     config: FoundationConfig,
     scope: SourceScope,
     mechanism: MechanismAnalysisConfig,
 ) -> str:
+    """The Volt-VAr CTE chain from ``base`` through ``scored`` (denominator
+    status, required/capability curves, tolerance-clamped band, Q_impact),
+    as raw SQL text (no leading ``WITH``) so it can be composed into either
+    the production ``_voltvar_sql`` builder or a read-only diagnostic query
+    (see ``voltvar_q_impact_histogram``) without duplicating this logic --
+    duplicating it would risk the two silently drifting apart.
+    """
+
     base = _base_site_sql(config, scope, mechanism)
     q_required = vvar_required_q_sql(
         "comparison_voltage_v", "capacity_reference_va"
@@ -203,9 +213,8 @@ def _voltvar_sql(
         "q_max_final_var",
         assessable_sql="denominator_status = 'assessable'",
     )
-    threshold_1, threshold_2, threshold_3, threshold_4 = Q_IMPACT_THRESHOLDS
     return f"""
-    WITH base AS ({base}),
+    base AS ({base}),
     denominator AS (
         SELECT *,
             comparison_voltage_v < {VOLT_VAR.v2}
@@ -262,32 +271,105 @@ def _voltvar_sql(
     scored AS (
         SELECT *, {q_impact} AS q_impact
         FROM bands
-    ),
+    )
+    """.strip()
+
+
+def voltvar_q_impact_histogram(
+    config: FoundationConfig,
+    scope: SourceScope,
+    mechanism: MechanismAnalysisConfig,
+    *,
+    bin_width: float = 0.05,
+    clip_min: float = -2.0,
+    clip_max: float = 3.0,
+) -> pd.DataFrame:
+    """Read-only diagnostic: binned Q_impact distribution across every
+    assessable Volt-VAr interval. Writes no output file and is not part of
+    Delivery 4's result tables -- it exists purely so Q_IMPACT_THRESHOLDS
+    bucket cut points (and, by rerunning at different ``mechanism.tolerance_
+    fraction`` values, the tolerance band itself) can be sensitivity-tested
+    against the real distribution without a full mechanism-result rebuild
+    per candidate threshold. See ``sensitivity.py``.
+
+    Q_impact can spike to very large magnitudes near the not-yet-activated
+    crossover (dividing by a near-zero reference edge), so values are
+    clipped to ``[clip_min, clip_max]`` before binning -- comfortably wide
+    of Q_IMPACT_THRESHOLDS' default -10%/10%/90%/110% -- rather than
+    producing a sparse, mostly-single-count histogram out to the extremes.
+    Clipping only widens the boundary bins; no row is dropped, so
+    ``result['n'].sum()`` always equals the track's true ``n_assessable``.
+    """
+
+    mechanism.validate()
+    cte_chain = _voltvar_scored_cte_sql(config, scope, mechanism)
+    clipped = f"least(greatest(q_impact, {clip_min}), {clip_max})"
+    query = f"""
+    WITH {cte_chain}
+    SELECT
+        floor({clipped} / {bin_width}) * {bin_width} AS bin_lower_q_impact,
+        count(*) AS n
+    FROM scored
+    WHERE denominator_status = 'assessable'
+    GROUP BY 1
+    ORDER BY 1
+    """
+    connection = connect(config)
+    try:
+        return connection.execute(query).fetchdf()
+    finally:
+        connection.close()
+
+
+def _voltvar_classify_status_sql(mechanism: MechanismAnalysisConfig) -> str:
+    """The CASE expression mapping a 'scored' CTE row to one of six
+    ``proxy_curve_status`` buckets (or a ``denominator_status`` passthrough
+    for inassessable rows).
+
+    Q_impact = signed ratio of measured generator-convention Q to the
+    nearest edge of the tolerance-clamped required band (effectively
+    Q_kvar / Q_voltvar, sign-adjusted for direction match -- see
+    ``q_impact_nearest_edge_sql``). Every assessable row is classified into
+    exactly one of six buckets: 'conformant' when measured Q falls inside
+    the tolerance-clamped required band itself, else one of five
+    Q_IMPACT_THRESHOLDS buckets describing how far outside the band it fell
+    and in which direction. This mirrors the reviewed project conformance
+    methodology: non-conformance is adverse + inactive + major_deficit;
+    conformance is conformant + minor_deviation + major_surplus (see
+    ``result_views.voltvar_status_view``'s conformance rollup columns).
+
+    Factored out (rather than inlined in ``_voltvar_sql``) so the
+    production classifier and ``sensitivity.py``'s fresh-per-tolerance
+    rebuilds (``tolerance_fraction_sensitivity``) never drift apart -- the
+    same reasoning as ``_voltvar_scored_cte_sql``.
+    """
+    threshold_1, threshold_2, threshold_3, threshold_4 = Q_IMPACT_THRESHOLDS
+    return f"""
+    CASE
+        WHEN denominator_status <> 'assessable' THEN denominator_status
+        WHEN q_generator_net_proxy_var BETWEEN q_min_final_var
+                                           AND q_max_final_var
+            THEN 'conformant'
+        WHEN q_impact < {threshold_1} THEN 'adverse'
+        WHEN q_impact <= {threshold_2} THEN 'inactive'
+        WHEN q_impact < {threshold_3} THEN 'major_deficit'
+        WHEN q_impact <= {threshold_4} THEN 'minor_deviation'
+        ELSE 'major_surplus'
+    END
+    """.strip()
+
+
+def _voltvar_sql(
+    config: FoundationConfig,
+    scope: SourceScope,
+    mechanism: MechanismAnalysisConfig,
+) -> str:
+    cte_chain = _voltvar_scored_cte_sql(config, scope, mechanism)
+    classify = _voltvar_classify_status_sql(mechanism)
+    return f"""
+    WITH {cte_chain},
     classified AS (
-        -- Q_impact = signed ratio of measured generator-convention Q to the
-        -- nearest edge of the tolerance-clamped required band (effectively
-        -- Q_kvar / Q_voltvar, sign-adjusted for direction match -- see
-        -- q_impact_nearest_edge_sql). Every assessable row is classified
-        -- into exactly one of six buckets: 'conformant' when measured Q
-        -- falls inside the tolerance-clamped required band itself, else one
-        -- of five Q_IMPACT_THRESHOLDS buckets describing how far outside
-        -- the band it fell and in which direction. This mirrors the
-        -- reviewed project conformance methodology: non-conformance is
-        -- adverse + inactive + major_deficit; conformance is
-        -- conformant + minor_deviation + major_surplus (see
-        -- result_views.voltvar_status_view's conformance rollup columns).
-        SELECT *,
-            CASE
-                WHEN denominator_status <> 'assessable' THEN denominator_status
-                WHEN q_generator_net_proxy_var BETWEEN q_min_final_var
-                                                   AND q_max_final_var
-                    THEN 'conformant'
-                WHEN q_impact < {threshold_1} THEN 'adverse'
-                WHEN q_impact <= {threshold_2} THEN 'inactive'
-                WHEN q_impact < {threshold_3} THEN 'major_deficit'
-                WHEN q_impact <= {threshold_4} THEN 'minor_deviation'
-                ELSE 'major_surplus'
-            END AS proxy_curve_status
+        SELECT *, {classify} AS proxy_curve_status
         FROM scored
     )
     SELECT
