@@ -273,6 +273,39 @@ def test_classification_counts_reconcile_to_n_assessable(views) -> None:
     assert classified == int(status["n_assessable"].iloc[0])
 
 
+def test_site_conformance_fractions_are_complementary(views) -> None:
+    """S1: n_conformant=5, n_minor_deviation=1, n_major_surplus=1 -> n_conformance=7;
+    n_adverse=1, n_inactive=1, n_major_deficit=1 -> n_non_conformance=3; both out
+    of n_assessable=10. S2 has n_assessable=0 -> not_assessable, both fractions null.
+    """
+
+    config, scope, mechanism = views["config"], views["scope"], views["mechanism"]
+    frame = rv.voltvar_site_conformance_view(config, scope, mechanism=mechanism).set_index("serial")
+
+    s1 = frame.loc["S1"]
+    assert s1["n_conformance"] == 7
+    assert s1["n_non_conformance"] == 3
+    assert s1["conformance_fraction"] == pytest.approx(0.7)
+    assert s1["non_conformance_fraction"] == pytest.approx(0.3)
+    assert s1["conformance_fraction"] + s1["non_conformance_fraction"] == pytest.approx(1.0)
+    assert s1["site_status"] == "conformant"  # 0.7 >= default 0.5 threshold
+
+    s2 = frame.loc["S2"]
+    assert s2["site_status"] == "not_assessable"
+    assert pd.isna(s2["conformance_fraction"])
+    assert pd.isna(s2["non_conformance_fraction"])
+
+
+def test_site_conformance_threshold_is_configurable(views) -> None:
+    config, scope, mechanism = views["config"], views["scope"], views["mechanism"]
+    strict = rv.voltvar_site_conformance_view(
+        config, scope, mechanism=mechanism, conformance_threshold=0.9
+    ).set_index("serial")
+    # S1's conformance_fraction is 0.7 -- conformant at the 0.5 default, but
+    # non_conformant once the bar is raised to the colleague's implied 90%.
+    assert strict.loc["S1", "site_status"] == "non_conformant"
+
+
 def test_validate_result_views_catches_a_broken_classification(tmp_path) -> None:
     config = _config(tmp_path)
     scope = config.scope(None, None)

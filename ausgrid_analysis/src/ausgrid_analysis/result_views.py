@@ -558,6 +558,9 @@ def voltvar_site_conformance_view(
     frame["conformance_fraction"] = (
         frame["n_conformance"].astype("Float64") / safe_denominator
     )
+    frame["non_conformance_fraction"] = (
+        frame["n_non_conformance"].astype("Float64") / safe_denominator
+    )
 
     assessable_mask = frame["n_assessable"] > 0
     site_status = pd.Series("not_assessable", index=frame.index, dtype="object")
