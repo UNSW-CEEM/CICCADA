@@ -79,5 +79,5 @@ def main(dataset):
 # verify if the following 
 # from main_run_conformance import main
 
-results = main(dataset="solar_analytics")
-# results = main(dataset="sapn2022")
+# results = main(dataset="solar_analytics")
+results = main(dataset="sapn2022")

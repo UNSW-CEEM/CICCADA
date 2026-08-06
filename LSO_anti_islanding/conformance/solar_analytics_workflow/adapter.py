@@ -32,8 +32,6 @@ def load_cleaned_site_data(cleaned_path=CLEANED_DATA_PATH):
     all_data = pl.scan_parquet(cleaned_path)
     required_columns = {
         "c_id",
-        "site_id",
-        "con_type",
         "local_tstamp",
         "utc_tstamp",
         "power",

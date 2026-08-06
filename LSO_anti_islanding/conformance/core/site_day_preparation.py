@@ -69,7 +69,12 @@ def extract_site_day(site_data, start_day, end_day):
     # SAPN uses duration as part of the later pivot index. Preserve its source
     # order within equal timestamps so the established edge sequence is stable.
     # Datasets without duration can use an explicit circuit tie-breaker.
+    
     sort_columns = ["local_tstamp"] if has_duration else ["local_tstamp", "c_id"]
+
+    # This is unnecessary when deduplication was completed in preprocessing,
+    # but is retained as a safeguard when preparing site-days from data that
+    # was not deduplicated during preprocessing.
     return deduplicateMeasurements(site_day).sort(sort_columns)
 
 

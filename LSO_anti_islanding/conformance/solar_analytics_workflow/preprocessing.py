@@ -3,12 +3,14 @@
 from pathlib import Path
 
 import polars as pl
+import pyarrow.parquet as pq
 
 from config import LOCAL_TIMEZONE
 from core.data_cleaning import (
     addLocalTStamp,
     addPolarityToPower,
     addValidVoltage,
+    clipNegativePower,
     convertWToKw,
     deduplicateMeasurements,
 )
@@ -60,8 +62,11 @@ def build_cleaned_site_data(
     circuit_metadata_path=CIRCUIT_METADATA_PATH,
     site_metadata_path=SITE_METADATA_PATH,
     cleaned_path=CLEANED_DATA_PATH,
+    *,
+    deduplicate=True,
+    num_buckets=128,
 ):
-    """Build standardised long-form Solar Analytics metrology."""
+    """Build Solar Analytics metrology one circuit bucket at a time."""
     data_dir = Path(data_dir)
     circuit_metadata_path = Path(circuit_metadata_path)
     site_metadata_path = Path(site_metadata_path)
@@ -96,7 +101,7 @@ def build_cleaned_site_data(
         .lazy()
     )
 
-    all_data = (
+    raw_data = (
         pl.scan_parquet([str(path) for path in raw_parquet_paths])
         .rename({
             "circuit_id": "c_id",
@@ -110,33 +115,76 @@ def build_cleaned_site_data(
             pl.col("voltage").cast(pl.Float64, strict=False),
         ])
     )
-    all_data = deduplicateMeasurements(all_data)
-    all_data = (
-        all_data.join(circuit_site_lookup, on="c_id", how="inner")
-        .join(site_lookup, on="site_id", how="left")
-        .with_columns(
-            pl.col("state")
-            .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
-            .alias("timezone")
-        )
-    )
-    all_data = convertWToKw(all_data)
-    all_data = addLocalTStamp(all_data)
-    all_data = addValidVoltage(all_data)
-    all_data = addPolarityToPower(all_data, circuit_details)
-    all_data = all_data.select([
-        "c_id",
-        "site_id",
-        "con_type",
-        "state",
-        "timezone",
-        "utc_tstamp",
-        "local_tstamp",
-        "power",
-        "voltage",
-        "voltage_valid",
-    ])
 
     cleaned_path.parent.mkdir(parents=True, exist_ok=True)
-    all_data.sink_parquet(cleaned_path, compression="zstd")
+    parquet_writer = None
+    for bucket_number in range(num_buckets):
+        print(
+            f"Processing bucket {bucket_number + 1}/{num_buckets}...",
+            flush=True,
+        )
+        all_data = raw_data.filter(
+            (pl.col("c_id") % num_buckets) == bucket_number
+        )
+        all_data = (
+            all_data.join(circuit_site_lookup, on="c_id", how="inner")
+            .join(site_lookup, on="site_id", how="left")
+            .with_columns(
+                pl.col("state")
+                .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
+                .alias("timezone")
+            )
+        )
+        all_data = convertWToKw(all_data)
+        if deduplicate:
+            all_data = deduplicateMeasurements(all_data)
+        all_data = addLocalTStamp(all_data)
+        all_data = addValidVoltage(all_data)
+        all_data = addPolarityToPower(all_data, circuit_details)
+        # commenting this as it appliies to ac_load_net too which is incorrect
+        # but clipping of pv below 0 still happens in checkpvbehaviour
+        # and _robust_observed_peak_kw
+        # after polarity is applied here
+        # all_data = clipNegativePower(all_data)
+
+        all_data = all_data.select([
+            "c_id",
+            "site_id",
+            "con_type",
+            "state",
+            "timezone",
+            "utc_tstamp",
+            "local_tstamp",
+            "power",
+            "voltage",
+            "voltage_valid",
+        ])
+
+        cleaned_bucket = all_data.collect(engine="streaming")
+        if cleaned_bucket.is_empty():
+            print("No output rows for this bucket.", flush=True)
+            del cleaned_bucket
+            continue
+
+        table = cleaned_bucket.to_arrow()
+        if parquet_writer is None:
+            parquet_writer = pq.ParquetWriter(
+                cleaned_path,
+                table.schema,
+                compression="zstd",
+            )
+
+        parquet_writer.write_table(table)
+        print(
+            f"Wrote {table.num_rows:,} rows from bucket {bucket_number}.",
+            flush=True,
+        )
+        del table
+        del cleaned_bucket
+
+    if parquet_writer is None:
+        raise RuntimeError("Solar Analytics preprocessing produced no cleaned rows.")
+
+    parquet_writer.close()
+    print(f"Saved cleaned Solar Analytics data to {cleaned_path}.", flush=True)
     return cleaned_path

@@ -130,12 +130,14 @@ def _robust_observed_peak_kw(day_behaviours):
         ]
         if not power_cols:
             continue
+        complete_power = pl.all_horizontal([
+            pl.col(column).is_not_null() for column in power_cols
+        ])
         site_power_frames.append(
-            df.select(
+            df.filter(complete_power).select(
                 pl.sum_horizontal([
                     pl.col(column)
                     .cast(pl.Float64, strict=False)
-                    .fill_null(0)
                     .clip(lower_bound=0)
                     for column in power_cols
                 ]).alias("site_power_kw")

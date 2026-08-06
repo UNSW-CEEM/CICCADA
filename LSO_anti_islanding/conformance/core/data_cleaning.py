@@ -2,7 +2,13 @@
 
 import polars as pl
 
-from config import LOCAL_TIMEZONE, VALID_VOLTAGE_MAX, VALID_VOLTAGE_MIN
+from config import (
+    DEDUPLICATION_ABSOLUTE_TOLERANCE_KW,
+    DEDUPLICATION_RELATIVE_TOLERANCE,
+    LOCAL_TIMEZONE,
+    VALID_VOLTAGE_MAX,
+    VALID_VOLTAGE_MIN,
+)
 
 
 SUPPORTED_LOCAL_TIMEZONES = (
@@ -32,24 +38,71 @@ def convertcWToKw(data):
     )
 
 
-def deduplicateMeasurements(data, timestamp_column="utc_tstamp"):
-    """Apply the verified SAPN duplicate policy to long-form measurements.
+def clipNegativePower(data):
+    """Clip measured negative power to zero without replacing missing values.
+       This is applied after implementing polarity
+    """
+    return data.with_columns(
+        pl.when(pl.col("power") < 0)
+        .then(pl.lit(0.0))
+        .otherwise(pl.col("power"))
+        .alias("power")
+    )
 
-    One copy is retained when duplicate circuit-timestamps have identical power.
-    Every copy is removed when their power values conflict.
+
+def deduplicateMeasurements(data, timestamp_column="utc_tstamp"):
+    """Apply the configured duplicate policy to long-form kW measurements.
+
+    Duplicate circuit-timestamps within the configured absolute or relative
+    power tolerance are represented by their mean power. Every copy is removed
+    when the full power spread exceeds that tolerance.
     """
     key_columns = ["c_id", timestamp_column]
-    conflicting_keys = (
-        data.group_by(key_columns)
-        .agg(pl.col("power").n_unique().alias("_power_n_unique"))
-        .filter(pl.col("_power_n_unique") > 1)
-        .select(key_columns)
-    )
-    return data.join(conflicting_keys, on=key_columns, how="anti").unique(
-        subset=key_columns,
-        keep="first",
+    data_columns = data.collect_schema().names()
+    other_columns = [
+        column
+        for column in data_columns
+        if column not in {*key_columns, "power"}
+    ]
+
+    grouped = data.group_by(
+        key_columns,
         maintain_order=True,
+    ).agg([
+        pl.len().alias("_row_count"),
+        pl.col("power").null_count().alias("_power_null_count"),
+        pl.col("power").min().alias("_power_min"),
+        pl.col("power").max().alias("_power_max"),
+        pl.col("power").mean().alias("_power_mean"),
+        *[pl.col(column).first().alias(column) for column in other_columns],
+    ])
+
+    power_spread = pl.col("_power_max") - pl.col("_power_min")
+    maximum_absolute_power = pl.max_horizontal(
+        pl.col("_power_min").abs(),
+        pl.col("_power_max").abs(),
     )
+    allowed_spread = pl.max_horizontal(
+        pl.lit(DEDUPLICATION_ABSOLUTE_TOLERANCE_KW),
+        maximum_absolute_power * DEDUPLICATION_RELATIVE_TOLERANCE,
+    )
+    single_row = pl.col("_row_count") == 1
+    all_power_null = pl.col("_power_null_count") == pl.col("_row_count")
+    numeric_values_within_tolerance = (
+        (pl.col("_power_null_count") == 0)
+        # Allow for representation error when a converted value lies exactly
+        # on the configured tolerance boundary.
+        & (power_spread <= allowed_spread + 1e-12)
+    )
+
+    retained_power = pl.col("_power_mean").alias("power")
+    output_columns = [
+        retained_power if column == "power" else pl.col(column)
+        for column in data_columns
+    ]
+    return grouped.filter(
+        single_row | all_power_null | numeric_values_within_tolerance
+    ).select(output_columns)
 
 
 def _utc_datetime_expression(data):

@@ -80,9 +80,9 @@ class CheckPVBehaviour:
             logic_name = f"{c}_logic"
             logic_next_name = f"{c}_logic_next"
             df = df.with_columns(
-                pl.when(pl.col(c).fill_null(0) < 0)
+                pl.when(pl.col(c) < 0)
                   .then(pl.lit(0.0))
-                  .otherwise(pl.col(c).fill_null(0))
+                  .otherwise(pl.col(c))
                   .alias(logic_name)
             )
             logic_current.append(logic_name)
@@ -90,66 +90,102 @@ class CheckPVBehaviour:
             next_name = f"{c}_next"
             if next_name in power_cols_next:
                 df = df.with_columns(
-                    pl.when(pl.col(next_name).fill_null(0) < 0)
+                    pl.when(pl.col(next_name) < 0)
                       .then(pl.lit(0.0))
-                      .otherwise(pl.col(next_name).fill_null(0))
+                      .otherwise(pl.col(next_name))
                       .alias(logic_next_name)
                 )
             else:
-                df = df.with_columns(pl.lit(0.0).alias(logic_next_name))
+                df = df.with_columns(
+                    pl.lit(None, dtype=pl.Float64).alias(logic_next_name)
+                )
             logic_next.append(logic_next_name)
 
         df = df.with_columns([
-            pl.sum_horizontal([pl.col(c) for c in logic_current]).alias("site_power"),
-            pl.sum_horizontal([pl.col(c) for c in logic_next]).alias("site_power_next"),
+            pl.when(pl.all_horizontal([
+                pl.col(c).is_not_null() for c in logic_current
+            ]))
+            .then(pl.sum_horizontal([pl.col(c) for c in logic_current]))
+            .otherwise(pl.lit(None, dtype=pl.Float64))
+            .alias("site_power"),
+            pl.when(pl.all_horizontal([
+                pl.col(c).is_not_null() for c in logic_next
+            ]))
+            .then(pl.sum_horizontal([pl.col(c) for c in logic_next]))
+            .otherwise(pl.lit(None, dtype=pl.Float64))
+            .alias("site_power_next"),
         ])
 
         df = df.with_columns([
-            (
+            pl.when(pl.col("site_power").is_not_null())
+            .then(
                 pl.all_horizontal([pl.col(c) <= p_disconnect for c in logic_current]) &
                 (pl.col("site_power") <= p_disconnect)
-            ).alias("is_disc"),
-            (
+            )
+            .otherwise(pl.lit(None, dtype=pl.Boolean))
+            .alias("is_disc"),
+            pl.when(pl.col("site_power_next").is_not_null())
+            .then(
                 pl.all_horizontal([pl.col(c) <= p_disconnect for c in logic_next]) &
                 (pl.col("site_power_next") <= p_disconnect)
-            ).alias("is_disc_next"),
-            pl.col("site_power").shift(1).alias("site_power_prev"),
-        ])
-
-        df = df.with_columns([
-            pl.col("is_disc").shift(1).fill_null(False).alias("is_disc_prev"),
-            pl.col("v10m_avg").is_not_null().alias("eligible_los"),
-            pl.col("vinst_max").is_not_null().alias("eligible_ov1"),
-            (pl.col("site_power_prev") - pl.col("site_power")).fill_null(0).alias("site_power_drop"),
-            (pl.col("site_power") - pl.col("site_power_prev")).fill_null(0).alias("site_power_rise"),
+            )
+            .otherwise(pl.lit(None, dtype=pl.Boolean))
+            .alias("is_disc_next"),
         ])
 
         df = df.with_columns([
             (
-                (~pl.col("is_disc_prev")) &
+                pl.col("is_disc").is_not_null()
+                & (
+                    pl.col("is_disc").fill_null(False)
+                    | pl.col("is_disc_next").is_not_null()
+                )
+            ).alias("_power_assessable"),
+            (pl.col("site_power").shift(1) - pl.col("site_power")).alias(
+                "site_power_drop"
+            ),
+            (pl.col("site_power") - pl.col("site_power").shift(1)).alias(
+                "site_power_rise"
+            ),
+        ])
+
+        df = df.with_columns([
+            (
+                pl.col("v10m_avg").is_not_null()
+                & pl.col("_power_assessable")
+            ).alias("eligible_los"),
+            (
+                pl.col("vinst_max").is_not_null()
+                & pl.col("_power_assessable")
+            ).alias("eligible_ov1"),
+        ])
+
+        df = df.with_columns([
+            (
+                (~pl.col("is_disc").shift(1)) &
                 pl.col("is_disc") &
                 (pl.col("site_power_drop") >= p_step_strict)
-            ).alias("disconnect_edge"),
+            ).fill_null(False).alias("disconnect_edge"),
             (
-                pl.col("is_disc_prev") &
+                pl.col("is_disc").shift(1) &
                 (~pl.col("is_disc")) &
                 (pl.col("site_power_rise") >= p_step_strict)
-            ).alias("reconnect_edge"),
+            ).fill_null(False).alias("reconnect_edge"),
         ])
 
         df = df.with_columns([
             (
-                (~pl.col("is_disc_prev")) &
+                (~pl.col("is_disc").shift(1)) &
                 pl.col("is_disc") &
                 (pl.col("site_power_drop") >= p_step_fallback) &
                 (~pl.col("disconnect_edge"))
-            ).alias("disconnect_edge_fallback"),
+            ).fill_null(False).alias("disconnect_edge_fallback"),
             (
-                pl.col("is_disc_prev") &
+                pl.col("is_disc").shift(1) &
                 (~pl.col("is_disc")) &
                 (pl.col("site_power_rise") >= p_step_fallback) &
                 (~pl.col("reconnect_edge"))
-            ).alias("reconnect_edge_fallback"),
+            ).fill_null(False).alias("reconnect_edge_fallback"),
         ])
 
         self._site_day_signals_cache[cache_key] = df
@@ -402,7 +438,10 @@ class CheckPVBehaviour:
                 (~pl.col("ov1_responsible")) &
                 (pl.col("v10m_avg") > los_threshold)
             ).alias("los_responsible"),
-            (pl.col("is_disc") | pl.col("is_disc_next")).alias("is_disc_current_or_next"),
+            (
+                pl.col("is_disc").fill_null(False)
+                | pl.col("is_disc_next").fill_null(False)
+            ).alias("is_disc_current_or_next"),
         ])
         df = df.with_columns([
             (pl.col("los_responsible") & pl.col("is_disc_current_or_next")).alias("los_compliant"),
