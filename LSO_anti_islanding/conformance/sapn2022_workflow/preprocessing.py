@@ -29,7 +29,7 @@ def build_cleaned_site_data(
     deduplicate=True,
     num_buckets=128,
 ):
-    """Build cleaned SAPN metrology, deduplicating one circuit bucket at a time.
+    """Build cleaned SAPN metrology, deduplicating one circuit-bucket at a time.
 
     Each bucket is selected directly from the raw parquet, passed through the
     established cleaning sequence, and appended to the same output parquet.
