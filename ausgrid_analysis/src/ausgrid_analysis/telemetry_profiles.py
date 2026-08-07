@@ -119,9 +119,57 @@ def derive_site_profiles(
             method = "insufficient_power_phases"
             confidence = "insufficient"
         elif len(power_phases) == install_count:
-            selected = power_phases
-            method = "all_power_available_phases"
-            confidence = "high"
+            candidates = available.assign(
+                _score=pd.to_numeric(available["solar_signature_w"], errors="coerce")
+            ).sort_values(["_score", "phase"], ascending=[False, True])
+            passing = candidates[
+                candidates["_score"] >= d2.phase_mapping_min_signature_w
+            ]
+            top_signature = (
+                float(candidates.iloc[0]["_score"])
+                if pd.notna(candidates.iloc[0]["_score"])
+                else None
+            )
+            if len(passing) == len(candidates):
+                # Every power-measured phase clears the signature floor: the
+                # install-count phase set and the evidence agree.
+                selected = power_phases
+                method = "all_power_available_phases"
+                confidence = "high"
+            else:
+                # install_phase_count trivially matched the number of
+                # power-measured phases, but at least one of them has no
+                # solar-like day/night signature -- do not silently promote
+                # it to a DER phase just because the counts lined up.
+                selected = sorted(passing["phase"].astype(str).tolist())
+                method = "signature_filtered_from_install_count"
+                excluded = candidates[
+                    candidates["_score"] < d2.phase_mapping_min_signature_w
+                ]
+                if passing.empty:
+                    confidence = "low"
+                else:
+                    selected_floor = passing["_score"].min()
+                    next_score = (
+                        excluded["_score"].max() if not excluded.empty else None
+                    )
+                    if (
+                        pd.notna(selected_floor)
+                        and next_score is not None
+                        and pd.notna(next_score)
+                    ):
+                        denominator = max(abs(float(selected_floor)), 1.0)
+                        margin_ratio = (
+                            float(selected_floor) - float(next_score)
+                        ) / denominator
+                        if margin_ratio >= d2.phase_mapping_high_margin_ratio:
+                            confidence = "high"
+                        elif margin_ratio >= d2.phase_mapping_medium_margin_ratio:
+                            confidence = "medium"
+                        else:
+                            confidence = "low"
+                    else:
+                        confidence = "medium"
         else:
             ranked = available.assign(
                 _score=pd.to_numeric(available["solar_signature_w"], errors="coerce")
@@ -172,7 +220,10 @@ def derive_site_profiles(
                 "phase_mapping_confidence": confidence,
                 "phase_mapping_sign_dependency": (
                     "uses_working_active_sign"
-                    if method == "ranked_local_day_night_export_signature"
+                    if method in (
+                        "ranked_local_day_night_export_signature",
+                        "signature_filtered_from_install_count",
+                    )
                     else "not_sign_ranked"
                 ),
                 "phase_mapping_requires_review": True,

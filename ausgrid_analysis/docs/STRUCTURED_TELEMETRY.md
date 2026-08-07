@@ -31,6 +31,14 @@ silently treated as zero.
 The local daytime/nighttime medians used for candidate phase ranking are
 streaming approximate quantiles. They are diagnostics, not energy estimates.
 
+Candidate phases are never accepted on install-phase-count alone. Every
+power-measured phase must also clear `phase_mapping_min_signature_w`
+(default 100 W) before it is treated as DER-connected — including when the
+number of power-measured phases equals the metadata install-phase count. A
+site where the counts match but not every phase looks solar-like is labelled
+`phase_mapping_method = "signature_filtered_from_install_count"`, with
+confidence derived the same way as the multi-candidate ranking case.
+
 ## What Delivery 2 deliberately does not do
 
 It does not decompose load/PV, separate battery power, estimate uncurtailed PV,

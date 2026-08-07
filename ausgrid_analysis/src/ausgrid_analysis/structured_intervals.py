@@ -98,7 +98,7 @@ def build_structured_phase(
             )
         row = connection.execute(
             f"""SELECT count(*), count(DISTINCT serial),
-                count_if(is_inferred_der_phase)
+                coalesce(count_if(is_inferred_der_phase), 0)
                 FROM read_parquet({sql_string(_glob(output))}, hive_partitioning=true)"""
         ).fetchone()
     finally:
@@ -238,7 +238,7 @@ def build_structured_site(
             )
         row = connection.execute(
             f"""SELECT count(*), count(DISTINCT serial),
-                count_if(NOT der_phase_power_complete)
+                coalesce(count_if(NOT der_phase_power_complete), 0)
                 FROM read_parquet({sql_string(_glob(output))}, hive_partitioning=true)"""
         ).fetchone()
     finally:
