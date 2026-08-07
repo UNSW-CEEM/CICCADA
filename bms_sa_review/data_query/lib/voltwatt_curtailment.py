@@ -139,11 +139,11 @@ def plot_voltwatt_curtailment_day(day_df, site_id, date_str, as4777,
         eligible
         & ~nonconformant
         & df["P_potential_kW"].notna()
-        & (df["P_potential_kW"] > df["P_ceiling_kW"] + 0.02)
+        & (df["P_potential_kW"] > df["P_ceiling_kW"])
     )
 
     df["curtailed_kW"] = np.where(
-        curtailed, np.maximum(0, df["P_potential_kW"] - df["P_ceiling_kW"]), 0,
+        curtailed, np.maximum(0, df["P_potential_kW"] - df["P_kW"]), 0,
     )
     df["excess_kW"] = np.where(
         nonconformant, np.maximum(0, df["P_kW"] - df["P_ceiling_kW"]), 0,
@@ -181,13 +181,15 @@ def plot_voltwatt_curtailment_day(day_df, site_id, date_str, as4777,
     # Bottom: power
     ax = axes[1]
     ax.fill_between(
-        df["t"], df["P_ceiling_kW"], df["P_potential_kW"],
-        where=curtailed.values, color=C_CURT, alpha=0.30, zorder=2,
-        label="V-Watt curtailment (sun-confirmed, conformant)",
+        df["t"], df["P_kW"], df["P_potential_kW"],
+        where=curtailed.values, interpolate=True,
+        color=C_CURT, alpha=0.30, zorder=2,
+        label="V-Watt curtailment (uncurtailed_P − measured P)",
     )
     ax.fill_between(
         df["t"], df["P_ceiling_kW"], df["P_kW"],
-        where=nonconformant.values, color=C_NC, alpha=0.35, zorder=2,
+        where=nonconformant.values, interpolate=True,
+        color=C_NC, alpha=0.35, zorder=2,
         label="Non-conformant (measured P above ceiling)",
     )
     if df["P_potential_kW"].notna().any():
