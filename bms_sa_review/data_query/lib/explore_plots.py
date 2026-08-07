@@ -514,7 +514,7 @@ def plot_vvar_month_scatter(scatter_df, site_id, ac_capacity_kw, period_label,
 
 def plot_voltwatt_only(df_day, site_id, ac_capacity_kw, zoom_date,
                         as4777, manufacturer="", figsize=(13, 8.5),
-                        v_ylim=(220, 280)):
+                        v_ylim=(220, 280), redact_site=False):
     """
     3-panel daily plot: VOLT-WATT ONLY (voltage, active power vs ceiling,
     Volt-Watt non-conformance). Same underlying logic as plot_operational's
@@ -623,8 +623,9 @@ def plot_voltwatt_only(df_day, site_id, ac_capacity_kw, zoom_date,
     ax_pnc.tick_params(axis="x", which="major", labelsize=8)
     fig.autofmt_xdate(rotation=0, ha="center")
 
+    site_label = "Site [redacted]" if redact_site else f"Site {site_id}"
     fig.suptitle(
-        f"Site {site_id}  ·  {manufacturer}  ·  {zoom_date}\n"
+        f"{site_label}  ·  {manufacturer}  ·  {zoom_date}\n"
         f"Volt-Watt response  ·  Nameplate {S:.0f} kW AC",
         fontsize=10, fontweight="bold", y=0.975)
     plt.show()
