@@ -511,3 +511,123 @@ def plot_vvar_month_scatter(scatter_df, site_id, ac_capacity_kw, period_label,
 
     print(f"Non-conforming: {n_nc:,} / {n_total:,} intervals ({pct_nc:.1f}%)")
     return d
+
+def plot_voltwatt_only(df_day, site_id, ac_capacity_kw, zoom_date,
+                        as4777, manufacturer="", figsize=(13, 8.5),
+                        v_ylim=(220, 280)):
+    """
+    3-panel daily plot: VOLT-WATT ONLY (voltage, active power vs ceiling,
+    Volt-Watt non-conformance). Same underlying logic as plot_operational's
+    panels 0-2, with the Volt-VAr panels dropped and the voltage axis fixed
+    to `v_ylim` for report figures.
+    """
+    vw  = as4777["VW"]
+    tol = as4777["TOL_FRAC"]
+    S   = ac_capacity_kw
+
+    t = _strip_tz(df_day["t_stamp_aest"])
+    V = df_day["voltage"]
+    P = df_day["P_kW"]
+
+    def _vw_ceil_pct(v):
+        if v < vw["V1"]: return 100.0
+        if v > vw["V2"]: return vw["P2"] * 100.0
+        return (1.0 - vw["P2"]) / (vw["V1"] - vw["V2"]) * (v - vw["V2"]) * 100.0 \
+               + vw["P2"] * 100.0
+
+    P_pct      = (P / S) * 100.0
+    P_ceil_pct = V.map(_vw_ceil_pct) + tol * 100.0
+    P_nc_pct = np.where(
+        V.values > vw["V1"],
+        np.maximum(0.0, P_pct.values - P_ceil_pct.values),
+        0.0,
+    )
+
+    vw_active = V.values > vw["V1"]
+
+    Cv, Cp, Cc, Cn = "#b45309", "#2e7d32", "#1a1a1a", "#c62828"
+    C_VW, C_GRID = "#4709b2", "#ebebeb"
+
+    def _mirror_axis(ax_primary, ax_twin, pct_to_unit, unit_ticks, fmt="{:.1f}"):
+        lo, hi = ax_primary.get_ylim()
+        ax_twin.set_ylim(lo, hi)
+        pct_positions = [u / pct_to_unit * 100.0 for u in unit_ticks]
+        ax_twin.set_yticks(pct_positions)
+        ax_twin.set_yticklabels([fmt.format(u) for u in unit_ticks])
+
+    fig, axes = plt.subplots(
+        3, 1, figsize=figsize, dpi=130, sharex=True,
+        gridspec_kw={"height_ratios": [1.8, 2.2, 1.0]})
+    fig.subplots_adjust(hspace=0.05, left=0.10, right=0.90, top=0.93, bottom=0.08)
+    ax_v, ax_p, ax_pnc = axes
+
+    for ax in axes:
+        ax.fill_between(t, 0, 1, where=vw_active,
+                        transform=ax.get_xaxis_transform(),
+                        color=C_VW, alpha=0.08, linewidth=0, zorder=0)
+    _vw_patch = Patch(color=C_VW, alpha=0.30,
+                      label=f"V >= {vw['V1']:.0f} V — V-Watt active")
+
+    # ═══ PANEL 0 Voltage ═══════════════════════════════════════════════════
+    ax_v.plot(t, V, color=Cv, lw=1.3, zorder=4)
+    for vref, ls, al, lbl in [
+        (vw["V1"], "--", 0.85, "253 V (V-Watt start)"),
+        (vw["V2"], "--", 0.85, "260 V (V-Watt full curtail)"),
+    ]:
+        ax_v.axhline(vref, color=Cv, lw=0.8, ls=ls, alpha=al, zorder=3)
+        ax_v.text(t.iloc[-1], vref + 0.25, lbl, va="bottom", ha="right",
+                  fontsize=6, color=Cv, alpha=min(al + 0.15, 1.0))
+    ax_v.set_ylabel("Voltage (V)", fontsize=8.5, color=Cv)
+    ax_v.tick_params(axis="y", colors=Cv, labelsize=8)
+    ax_v.set_ylim(*v_ylim)
+    ax_v.grid(color=C_GRID, lw=0.5); ax_v.set_facecolor("white")
+    ax_v.legend(handles=[_vw_patch], fontsize=7,
+                loc="upper left", framealpha=0.92, edgecolor="#cccccc", ncol=1)
+    plt.setp(ax_v.get_xticklabels(), visible=False)
+
+    # ═══ PANEL 1 Active power — both series on % S_rated ═══════════════════
+    ax_p.plot(t, P_ceil_pct, color=Cc, lw=1.6, zorder=4,
+              label=f"V-Watt ceiling (+{tol*100:.0f}% tol, % S_rated)")
+    ax_p.plot(t, P_pct, color=Cp, lw=1.3, zorder=5,
+              label="Measured P (% S_rated)")
+    ax_p.axhline(100, color=Cp, lw=0.6, ls=":", alpha=0.45, zorder=3,
+                 label="100% S_rated (nameplate)")
+    ax_p.axhline(vw["P2"] * 100, color=Cc, lw=0.6, ls=":", alpha=0.45, zorder=3,
+                 label=f"V-Watt floor: {vw['P2']*100:.0f}% at >={vw['V2']:.0f} V")
+    ax_p.set_ylabel("Active power\n(% S_rated)", fontsize=8.5, color=Cp)
+    ax_p.tick_params(axis="y", colors=Cp, labelsize=8)
+    ax_p.set_ylim(-2, 115); ax_p.set_yticks([0, 20, 40, 60, 80, 100])
+    ax_p.grid(color=C_GRID, lw=0.5); ax_p.set_facecolor("white")
+    ax_p.legend(fontsize=7.5, loc="upper left", framealpha=0.9)
+    plt.setp(ax_p.get_xticklabels(), visible=False)
+
+    ax_pkw = ax_p.twinx()
+    _mirror_axis(ax_p, ax_pkw, pct_to_unit=S,
+                 unit_ticks=list(np.linspace(0, S, 6)), fmt="{:.1f}")
+    ax_pkw.set_ylabel("Active power\n(kW)", fontsize=8.5, color=Cp)
+    ax_pkw.tick_params(axis="y", colors=Cp, labelsize=8)
+
+    # ═══ PANEL 2 Volt-Watt NC ══════════════════════════════════════════════
+    ax_pnc.bar(t, P_nc_pct, width=pd.Timedelta(minutes=4.5),
+               color=Cn, alpha=0.80, align="center", zorder=4,
+               label="V-Watt NC (pp above ceiling)")
+    ax_pnc.axhline(0, color="k", lw=0.5, zorder=3)
+    ax_pnc.set_ylabel("V-W NC\n(pp)", fontsize=8.5, color=Cn)
+    ax_pnc.tick_params(axis="y", colors=Cn, labelsize=8)
+    ax_pnc.set_ylim(0, max(P_nc_pct.max() * 1.15, 2.0))
+    ax_pnc.grid(color=C_GRID, lw=0.5, axis="y"); ax_pnc.set_facecolor("white")
+    ax_pnc.legend(fontsize=7.5, loc="upper left", framealpha=0.9)
+    ax_pnc.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    ax_pnc.xaxis.set_major_locator(mdates.HourLocator(interval=2))
+    ax_pnc.xaxis.set_minor_locator(mdates.HourLocator(interval=1))
+    ax_pnc.tick_params(axis="x", which="major", labelsize=8)
+    fig.autofmt_xdate(rotation=0, ha="center")
+
+    fig.suptitle(
+        f"Site {site_id}  ·  {manufacturer}  ·  {zoom_date}\n"
+        f"Volt-Watt response  ·  Nameplate {S:.0f} kW AC",
+        fontsize=10, fontweight="bold", y=0.975)
+    plt.show()
+
+    n_vw_nc = int((P_nc_pct > 0).sum())
+    print(f"\nVolt-Watt:  {n_vw_nc} non-conforming intervals")
