@@ -308,7 +308,13 @@ def plot_operational_ausgrid(df_day, serial, capacity_kw, zoom_date, manufacture
         Q_pct.values > Q_req_max_pct.values, Q_pct.values - Q_req_max_pct.values,
         np.where(Q_pct.values < Q_req_min_pct.values, -(Q_req_min_pct.values - Q_pct.values), 0.0))
 
-    nc_kvarh = nc_vvar_kvar.sum() * AS4777["INTERVAL_H"]
+    # Same capability-assessable gate as classify_voltvar_interval/Q_CAPABILITY.
+    # p_min: below this fraction of capacity, the standard doesn't require any
+    # particular reactive response, so these intervals should not count toward
+    # a "how much did the site fall short" summary, and are greyed out below.
+    capability_assessable = (P.abs() >= Q_CAPABILITY.p_min * S).to_numpy()
+
+    nc_kvarh = nc_vvar_kvar[capability_assessable].sum() * AS4777["INTERVAL_H"]
     nc_kvarh_per_kw = nc_kvarh / S
 
     vvar_active = V.values > vv["V3"]
@@ -360,8 +366,8 @@ def plot_operational_ausgrid(df_day, serial, capacity_kw, zoom_date, manufacture
     ax_p.axhline(vw["P2"] * 100, color=Cc, lw=0.6, ls=":", alpha=0.45, zorder=3, label=f"V-Watt floor: {vw['P2']*100:.0f}% at >={vw['V2']:.0f} V")
     ax_p.set_ylabel("Active power\n(% proxy)", fontsize=8.5, color=Cp)
     ax_p.tick_params(axis="y", colors=Cp, labelsize=8)
-    ax_p.set_ylim(-2, 115)
-    ax_p.set_yticks([0, 20, 40, 60, 80, 100])
+    ax_p.set_ylim(-10, 115)
+    ax_p.set_yticks([-10, 0, 20, 40, 60, 80, 100])
     ax_p.grid(color=C_GRID, lw=0.5)
     ax_p.set_facecolor("white")
     ax_p.legend(fontsize=7, loc="upper left", framealpha=0.9)
@@ -407,7 +413,9 @@ def plot_operational_ausgrid(df_day, serial, capacity_kw, zoom_date, manufacture
     ax_qkvar.set_ylabel("Reactive power\n(kvar)", fontsize=8.5, color=Cq)
     ax_qkvar.tick_params(axis="y", colors=Cq, labelsize=8)
 
-    ax_qnc.bar(t, nc_signed_pct, width=pd.Timedelta(minutes=4.5), color=Cn, alpha=0.80, align="center", zorder=4)
+    C_NA = "#9e9e9e"  # not-assessable grey, matches STATUS_COLORS['not_assessable']
+    qnc_colors = np.where(capability_assessable, Cn, C_NA)
+    ax_qnc.bar(t, nc_signed_pct, width=pd.Timedelta(minutes=4.5), color=qnc_colors, alpha=0.80, align="center", zorder=4)
     ax_qnc.axhline(0, color="k", lw=0.5, zorder=3)
     ax_qnc.set_ylabel("V-Var NC\n(pp, signed)", fontsize=8.5, color=Cn)
     ax_qnc.tick_params(axis="y", colors=Cn, labelsize=8)
@@ -415,9 +423,11 @@ def plot_operational_ausgrid(df_day, serial, capacity_kw, zoom_date, manufacture
     ax_qnc.set_facecolor("white")
     ax_qnc.legend(handles=[
         plt.Line2D([0], [0], color=Cn, lw=4, alpha=0.80, label="V-Var NC (pp outside UNCLAMPED band, signed)"),
+        plt.Line2D([0], [0], color=C_NA, lw=4, alpha=0.80,
+                   label=f"Not assessable (|P| < {Q_CAPABILITY.p_min*100:.0f}% proxy)"),
     ], fontsize=7, loc="upper left", framealpha=0.9)
     ax_qnc.text(0.99, 0.95,
-               f"Daily V-Var NC (unclamped band):  {nc_kvarh:.3f} kvarh"
+               f"Daily V-Var NC (unclamped band, assessable only):  {nc_kvarh:.3f} kvarh"
                f"   ({nc_kvarh_per_kw:.4f} kvarh / kW proxy)",
                transform=ax_qnc.transAxes, ha="right", va="top", fontsize=7.5, color=Cn,
                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=Cn, alpha=0.85, lw=0.7))
@@ -435,7 +445,7 @@ def plot_operational_ausgrid(df_day, serial, capacity_kw, zoom_date, manufacture
     plt.show()
 
     n_vw_nc = int((P_nc_pct > 0).sum())
-    n_vvar_nc = int((nc_vvar_kvar > 0).sum())
+    n_vvar_nc = int((nc_vvar_kvar[capability_assessable] > 0).sum())
     print(f"\nVolt-Watt:  {n_vw_nc} intervals above the unclamped ceiling")
     print(f"Volt-Var:   {n_vvar_nc} intervals outside the unclamped band  |  "
           f"{nc_kvarh:.3f} kvarh  ({nc_kvarh_per_kw:.4f} kvarh/kW proxy)")
