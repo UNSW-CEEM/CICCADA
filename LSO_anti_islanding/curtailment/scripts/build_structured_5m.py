@@ -27,7 +27,6 @@ from datetime import date
 from pathlib import Path
 
 import polars as pl
-
 import site_metrology_helpers as sapn_funcs
 from path_config import require_local_path
 from structured_data_shared_params import (
@@ -56,7 +55,6 @@ from structured_data_shared_params import (
     time_of_day_5min_expr,
 )
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # SAPN/EVM/BOM inputs live outside this repo, so their machine-specific root
@@ -80,9 +78,15 @@ BOM_POINTS_CSV = require_local_path(
 
 # The cleaned SAPN validation parquet should already exist locally before this
 # build runs; these derived paths intentionally stay machine-local.
-SAPN_SITE_DETAILS_PATH = SAPN_ROOT / "Nov2022" / "ebm_1_20221112_20221119_site_details.csv"
-SAPN_CIRCUIT_DETAILS_PATH = SAPN_ROOT / "Nov2022" / "ebm_1_20221112_20221119_circuit_details.csv"
-SAPN_CLEANED_DATA_PATH = SAPN_ROOT / "Nov2022" / "ebm_1_20221112_20221119_data_cleaned_sa.parquet"
+SAPN_SITE_DETAILS_PATH = (
+    SAPN_ROOT / "Nov2022" / "ebm_1_20221112_20221119_site_details.csv"
+)
+SAPN_CIRCUIT_DETAILS_PATH = (
+    SAPN_ROOT / "Nov2022" / "ebm_1_20221112_20221119_circuit_details.csv"
+)
+SAPN_CLEANED_DATA_PATH = (
+    SAPN_ROOT / "Nov2022" / "ebm_1_20221112_20221119_data_cleaned_sa.parquet"
+)
 EVM_SITE_METADATA_PATH = EVM_ROOT / "site_metadata.csv"
 EVM_CIRCUIT_METADATA_PATH = EVM_ROOT / "circuit_metadata.csv"
 EVM_TRAINING_DIR = EVM_ROOT / "curtailment training data parquet"
@@ -130,22 +134,28 @@ def canonicalise_site_metrology(site_metrology):
         as_lazy(site_metrology)
         .with_columns(end_labeled_5min_utc_expr("t_stamp").alias("t_stamp_5m"))
         .group_by(["dataset_role", "site_id", "t_stamp_5m"])
-        .agg([
-            pl.col("P_kw").mean().alias("P_kw"),
-            pl.col("V").mean().alias("V"),
-            pl.col("ac_capacity_kw").first().alias("ac_capacity_kw"),
-            pl.col("S_99").first().alias("S_99"),
-            pl.col("capacity_source").first().alias("capacity_source"),
-            pl.col("n_lat").first().alias("n_lat"),
-            pl.col("n_long").first().alias("n_long"),
-        ])
+        .agg(
+            [
+                pl.col("P_kw").mean().alias("P_kw"),
+                pl.col("V").mean().alias("V"),
+                pl.col("ac_capacity_kw").first().alias("ac_capacity_kw"),
+                pl.col("S_99").first().alias("S_99"),
+                pl.col("capacity_source").first().alias("capacity_source"),
+                pl.col("n_lat").first().alias("n_lat"),
+                pl.col("n_long").first().alias("n_long"),
+            ]
+        )
         .rename({"t_stamp_5m": "t_stamp"})
-        .with_columns([
-            adelaide_datetime_expr("t_stamp").dt.date().alias("actual_day"),
-            time_of_day_5min_expr("t_stamp").alias("actual_tod"),
-            (pl.col("P_kw") / pl.col("S_99")).alias("P_kw_norm"),
-            pl.lit(S_NORM_REACTIVE_POWER_UNAVAILABLE).cast(pl.Float64).alias("S_norm"),
-        ])
+        .with_columns(
+            [
+                adelaide_datetime_expr("t_stamp").dt.date().alias("actual_day"),
+                time_of_day_5min_expr("t_stamp").alias("actual_tod"),
+                (pl.col("P_kw") / pl.col("S_99")).alias("P_kw_norm"),
+                pl.lit(S_NORM_REACTIVE_POWER_UNAVAILABLE)
+                .cast(pl.Float64)
+                .alias("S_norm"),
+            ]
+        )
         .filter(~pl.col("actual_day").is_in(sorted(EXCLUDED_LOCAL_DAYS)))
     )
 
@@ -155,27 +165,30 @@ def observed_train_clear_sky_days(site_metrology, bom10min):
     observed_train_days = (
         as_lazy(site_metrology)
         .filter(pl.col("dataset_role") == "train")
-        .select(["site_id", "n_lat", "n_long", pl.col("actual_day").alias("clear_sky_day")])
+        .select(
+            ["site_id", "n_lat", "n_long", pl.col("actual_day").alias("clear_sky_day")]
+        )
         .unique()
     )
 
     return (
-        observed_train_days
-        .join(
+        observed_train_days.join(
             as_lazy(clear_sky_days(bom10min)),
             left_on=["n_lat", "n_long", "clear_sky_day"],
             right_on=["latitude", "longitude", "clear_sky_day"],
             how="inner",
         )
-        .select([
-            "site_id",
-            "n_lat",
-            "n_long",
-            "clear_sky_day",
-            "cloud_sum",
-            "max_GHI",
-            "rn",
-        ])
+        .select(
+            [
+                "site_id",
+                "n_lat",
+                "n_long",
+                "clear_sky_day",
+                "cloud_sum",
+                "max_GHI",
+                "rn",
+            ]
+        )
         .unique()
     )
 
@@ -190,14 +203,30 @@ def nearest_clear_sky_candidates(site_metrology, bom10min):
     cs_days = observed_train_clear_sky_days(site_metrology, bom10min)
 
     return (
-        site_days
-        .join(cs_days, on=["site_id", "n_lat", "n_long"], how="inner")
-        .with_columns([
-            (pl.col("actual_day").cast(pl.Int32) - pl.col("clear_sky_day").cast(pl.Int32)).alias("signed_day_diff"),
-            (pl.col("actual_day").cast(pl.Int32) - pl.col("clear_sky_day").cast(pl.Int32)).abs().alias("abs_day_diff"),
-        ])
+        site_days.join(cs_days, on=["site_id", "n_lat", "n_long"], how="inner")
+        .with_columns(
+            [
+                (
+                    pl.col("actual_day").cast(pl.Int32)
+                    - pl.col("clear_sky_day").cast(pl.Int32)
+                ).alias("signed_day_diff"),
+                (
+                    pl.col("actual_day").cast(pl.Int32)
+                    - pl.col("clear_sky_day").cast(pl.Int32)
+                )
+                .abs()
+                .alias("abs_day_diff"),
+            ]
+        )
         .sort(
-            ["dataset_role", "site_id", "actual_day", "abs_day_diff", "signed_day_diff", "clear_sky_day"]
+            [
+                "dataset_role",
+                "site_id",
+                "actual_day",
+                "abs_day_diff",
+                "signed_day_diff",
+                "clear_sky_day",
+            ]
         )
         .with_columns(
             pl.col("clear_sky_day")
@@ -206,20 +235,22 @@ def nearest_clear_sky_candidates(site_metrology, bom10min):
             .alias("candidate_rank")
         )
         .filter(pl.col("candidate_rank") <= BOM_CLEAR_SKY_CANDIDATES)
-        .select([
-            "dataset_role",
-            "site_id",
-            "n_lat",
-            "n_long",
-            "actual_day",
-            "clear_sky_day",
-            "cloud_sum",
-            "max_GHI",
-            "rn",
-            "abs_day_diff",
-            "signed_day_diff",
-            "candidate_rank",
-        ])
+        .select(
+            [
+                "dataset_role",
+                "site_id",
+                "n_lat",
+                "n_long",
+                "actual_day",
+                "clear_sky_day",
+                "cloud_sum",
+                "max_GHI",
+                "rn",
+                "abs_day_diff",
+                "signed_day_diff",
+                "candidate_rank",
+            ]
+        )
     )
 
 
@@ -240,7 +271,10 @@ def segmented_site_metrology(site_metrology):
             .alias("gap_start")
         )
         .with_columns(
-            pl.col("gap_start").cum_sum().over(["site_id", "actual_day"]).alias("segment_id")
+            pl.col("gap_start")
+            .cum_sum()
+            .over(["site_id", "actual_day"])
+            .alias("segment_id")
         )
     )
 
@@ -263,10 +297,12 @@ def nearest_clear_sky_profiles(site_metrology, clear_sky_candidates, bom5min):
             right_on=["site_id", "n_lat", "n_long", "cs_day"],
             how="inner",
         )
-        .with_columns([
-            pl.col("actual_day").alias("cs_day"),
-            pl.col("actual_tod").alias("cs_tod"),
-        ])
+        .with_columns(
+            [
+                pl.col("actual_day").alias("cs_day"),
+                pl.col("actual_tod").alias("cs_tod"),
+            ]
+        )
         .join(
             as_lazy(bom5min),
             left_on=["n_lat", "n_long", "t_stamp"],
@@ -274,23 +310,29 @@ def nearest_clear_sky_profiles(site_metrology, clear_sky_candidates, bom5min):
             how="inner",
         )
         .group_by(["site_id", "cs_day", "segment_id", "cs_tod"])
-        .agg([
-            pl.col("P_kw_norm").first().alias("P_kw_norm_bin"),
-            pl.col("GHI").first().alias("GHI_bin"),
-            pl.col("cloud_type").first().alias("cloud_type_cs"),
-        ])
+        .agg(
+            [
+                pl.col("P_kw_norm").first().alias("P_kw_norm_bin"),
+                pl.col("GHI").first().alias("GHI_bin"),
+                pl.col("cloud_type").first().alias("cloud_type_cs"),
+            ]
+        )
         .sort(["site_id", "cs_day", "segment_id", "cs_tod"])
-        .with_columns([
-            pl.col("P_kw_norm_bin")
-            .rolling_quantile(0.6, window_size=7, min_samples=1, center=True)
-            .over(["site_id", "cs_day", "segment_id"])
-            .alias("P_kw_norm_cs"),
-            pl.col("GHI_bin")
-            .rolling_quantile(0.6, window_size=7, min_samples=1, center=True)
-            .over(["site_id", "cs_day", "segment_id"])
-            .alias("GHI_cs"),
-        ])
-        .select(["site_id", "cs_day", "cs_tod", "P_kw_norm_cs", "GHI_cs", "cloud_type_cs"])
+        .with_columns(
+            [
+                pl.col("P_kw_norm_bin")
+                .rolling_quantile(0.6, window_size=7, min_samples=1, center=True)
+                .over(["site_id", "cs_day", "segment_id"])
+                .alias("P_kw_norm_cs"),
+                pl.col("GHI_bin")
+                .rolling_quantile(0.6, window_size=7, min_samples=1, center=True)
+                .over(["site_id", "cs_day", "segment_id"])
+                .alias("GHI_cs"),
+            ]
+        )
+        .select(
+            ["site_id", "cs_day", "cs_tod", "P_kw_norm_cs", "GHI_cs", "cloud_type_cs"]
+        )
     )
 
 
@@ -299,21 +341,21 @@ def attach_clear_sky_features(site_metrology, bom10min):
     bin_key_cols = ["dataset_role", "site_id", "actual_day", "actual_tod"]
     bom5min = bom10_to_5min(bom10min)
     clear_sky_candidates = nearest_clear_sky_candidates(site_metrology, bom10min)
-    cs_profiles = nearest_clear_sky_profiles(site_metrology, clear_sky_candidates, bom5min)
+    cs_profiles = nearest_clear_sky_profiles(
+        site_metrology, clear_sky_candidates, bom5min
+    )
 
-    actual_with_bom = (
-        as_lazy(site_metrology)
-        .join(
-            as_lazy(bom5min),
-            left_on=["n_lat", "n_long", "t_stamp"],
-            right_on=["latitude", "longitude", "time_5min"],
-            how="inner",
-        )
+    actual_with_bom = as_lazy(site_metrology).join(
+        as_lazy(bom5min),
+        left_on=["n_lat", "n_long", "t_stamp"],
+        right_on=["latitude", "longitude", "time_5min"],
+        how="inner",
     )
 
     actual_bin_candidates = (
-        actual_with_bom
-        .select(["dataset_role", "site_id", "n_lat", "n_long", "actual_day", "actual_tod"])
+        actual_with_bom.select(
+            ["dataset_role", "site_id", "n_lat", "n_long", "actual_day", "actual_tod"]
+        )
         .unique()
         .join(
             clear_sky_candidates,
@@ -326,11 +368,13 @@ def attach_clear_sky_features(site_metrology, bom10min):
             right_on=["site_id", "cs_day", "cs_tod"],
             how="left",
         )
-        .with_columns([
-            (pl.col("P_kw_norm_cs") > MIN_VALID_CLEAR_SKY_P_KW_NORM)
-            .fill_null(False)
-            .alias("candidate_valid"),
-        ])
+        .with_columns(
+            [
+                (pl.col("P_kw_norm_cs") > MIN_VALID_CLEAR_SKY_P_KW_NORM)
+                .fill_null(False)
+                .alias("candidate_valid"),
+            ]
+        )
         .with_columns(
             pl.when(pl.col("candidate_valid"))
             .then(pl.col("candidate_rank"))
@@ -341,45 +385,56 @@ def attach_clear_sky_features(site_metrology, bom10min):
         )
     )
 
-    primary_bin_profiles = (
-        actual_bin_candidates
-        .group_by(bin_key_cols)
-        .agg([
-            pl.col("clear_sky_day").filter(pl.col("candidate_rank") == 1).first().alias("primary_clear_sky_day"),
-            pl.col("GHI_cs").filter(pl.col("candidate_rank") == 1).first().alias("primary_GHI_cs"),
-            pl.col("cloud_type_cs").filter(pl.col("candidate_rank") == 1).first().alias("primary_cloud_type_cs"),
+    primary_bin_profiles = actual_bin_candidates.group_by(bin_key_cols).agg(
+        [
+            pl.col("clear_sky_day")
+            .filter(pl.col("candidate_rank") == 1)
+            .first()
+            .alias("primary_clear_sky_day"),
+            pl.col("GHI_cs")
+            .filter(pl.col("candidate_rank") == 1)
+            .first()
+            .alias("primary_GHI_cs"),
+            pl.col("cloud_type_cs")
+            .filter(pl.col("candidate_rank") == 1)
+            .first()
+            .alias("primary_cloud_type_cs"),
             pl.col("selected_candidate_rank").first().alias("selected_candidate_rank"),
-        ])
+        ]
     )
 
     selected_bin_profiles = (
-        actual_bin_candidates
-        .filter(pl.col("candidate_rank") == pl.col("selected_candidate_rank"))
+        actual_bin_candidates.filter(
+            pl.col("candidate_rank") == pl.col("selected_candidate_rank")
+        )
         .group_by(bin_key_cols)
-        .agg([
-            pl.col("clear_sky_day").first().alias("selected_clear_sky_day"),
-            pl.col("P_kw_norm_cs").first().alias("selected_P_kw_norm_cs"),
-            pl.col("GHI_cs").first().alias("selected_GHI_cs"),
-            pl.col("cloud_type_cs").first().alias("selected_cloud_type_cs"),
-        ])
+        .agg(
+            [
+                pl.col("clear_sky_day").first().alias("selected_clear_sky_day"),
+                pl.col("P_kw_norm_cs").first().alias("selected_P_kw_norm_cs"),
+                pl.col("GHI_cs").first().alias("selected_GHI_cs"),
+                pl.col("cloud_type_cs").first().alias("selected_cloud_type_cs"),
+            ]
+        )
     )
 
-    attached_clear_sky_bins = (
-        primary_bin_profiles
-        .join(selected_bin_profiles, on=bin_key_cols, how="left")
-        .with_columns([
-            pl.coalesce(["selected_clear_sky_day", "primary_clear_sky_day"]).alias("cs_day"),
+    attached_clear_sky_bins = primary_bin_profiles.join(
+        selected_bin_profiles, on=bin_key_cols, how="left"
+    ).with_columns(
+        [
+            pl.coalesce(["selected_clear_sky_day", "primary_clear_sky_day"]).alias(
+                "cs_day"
+            ),
             pl.col("actual_tod").alias("cs_tod"),
             pl.col("selected_P_kw_norm_cs").alias("P_kw_norm_cs"),
             pl.coalesce(["selected_GHI_cs", "primary_GHI_cs"]).alias("GHI_cs"),
-            pl.coalesce(["selected_cloud_type_cs", "primary_cloud_type_cs"]).alias("cloud_type_cs"),
-        ])
+            pl.coalesce(["selected_cloud_type_cs", "primary_cloud_type_cs"]).alias(
+                "cloud_type_cs"
+            ),
+        ]
     )
 
-    return (
-        actual_with_bom
-        .join(attached_clear_sky_bins, on=bin_key_cols, how="left")
-    )
+    return actual_with_bom.join(attached_clear_sky_bins, on=bin_key_cols, how="left")
 
 
 def run(
@@ -428,7 +483,9 @@ def run(
     if SITE_ID is not None:
         eligible_sites = eligible_sites.filter(pl.col("site_id") == SITE_ID)
         if eligible_sites.is_empty():
-            raise ValueError(f"Requested site_id is not eligible or not in the selected cohort: {SITE_ID}")
+            raise ValueError(
+                f"Requested site_id is not eligible or not in the selected cohort: {SITE_ID}"
+            )
     print(f"Eligible sites: {eligible_sites.height}")
 
     sapn_pv_circuits = pv_circuits_for_sites(sapn_circuits, eligible_sites)
@@ -472,10 +529,12 @@ def run(
     native_site_metrology = (
         pl.concat([train_site_metrology, validation_site_metrology], how="vertical")
         .lazy()
-        .with_columns([
-            adelaide_datetime_expr("t_stamp").dt.date().alias("actual_day"),
-            time_of_day_5min_expr("t_stamp").alias("actual_tod"),
-        ])
+        .with_columns(
+            [
+                adelaide_datetime_expr("t_stamp").dt.date().alias("actual_day"),
+                time_of_day_5min_expr("t_stamp").alias("actual_tod"),
+            ]
+        )
         .filter(~pl.col("actual_day").is_in(sorted(EXCLUDED_LOCAL_DAYS)))
         .collect()
     )
@@ -496,11 +555,12 @@ def run(
     structured = attach_clear_sky_features(site_metrology_5m, bom10min)
 
     structured_df = (
-        structured
-        .with_columns([
-            pl.col("t_stamp").dt.year().alias("year"),
-            pl.col("t_stamp").dt.month().alias("month"),
-        ])
+        structured.with_columns(
+            [
+                pl.col("t_stamp").dt.year().alias("year"),
+                pl.col("t_stamp").dt.month().alias("month"),
+            ]
+        )
         .select(STRUCTURED_5M_COLUMNS)
         .sort(["dataset_role", "site_id", "t_stamp"])
         .collect()
@@ -511,6 +571,7 @@ def run(
     structured_df.write_parquet(output_path, compression="zstd")
     print("Done")
 
+
 def main():
     """Run the separate 5-minute canonical structured-data build."""
     return run(
@@ -519,6 +580,7 @@ def main():
         # site_id=SITE_ID,
         # limit_sites=LIMIT_SITES,
     )
+
 
 if __name__ == "__main__":
     main()

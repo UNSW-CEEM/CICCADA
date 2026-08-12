@@ -13,14 +13,15 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import polars as pl
-
 import build_structured_high_resolution as bsl
+import polars as pl
 from structured_data_shared_params import bom_daily_parquets, prepare_bom10min
 
-
 DEFAULT_STRUCTURED_PARQUET = (
-    bsl.PROJECT_ROOT / "outputs" / "all_structured_data_test" / "structured_data.parquet"
+    bsl.PROJECT_ROOT
+    / "outputs"
+    / "all_structured_data_test"
+    / "structured_data.parquet"
 )
 
 
@@ -74,22 +75,22 @@ def main(
     structured_lf = structured.lazy()
 
     train_start_day, train_end_day = (
-        structured
-        .filter(pl.col("dataset_role") == "train")
-        .select([
-            pl.col("actual_day").min().alias("train_start_day"),
-            pl.col("actual_day").max().alias("train_end_day"),
-        ])
+        structured.filter(pl.col("dataset_role") == "train")
+        .select(
+            [
+                pl.col("actual_day").min().alias("train_start_day"),
+                pl.col("actual_day").max().alias("train_end_day"),
+            ]
+        )
         .row(0)
     )
     if train_start_day is None or train_end_day is None:
-        raise ValueError("Structured parquet has no train rows; cannot derive clear-sky candidate window")
+        raise ValueError(
+            "Structured parquet has no train rows; cannot derive clear-sky candidate window"
+        )
 
     bom_mapping = (
-        structured
-        .select(["site_id", "n_lat", "n_long"])
-        .unique()
-        .sort("site_id")
+        structured.select(["site_id", "n_lat", "n_long"]).unique().sort("site_id")
     )
 
     print("Preparing BOM diagnostics context")

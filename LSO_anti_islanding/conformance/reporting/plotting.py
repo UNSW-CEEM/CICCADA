@@ -1,13 +1,14 @@
 """Active conformance plotting functions."""
 
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.ticker import MultipleLocator
-from matplotlib.patches import Patch
-from pathlib import Path
 import datetime as dt
-import polars as pl
+from pathlib import Path
+
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import numpy as np
+import polars as pl
+from matplotlib.patches import Patch
+from matplotlib.ticker import MultipleLocator
 
 PLOT_COLORS = {
     "power_total": "#2e7d32",
@@ -33,7 +34,9 @@ def _true_mask_spans(timestamps, mask):
 
     boundaries = [timestamps[0] - ((timestamps[1] - timestamps[0]) / 2)]
     for idx in range(1, len(timestamps)):
-        boundaries.append(timestamps[idx - 1] + ((timestamps[idx] - timestamps[idx - 1]) / 2))
+        boundaries.append(
+            timestamps[idx - 1] + ((timestamps[idx] - timestamps[idx - 1]) / 2)
+        )
     boundaries.append(timestamps[-1] + ((timestamps[-1] - timestamps[-2]) / 2))
 
     spans = []
@@ -101,7 +104,8 @@ def plot_site_compliance_day(
         return
 
     power_cols = [
-        c for c in df.columns
+        c
+        for c in df.columns
         if c.startswith("power")
         and not c.endswith("_next")
         and not c.endswith("_logic")
@@ -110,20 +114,29 @@ def plot_site_compliance_day(
         return
 
     if day_summary is not None:
-        total_eligible = (
-            int(day_summary.get("los_eligible", 0) or 0)
-            + int(day_summary.get("ov1_eligible", 0) or 0)
+        total_eligible = int(day_summary.get("los_eligible", 0) or 0) + int(
+            day_summary.get("ov1_eligible", 0) or 0
         )
         if total_eligible == 0 and not plot_no_eligible_timestamp_days:
             return
 
     plot_df = df.sort("local_tstamp")
     if "site_power" not in plot_df.columns:
-        plot_df = plot_df.with_columns(pl.sum_horizontal([pl.col(c) for c in power_cols]).alias("site_power"))
+        plot_df = plot_df.with_columns(
+            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias("site_power")
+        )
 
     x = plot_df["local_tstamp"].to_list()
-    v10m_vals = plot_df["v10m_avg"].to_list() if "v10m_avg" in plot_df.columns else [None] * plot_df.height
-    vinst_vals = plot_df["vinst_max"].to_list() if "vinst_max" in plot_df.columns else [None] * plot_df.height
+    v10m_vals = (
+        plot_df["v10m_avg"].to_list()
+        if "v10m_avg" in plot_df.columns
+        else [None] * plot_df.height
+    )
+    vinst_vals = (
+        plot_df["vinst_max"].to_list()
+        if "vinst_max" in plot_df.columns
+        else [None] * plot_df.height
+    )
     event_active = None
     if {"los_responsible", "ov1_responsible"}.issubset(set(plot_df.columns)):
         event_active = (
@@ -176,7 +189,9 @@ def plot_site_compliance_day(
             ax_top.plot(
                 x,
                 plot_df[power_col].to_list(),
-                color=PLOT_COLORS["power_channels"][(idx - 1) % len(PLOT_COLORS["power_channels"])],
+                color=PLOT_COLORS["power_channels"][
+                    (idx - 1) % len(PLOT_COLORS["power_channels"])
+                ],
                 linewidth=1.25,
                 alpha=0.95,
                 zorder=4,
@@ -215,28 +230,41 @@ def plot_site_compliance_day(
 
     thresholds_to_draw = []
     if lso_threshold is not None:
-        thresholds_to_draw.append((
-            f"LSO threshold: {float(lso_threshold):.1f} V",
-            lso_threshold,
-            PLOT_COLORS["threshold_lso"],
-            ":",
-        ))
+        thresholds_to_draw.append(
+            (
+                f"LSO threshold: {float(lso_threshold):.1f} V",
+                lso_threshold,
+                PLOT_COLORS["threshold_lso"],
+                ":",
+            )
+        )
     if ov1_threshold is not None:
-        thresholds_to_draw.append((
-            f"OV1 threshold: {float(ov1_threshold):.1f} V",
-            ov1_threshold,
-            PLOT_COLORS["threshold_ov1"],
-            "-.",
-        ))
+        thresholds_to_draw.append(
+            (
+                f"OV1 threshold: {float(ov1_threshold):.1f} V",
+                ov1_threshold,
+                PLOT_COLORS["threshold_ov1"],
+                "-.",
+            )
+        )
 
     for v_ax in voltage_axes:
         for label, value, color, style in thresholds_to_draw:
-            v_ax.axhline(value, color=color, linestyle=style, linewidth=1.5, alpha=0.95, label=label)
+            v_ax.axhline(
+                value,
+                color=color,
+                linestyle=style,
+                linewidth=1.5,
+                alpha=0.95,
+                label=label,
+            )
 
     overall_label = (
-        "Conformant" if overall_pass is True else
-        "Non-conformant" if overall_pass is False else
-        "Unassessed"
+        "Conformant"
+        if overall_pass is True
+        else "Non-conformant"
+        if overall_pass is False
+        else "Unassessed"
     )
     if day_summary is None:
         day_label_text = "Day status unavailable"
@@ -319,21 +347,29 @@ def plot_site_compliance_day(
         lines, labels = ax_main.get_legend_handles_labels()
         v_lines, v_labels = voltage_axes[0].get_legend_handles_labels()
         if event_active is not None and bool(np.any(event_active)):
-            v_lines = v_lines + [Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")]
+            v_lines = v_lines + [
+                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
+            ]
             v_labels = v_labels + ["EVM event"]
         ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
     else:
         top_lines, top_labels = ax_top.get_legend_handles_labels()
         top_v_lines, top_v_labels = voltage_axes[0].get_legend_handles_labels()
         if event_active is not None and bool(np.any(event_active)):
-            top_v_lines = top_v_lines + [Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")]
+            top_v_lines = top_v_lines + [
+                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
+            ]
             top_v_labels = top_v_labels + ["EVM event"]
-        ax_top.legend(top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2)
+        ax_top.legend(
+            top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
+        )
 
         bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
         bottom_v_lines, bottom_v_labels = voltage_axes[1].get_legend_handles_labels()
         if event_active is not None and bool(np.any(event_active)):
-            bottom_v_lines = bottom_v_lines + [Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")]
+            bottom_v_lines = bottom_v_lines + [
+                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
+            ]
             bottom_v_labels = bottom_v_labels + ["EVM event"]
         ax_bottom.legend(
             bottom_lines + bottom_v_lines,
@@ -381,7 +417,8 @@ def plot_method_threshold_overlay_day(
         return
 
     power_cols = [
-        c for c in df.columns
+        c
+        for c in df.columns
         if c.startswith("power")
         and not c.endswith("_next")
         and not c.endswith("_logic")
@@ -398,13 +435,13 @@ def plot_method_threshold_overlay_day(
     x = plot_df["local_tstamp"].to_list()
     v10m_vals = (
         plot_df["v10m_avg"].to_list()
-        if "v10m_avg" in plot_df.columns else
-        [None] * plot_df.height
+        if "v10m_avg" in plot_df.columns
+        else [None] * plot_df.height
     )
     vinst_vals = (
         plot_df["vinst_max"].to_list()
-        if "vinst_max" in plot_df.columns else
-        [None] * plot_df.height
+        if "vinst_max" in plot_df.columns
+        else [None] * plot_df.height
     )
 
     overlay_spans = []
@@ -414,33 +451,45 @@ def plot_method_threshold_overlay_day(
             if event_mask is None:
                 continue
             if len(event_mask) != len(x):
-                raise ValueError("method_event_overlays mask length does not match plot frame length")
+                raise ValueError(
+                    "method_event_overlays mask length does not match plot frame length"
+                )
             event_spans = _true_mask_spans(x, event_mask)
             if not event_spans:
                 continue
-            overlay_spans.append({
-                "label": overlay_info.get("label", "Method"),
-                "color": overlay_info.get("color", PLOT_COLORS["shade"]),
-                "alpha": float(overlay_info.get("alpha", 0.12)),
-                "spans": event_spans,
-            })
+            overlay_spans.append(
+                {
+                    "label": overlay_info.get("label", "Method"),
+                    "color": overlay_info.get("color", PLOT_COLORS["shade"]),
+                    "alpha": float(overlay_info.get("alpha", 0.12)),
+                    "spans": event_spans,
+                }
+            )
     else:
         event_active = comparison_event_mask
-        if event_active is None and {"los_responsible", "ov1_responsible"}.issubset(set(plot_df.columns)):
+        if event_active is None and {"los_responsible", "ov1_responsible"}.issubset(
+            set(plot_df.columns)
+        ):
             event_active = (
                 plot_df["los_responsible"].fill_null(False).cast(pl.Boolean)
                 | plot_df["ov1_responsible"].fill_null(False).cast(pl.Boolean)
             ).to_list()
         if event_active is not None and len(event_active) != len(x):
-            raise ValueError("comparison_event_mask length does not match plot frame length")
-        event_spans = _true_mask_spans(x, event_active) if event_active is not None else []
+            raise ValueError(
+                "comparison_event_mask length does not match plot frame length"
+            )
+        event_spans = (
+            _true_mask_spans(x, event_active) if event_active is not None else []
+        )
         if event_spans:
-            overlay_spans.append({
-                "label": "EVM event",
-                "color": PLOT_COLORS["shade"],
-                "alpha": 0.22,
-                "spans": event_spans,
-            })
+            overlay_spans.append(
+                {
+                    "label": "EVM event",
+                    "color": PLOT_COLORS["shade"],
+                    "alpha": 0.22,
+                    "spans": event_spans,
+                }
+            )
     is_single_phase = len(power_cols) == 1
 
     if is_single_phase:
@@ -482,7 +531,9 @@ def plot_method_threshold_overlay_day(
             ax_top.plot(
                 x,
                 plot_df[power_col].to_list(),
-                color=PLOT_COLORS["power_channels"][(idx - 1) % len(PLOT_COLORS["power_channels"])],
+                color=PLOT_COLORS["power_channels"][
+                    (idx - 1) % len(PLOT_COLORS["power_channels"])
+                ],
                 linewidth=1.4,
                 zorder=4,
                 label=_power_trace_label(power_cols, idx),
@@ -604,30 +655,50 @@ def plot_method_threshold_overlay_day(
         v_lines, v_labels = voltage_axes[0].get_legend_handles_labels()
         if overlay_spans:
             v_lines = v_lines + [
-                Patch(facecolor=overlay_info["color"], alpha=overlay_info["alpha"], edgecolor="none")
+                Patch(
+                    facecolor=overlay_info["color"],
+                    alpha=overlay_info["alpha"],
+                    edgecolor="none",
+                )
                 for overlay_info in overlay_spans
             ]
-            v_labels = v_labels + [f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans]
+            v_labels = v_labels + [
+                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+            ]
         ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
     else:
         top_lines, top_labels = ax_top.get_legend_handles_labels()
         top_v_lines, top_v_labels = voltage_axes[0].get_legend_handles_labels()
         if overlay_spans:
             top_v_lines = top_v_lines + [
-                Patch(facecolor=overlay_info["color"], alpha=overlay_info["alpha"], edgecolor="none")
+                Patch(
+                    facecolor=overlay_info["color"],
+                    alpha=overlay_info["alpha"],
+                    edgecolor="none",
+                )
                 for overlay_info in overlay_spans
             ]
-            top_v_labels = top_v_labels + [f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans]
-        ax_top.legend(top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2)
+            top_v_labels = top_v_labels + [
+                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+            ]
+        ax_top.legend(
+            top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
+        )
 
         bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
         bottom_v_lines, bottom_v_labels = voltage_axes[1].get_legend_handles_labels()
         if overlay_spans:
             bottom_v_lines = bottom_v_lines + [
-                Patch(facecolor=overlay_info["color"], alpha=overlay_info["alpha"], edgecolor="none")
+                Patch(
+                    facecolor=overlay_info["color"],
+                    alpha=overlay_info["alpha"],
+                    edgecolor="none",
+                )
                 for overlay_info in overlay_spans
             ]
-            bottom_v_labels = bottom_v_labels + [f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans]
+            bottom_v_labels = bottom_v_labels + [
+                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+            ]
         ax_bottom.legend(
             bottom_lines + bottom_v_lines,
             bottom_labels + bottom_v_labels,
@@ -679,7 +750,9 @@ def plot_site_threshold_distribution(
     fig, ax_left = plt.subplots(figsize=(max(12, len(site_ids) * 0.18), 7))
 
     ax_left.plot(x, v_min, color="#9ecae1", marker="o", linewidth=1.8, label="Min (V)")
-    ax_left.plot(x, v_med, color="#4C78A8", marker="o", linewidth=2.2, label="Median (V)")
+    ax_left.plot(
+        x, v_med, color="#4C78A8", marker="o", linewidth=2.2, label="Median (V)"
+    )
     ax_left.plot(x, v_max, color="#2ca02c", marker="o", linewidth=1.8, label="Max (V)")
 
     ax_left.set_title(title)
@@ -694,7 +767,9 @@ def plot_site_threshold_distribution(
 
     if std_v is not None and any(v is not None for v in std_v):
         ax_right = ax_left.twinx()
-        ax_right.plot(x, std_v, color="#F58518", marker="s", linewidth=1.8, label="Std (V)")
+        ax_right.plot(
+            x, std_v, color="#F58518", marker="s", linewidth=1.8, label="Std (V)"
+        )
         ax_right.set_ylabel("Std (V)")
         lines_left, labels_left = ax_left.get_legend_handles_labels()
         lines_right, labels_right = ax_right.get_legend_handles_labels()
@@ -734,7 +809,9 @@ def plot_site_threshold_distribution_extremes(
     if plot_df.is_empty():
         return
 
-    plot_df = plot_df.sort("std_v", descending=highest_std, nulls_last=True).head(n_sites)
+    plot_df = plot_df.sort("std_v", descending=highest_std, nulls_last=True).head(
+        n_sites
+    )
     plot_site_threshold_distribution(
         plot_df,
         title=title,

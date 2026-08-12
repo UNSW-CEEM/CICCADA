@@ -35,7 +35,9 @@ def _local_paths_module() -> ModuleType:
         LOCAL_PATHS_FILE,
     )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"Could not load local path settings from {LOCAL_PATHS_FILE}.")
+        raise RuntimeError(
+            f"Could not load local path settings from {LOCAL_PATHS_FILE}."
+        )
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

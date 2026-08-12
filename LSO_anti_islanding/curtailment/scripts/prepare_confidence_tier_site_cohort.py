@@ -12,7 +12,6 @@ from pathlib import Path
 import polars as pl
 from path_config import require_local_path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # This tracked script keeps the SAPN root in `local_paths.py` so the repo does
 # not commit machine-specific external data locations.

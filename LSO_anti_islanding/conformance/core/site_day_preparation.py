@@ -3,7 +3,6 @@
 from datetime import time
 
 import polars as pl
-
 from config import (
     SITE_DAY_ANALYSIS_START,
     SITE_DAY_END,
@@ -21,8 +20,7 @@ def select_site_pv_data(all_data, circuit_details, site_number):
     )
     pv_circuit_ids = (
         circuit_details_df.filter(
-            (pl.col("site_id") == site_number)
-            & (pl.col("con_type") == "pv_site_net")
+            (pl.col("site_id") == site_number) & (pl.col("con_type") == "pv_site_net")
         )
         .select("c_id")
         .unique()
@@ -32,10 +30,7 @@ def select_site_pv_data(all_data, circuit_details, site_number):
     all_data_ldf = all_data if isinstance(all_data, pl.LazyFrame) else all_data.lazy()
     if not pv_circuit_ids:
         return all_data_ldf.limit(0).collect()
-    return (
-        all_data_ldf.filter(pl.col("c_id").is_in(pv_circuit_ids))
-        .collect()
-    )
+    return all_data_ldf.filter(pl.col("c_id").is_in(pv_circuit_ids)).collect()
 
 
 def extract_site_day(site_data, start_day, end_day):
@@ -69,7 +64,7 @@ def extract_site_day(site_data, start_day, end_day):
     # SAPN uses duration as part of the later pivot index. Preserve its source
     # order within equal timestamps so the established edge sequence is stable.
     # Datasets without duration can use an explicit circuit tie-breaker.
-    
+
     sort_columns = ["local_tstamp"] if has_duration else ["local_tstamp", "c_id"]
 
     # This is unnecessary when deduplication was completed in preprocessing,
@@ -123,40 +118,36 @@ def calculate_site_day_voltage_signals(
 
     if voltage_cols:
         for column in voltage_cols:
-            rolled_name = (
-                f"vmean_rolling_10m{column.replace(voltage_prefix, '', 1)}"
-            )
+            rolled_name = f"vmean_rolling_10m{column.replace(voltage_prefix, '', 1)}"
             valid_voltage = df.filter(pl.col(column).is_not_null())
             if valid_voltage.is_empty():
-                df = df.with_columns(
-                    pl.lit(None).cast(pl.Float64).alias(rolled_name)
-                )
+                df = df.with_columns(pl.lit(None).cast(pl.Float64).alias(rolled_name))
                 continue
-            rolled = (
-                valid_voltage
-                .with_columns(
-                    pl.col(column).rolling_mean_by(
-                        by="local_tstamp",
-                        window_size=rolling_window,
-                        closed="right",
-                    ).alias(rolled_name),
+            rolled = valid_voltage.with_columns(
+                pl.col(column)
+                .rolling_mean_by(
+                    by="local_tstamp",
+                    window_size=rolling_window,
+                    closed="right",
                 )
-                .select(["local_tstamp", rolled_name])
-            )
+                .alias(rolled_name),
+            ).select(["local_tstamp", rolled_name])
             df = df.join(rolled, on="local_tstamp", how="left")
 
-        rolling_cols = [
-            c for c in df.columns if c.startswith("vmean_rolling_10m")
-        ]
-        return df.with_columns([
-            pl.mean_horizontal([pl.col(c) for c in rolling_cols]).alias("v10m_avg"),
-            pl.max_horizontal([pl.col(c) for c in voltage_cols]).alias("vinst_max"),
-        ])
+        rolling_cols = [c for c in df.columns if c.startswith("vmean_rolling_10m")]
+        return df.with_columns(
+            [
+                pl.mean_horizontal([pl.col(c) for c in rolling_cols]).alias("v10m_avg"),
+                pl.max_horizontal([pl.col(c) for c in voltage_cols]).alias("vinst_max"),
+            ]
+        )
 
-    return df.with_columns([
-        pl.lit(None).cast(pl.Float64).alias("v10m_avg"),
-        pl.lit(None).cast(pl.Float64).alias("vinst_max"),
-    ])
+    return df.with_columns(
+        [
+            pl.lit(None).cast(pl.Float64).alias("v10m_avg"),
+            pl.lit(None).cast(pl.Float64).alias("vinst_max"),
+        ]
+    )
 
 
 def trim_site_day_analysis_window(
@@ -166,7 +157,5 @@ def trim_site_day_analysis_window(
 ):
     """Keep the inclusive local-time window used for eligibility and analysis."""
     return site_day_df.filter(
-        pl.col("local_tstamp")
-        .dt.time()
-        .is_between(start_time, end_time, closed="both")
+        pl.col("local_tstamp").dt.time().is_between(start_time, end_time, closed="both")
     )

@@ -21,7 +21,6 @@ from pathlib import Path
 
 import polars as pl
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ADELAIDE_TZ = "Australia/Adelaide"
 VALIDATION_P_KW_NORM_EPS = 0.05
@@ -32,9 +31,7 @@ DEFAULT_STRUCTURED_DATA = (
 )
 
 # trained modle parameters
-DEFAULT_MODEL_DATA = (
-    PROJECT_ROOT / "outputs" / "model" / "pv_ghi_norm_model_5m.parquet"
-)
+DEFAULT_MODEL_DATA = PROJECT_ROOT / "outputs" / "model" / "pv_ghi_norm_model_5m.parquet"
 
 # output estimate of this file
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "prediction"
@@ -76,20 +73,23 @@ def as_lazy(df):
 def eligible_validation_rows(structured_data, site_id=None):
     """Apply the original Write_All_uncartailedPV row filters."""
     rows = (
-        structured_data
-        .filter(pl.col("dataset_role") == "validation")
+        structured_data.filter(pl.col("dataset_role") == "validation")
         .filter(pl.col("P_kw_norm_cs") > 0.2)
         .filter(pl.col("GHI") > 50)
         # .filter(pl.col("P_kw_norm") > 0.05)
-        .filter(pl.col("P_kw_norm") >= 0) # modified this as it can be 0 in our case
+        .filter(pl.col("P_kw_norm") >= 0)  # modified this as it can be 0 in our case
         # .filter(pl.col("P_kw_norm") <= pl.col("P_kw_norm_cs"))
         # Validation-only tolerance: does not affect model training,
         # but can affect plotting and downstream curtailment results.
-        .filter(pl.col("P_kw_norm") <= (pl.col("P_kw_norm_cs") + VALIDATION_P_KW_NORM_EPS))
-        .with_columns([
-            pl.col("actual_tod").alias("tod_bin"),
-            (pl.col("GHI") / pl.col("GHI_cs")).alias("x"),
-        ])
+        .filter(
+            pl.col("P_kw_norm") <= (pl.col("P_kw_norm_cs") + VALIDATION_P_KW_NORM_EPS)
+        )
+        .with_columns(
+            [
+                pl.col("actual_tod").alias("tod_bin"),
+                (pl.col("GHI") / pl.col("GHI_cs")).alias("x"),
+            ]
+        )
     )
 
     if site_id is not None:
@@ -100,15 +100,14 @@ def eligible_validation_rows(structured_data, site_id=None):
 
 def score_uncurtailed(eligible_data, model_data):
     """Join the model and produce the all_uncurtailedPV output shape."""
-    model = (
-        as_lazy(model_data)
-        .select([
+    model = as_lazy(model_data).select(
+        [
             "site_id",
             "tod_bin",
             "a",
             "b",
             pl.col("n").alias("n_train"),
-        ])
+        ]
     )
 
     return (
@@ -118,8 +117,9 @@ def score_uncurtailed(eligible_data, model_data):
         # make sure this is in line with script 4
         .join(model, on=["site_id", "tod_bin"], how="inner")
         .with_columns(
-            (pl.col("P_kw_norm_cs") * (pl.col("a") + pl.col("b") * pl.col("x")))
-            .alias("P_kw_norm_est_raw")
+            (pl.col("P_kw_norm_cs") * (pl.col("a") + pl.col("b") * pl.col("x"))).alias(
+                "P_kw_norm_est_raw"
+            )
         )
         .with_columns(
             pl.when(pl.col("P_kw_norm_est_raw") >= pl.col("P_kw_norm"))
@@ -128,20 +128,22 @@ def score_uncurtailed(eligible_data, model_data):
             .alias("P_kw_norm_est")
         )
         .filter(pl.col("P_kw_norm_est").is_not_null())
-        .with_columns([
-            # t_stamp is preserved as the original UTC/source validation
-            # timestamp. local_tstamp and tod_bin are added only for clarity.
-            pl.col("t_stamp")
-            .dt.replace_time_zone("UTC")
-            .dt.convert_time_zone(ADELAIDE_TZ)
-            .alias("local_tstamp"),
-            pl.col("t_stamp").dt.year().alias("year"),
-            pl.col("t_stamp").dt.month().alias("month"),
-            (pl.col("P_kw_norm_est") * pl.col("S_99")).alias("uncurtailed_P"),
-            (pl.col("P_kw_norm") * pl.col("S_99")).alias("P_kw"),
-            pl.col("x").alias("GHI"),
-            pl.col("n_train").cast(pl.Int64),
-        ])
+        .with_columns(
+            [
+                # t_stamp is preserved as the original UTC/source validation
+                # timestamp. local_tstamp and tod_bin are added only for clarity.
+                pl.col("t_stamp")
+                .dt.replace_time_zone("UTC")
+                .dt.convert_time_zone(ADELAIDE_TZ)
+                .alias("local_tstamp"),
+                pl.col("t_stamp").dt.year().alias("year"),
+                pl.col("t_stamp").dt.month().alias("month"),
+                (pl.col("P_kw_norm_est") * pl.col("S_99")).alias("uncurtailed_P"),
+                (pl.col("P_kw_norm") * pl.col("S_99")).alias("P_kw"),
+                pl.col("x").alias("GHI"),
+                pl.col("n_train").cast(pl.Int64),
+            ]
+        )
         .select(ALL_UNCURTAILED_COLUMNS)
         .sort(["site_id", "t_stamp"])
     )

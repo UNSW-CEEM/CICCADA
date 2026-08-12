@@ -1,6 +1,5 @@
 """Site-level Phase A aggregation and threshold learning."""
 
-
 import polars as pl
 
 
@@ -41,6 +40,7 @@ def _range_or_none(values):
     if not values:
         return None
     return max(values) - min(values)
+
 
 def _threshold_confidence_from_records(records: pl.DataFrame):
     if records.is_empty():
@@ -86,9 +86,19 @@ def _threshold_confidence_from_records(records: pl.DataFrame):
     drop10_count = sum(v >= 10.0 for v in drop_pcts)
     spread_v = _range_or_none(values)
 
-    if event_count >= 2 and drop20_count >= 2 and spread_v is not None and spread_v <= 2.0:
+    if (
+        event_count >= 2
+        and drop20_count >= 2
+        and spread_v is not None
+        and spread_v <= 2.0
+    ):
         tier = "high"
-    elif event_count >= 2 and drop10_count >= 2 and spread_v is not None and spread_v <= 3.0:
+    elif (
+        event_count >= 2
+        and drop10_count >= 2
+        and spread_v is not None
+        and spread_v <= 3.0
+    ):
         tier = "medium"
     else:
         tier = "low"
@@ -102,16 +112,27 @@ def _threshold_confidence_from_records(records: pl.DataFrame):
         "confidence_spread_v": spread_v,
     }
 
+
 def _site_thresholds_from_records(
     records: pl.DataFrame,
     *,
     tau: float = 0.3,
     ov1_floor_offset: float = 0.5,
 ):
-    los_rows = records.filter(pl.col("mech") == "LOS") if not records.is_empty() else pl.DataFrame()
-    ov1_rows = records.filter(pl.col("mech") == "OV1") if not records.is_empty() else pl.DataFrame()
+    los_rows = (
+        records.filter(pl.col("mech") == "LOS")
+        if not records.is_empty()
+        else pl.DataFrame()
+    )
+    ov1_rows = (
+        records.filter(pl.col("mech") == "OV1")
+        if not records.is_empty()
+        else pl.DataFrame()
+    )
     los_vals = los_rows["v_los_recorded"].to_list() if not los_rows.is_empty() else []
-    ov1_vals_direct = ov1_rows["v_ov1_recorded"].to_list() if not ov1_rows.is_empty() else []
+    ov1_vals_direct = (
+        ov1_rows["v_ov1_recorded"].to_list() if not ov1_rows.is_empty() else []
+    )
 
     delta_los = None
     delta_los_p25 = None
@@ -137,17 +158,19 @@ def _site_thresholds_from_records(
                 vinst = row["vinst_disc"]
                 is_clear_ov1 = vinst is not None and float(vinst) > 260.3
                 is_grey_ov1 = (
-                    v10m is not None and
-                    259.0 < float(v10m) <= 260.3 and
-                    vinst is not None and
-                    259.0 <= float(vinst) <= 260.3
+                    v10m is not None
+                    and 259.0 < float(v10m) <= 260.3
+                    and vinst is not None
+                    and 259.0 <= float(vinst) <= 260.3
                 )
                 if is_clear_ov1 or is_grey_ov1:
                     reclassified_ov1_vals.append(float(vinst))
             else:
                 retained_los_vals.append(vlos)
         los_vals = retained_los_vals
-        ov1_vals = [float(v) for v in ov1_vals_direct if v is not None] + reclassified_ov1_vals
+        ov1_vals = [
+            float(v) for v in ov1_vals_direct if v is not None
+        ] + reclassified_ov1_vals
         ov1_reclassified_count = len(reclassified_ov1_vals)
         delta_ov1 = _median_or_none(ov1_vals) - 265.0
     else:
@@ -197,7 +220,9 @@ def _site_thresholds_from_records(
         "ov1_event_count": len(ov1_vals),
         "ov1_reclassified_count": ov1_reclassified_count,
         "los_removed_by_ov1_count": los_removed_by_ov1_count,
-        "delta_gap_v": None if (delta_los is None or delta_ov1 is None) else abs(delta_ov1 - delta_los),
+        "delta_gap_v": None
+        if (delta_los is None or delta_ov1 is None)
+        else abs(delta_ov1 - delta_los),
     }
 
 
@@ -227,12 +252,24 @@ def run_phase_a_for_site(
         )
         phase_a_days.append({"day": day_info["day"], **outcome})
         if not outcome["records"].is_empty():
-            records_all.append(outcome["records"].with_columns(pl.lit(day_info["day"]).alias("event_day")))
+            records_all.append(
+                outcome["records"].with_columns(
+                    pl.lit(day_info["day"]).alias("event_day")
+                )
+            )
         if not outcome["brackets"].is_empty():
-            brackets_all.append(outcome["brackets"].with_columns(pl.lit(day_info["day"]).alias("event_day")))
+            brackets_all.append(
+                outcome["brackets"].with_columns(
+                    pl.lit(day_info["day"]).alias("event_day")
+                )
+            )
 
-    last_records = pl.concat(records_all, how="vertical") if records_all else pl.DataFrame()
-    last_brackets = pl.concat(brackets_all, how="vertical") if brackets_all else pl.DataFrame()
+    last_records = (
+        pl.concat(records_all, how="vertical") if records_all else pl.DataFrame()
+    )
+    last_brackets = (
+        pl.concat(brackets_all, how="vertical") if brackets_all else pl.DataFrame()
+    )
 
     raw_thresholds = _site_thresholds_from_records(
         last_records,

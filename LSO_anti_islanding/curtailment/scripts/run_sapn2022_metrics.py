@@ -21,7 +21,6 @@ from pathlib import Path
 import polars as pl
 from path_config import require_local_path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ADELAIDE_TZ = "Australia/Adelaide"
 DISCONNECT_POWER_FRACTION = 0.04
@@ -97,14 +96,24 @@ def phase_b_responsible_rows(phase_b_detail, site_id=None):
     """Build one SAPN-responsibility flag per exact site/local timestamp."""
     rows = (
         as_lazy(phase_b_detail)
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            phase_b_local_timestamp_expr("local_tstamp").alias("local_tstamp_naive"),
-            pl.col("los_responsible").cast(pl.Boolean, strict=False).fill_null(False),
-            pl.col("ov1_responsible").cast(pl.Boolean, strict=False).fill_null(False),
-        ])
         .with_columns(
-            (pl.col("los_responsible") | pl.col("ov1_responsible")).alias("is_responsible")
+            [
+                pl.col("site_id").cast(pl.Int64),
+                phase_b_local_timestamp_expr("local_tstamp").alias(
+                    "local_tstamp_naive"
+                ),
+                pl.col("los_responsible")
+                .cast(pl.Boolean, strict=False)
+                .fill_null(False),
+                pl.col("ov1_responsible")
+                .cast(pl.Boolean, strict=False)
+                .fill_null(False),
+            ]
+        )
+        .with_columns(
+            (pl.col("los_responsible") | pl.col("ov1_responsible")).alias(
+                "is_responsible"
+            )
         )
     )
 
@@ -112,14 +121,18 @@ def phase_b_responsible_rows(phase_b_detail, site_id=None):
         rows = rows.filter(pl.col("site_id") == site_id)
 
     return (
-        rows
-        .filter(pl.col("local_tstamp_naive").is_not_null())
+        rows.filter(pl.col("local_tstamp_naive").is_not_null())
         .group_by(["site_id", "local_tstamp_naive"])
-        .agg([
-            pl.col("is_responsible").any().alias("timestamp_is_responsible"),
-            pl.col("is_responsible").sum().cast(pl.Int64).alias("responsible_count"),
-            pl.len().alias("phase_b_row_count"),
-        ])
+        .agg(
+            [
+                pl.col("is_responsible").any().alias("timestamp_is_responsible"),
+                pl.col("is_responsible")
+                .sum()
+                .cast(pl.Int64)
+                .alias("responsible_count"),
+                pl.len().alias("phase_b_row_count"),
+            ]
+        )
         .filter(pl.col("timestamp_is_responsible"))
     )
 
@@ -128,21 +141,27 @@ def uncurtailed_rows(all_uncurtailed, site_id=None):
     """Prepare model-scored validation rows at exact Adelaide local timestamp grain."""
     rows = (
         as_lazy(all_uncurtailed)
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            utc_to_adelaide_local_timestamp_expr("t_stamp").alias("local_tstamp_naive"),
-            pl.col("P_kw").cast(pl.Float64),
-            pl.col("uncurtailed_P").cast(pl.Float64),
-        ])
-        .select([
-            "site_id",
-            "local_tstamp_naive",
-            "t_stamp",
-            "P_kw",
-            "uncurtailed_P",
-            "GHI",
-            "n_train",
-        ])
+        .with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                utc_to_adelaide_local_timestamp_expr("t_stamp").alias(
+                    "local_tstamp_naive"
+                ),
+                pl.col("P_kw").cast(pl.Float64),
+                pl.col("uncurtailed_P").cast(pl.Float64),
+            ]
+        )
+        .select(
+            [
+                "site_id",
+                "local_tstamp_naive",
+                "t_stamp",
+                "P_kw",
+                "uncurtailed_P",
+                "GHI",
+                "n_train",
+            ]
+        )
     )
 
     if site_id is not None:
@@ -156,10 +175,12 @@ def capacity_by_site(structured_data, site_id=None):
     rows = (
         as_lazy(structured_data)
         .filter(pl.col("dataset_role") == "validation")
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("ac_capacity_kw").cast(pl.Float64, strict=False),
-        ])
+        .with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("ac_capacity_kw").cast(pl.Float64, strict=False),
+            ]
+        )
         .group_by("site_id")
         .agg(pl.col("ac_capacity_kw").max().alias("ac_capacity_kw"))
     )
@@ -173,15 +194,20 @@ def capacity_by_site(structured_data, site_id=None):
 def score_curtailment(phase_bins, all_uncurtailed, capacities):
     """Join responsible timestamps to uncurtailed PV and calculate curtailed PV."""
     return (
-        phase_bins
-        .join(all_uncurtailed, on=["site_id", "local_tstamp_naive"], how="left")
+        phase_bins.join(
+            all_uncurtailed, on=["site_id", "local_tstamp_naive"], how="left"
+        )
         .join(capacities, on="site_id", how="left")
-        .with_columns([
-            (pl.col("ac_capacity_kw") * DISCONNECT_POWER_FRACTION).alias("max_P_sapn2022"),
-            pl.col("local_tstamp_naive").dt.year().alias("year"),
-            pl.col("local_tstamp_naive").dt.month().alias("month"),
-            pl.col("local_tstamp_naive").dt.day().alias("day"),
-        ])
+        .with_columns(
+            [
+                (pl.col("ac_capacity_kw") * DISCONNECT_POWER_FRACTION).alias(
+                    "max_P_sapn2022"
+                ),
+                pl.col("local_tstamp_naive").dt.year().alias("year"),
+                pl.col("local_tstamp_naive").dt.month().alias("month"),
+                pl.col("local_tstamp_naive").dt.day().alias("day"),
+            ]
+        )
         .with_columns(
             pl.when(
                 pl.col("timestamp_is_responsible")
@@ -201,18 +227,26 @@ def score_curtailment(phase_bins, all_uncurtailed, capacities):
 def daily_site_summary(scored_bins):
     """Aggregate to the original daily/site summary shape, curtailment only."""
     return (
-        scored_bins
-        .filter(
+        scored_bins.filter(
             (pl.col("uncurtailed_P") > pl.col("max_P_sapn2022"))
             | pl.col("uncurtailed_P").is_null()
         )
         .group_by(["year", "month", "day", "site_id"])
-        .agg([
-            pl.col("curtailed_P").sum().alias("curtailment_sapn2022_sum"),
-            (pl.col("curtailed_P") > 0).sum().cast(pl.Int64).alias("curtailment_sapn2022_count"),
-            pl.col("uncurtailed_P").is_null().sum().cast(pl.Int64).alias("null_uncurtailed_P_count"),
-            pl.len().alias("total_count"),
-        ])
+        .agg(
+            [
+                pl.col("curtailed_P").sum().alias("curtailment_sapn2022_sum"),
+                (pl.col("curtailed_P") > 0)
+                .sum()
+                .cast(pl.Int64)
+                .alias("curtailment_sapn2022_count"),
+                pl.col("uncurtailed_P")
+                .is_null()
+                .sum()
+                .cast(pl.Int64)
+                .alias("null_uncurtailed_P_count"),
+                pl.len().alias("total_count"),
+            ]
+        )
         .select(OUTPUT_COLUMNS)
         .sort(["year", "month", "day", "site_id"])
     )
@@ -220,20 +254,27 @@ def daily_site_summary(scored_bins):
 
 def diagnostics(scored_bins):
     """Summarise join coverage and positive curtailment counts for stdout."""
-    return (
-        scored_bins
-        .select([
+    return scored_bins.select(
+        [
             pl.len().alias("responsible_timestamps"),
             pl.col("uncurtailed_P").is_not_null().sum().alias("matched_timestamps"),
-            pl.col("uncurtailed_P").is_null().sum().alias("unmatched_responsible_timestamps"),
-            pl.col("ac_capacity_kw").is_null().sum().alias("missing_capacity_timestamps"),
+            pl.col("uncurtailed_P")
+            .is_null()
+            .sum()
+            .alias("unmatched_responsible_timestamps"),
+            pl.col("ac_capacity_kw")
+            .is_null()
+            .sum()
+            .alias("missing_capacity_timestamps"),
             (
                 (pl.col("uncurtailed_P") > pl.col("max_P_sapn2022"))
                 | pl.col("uncurtailed_P").is_null()
-            ).sum().alias("original_style_metric_timestamps"),
+            )
+            .sum()
+            .alias("original_style_metric_timestamps"),
             (pl.col("curtailed_P") > 0).sum().alias("positive_curtailment_timestamps"),
             pl.col("curtailed_P").sum().alias("curtailment_sapn2022_sum"),
-        ])
+        ]
     )
 
 
@@ -276,7 +317,9 @@ def main():
 
     output_path = args.output_dir / args.output_name
     print(f"Writing {output_path}")
-    daily_site_summary(scored_bins).collect().write_parquet(output_path, compression="zstd")
+    daily_site_summary(scored_bins).collect().write_parquet(
+        output_path, compression="zstd"
+    )
     print("Done")
 
 

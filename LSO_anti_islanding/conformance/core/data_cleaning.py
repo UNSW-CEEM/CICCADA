@@ -1,7 +1,6 @@
 """Shared measurement-cleaning functions used by data adapters."""
 
 import polars as pl
-
 from config import (
     DEDUPLICATION_ABSOLUTE_TOLERANCE_KW,
     DEDUPLICATION_RELATIVE_TOLERANCE,
@@ -9,7 +8,6 @@ from config import (
     VALID_VOLTAGE_MAX,
     VALID_VOLTAGE_MIN,
 )
-
 
 SUPPORTED_LOCAL_TIMEZONES = (
     "Australia/Adelaide",
@@ -32,15 +30,13 @@ def convertWToKw(data):
 def convertcWToKw(data):
     """Convert centiwatts to kilowatts."""
     return data.with_columns(
-        (pl.col("power").cast(pl.Float64, strict=False) / 100_000.0).alias(
-            "power"
-        )
+        (pl.col("power").cast(pl.Float64, strict=False) / 100_000.0).alias("power")
     )
 
 
 def clipNegativePower(data):
     """Clip measured negative power to zero without replacing missing values.
-       This is applied after implementing polarity
+    This is applied after implementing polarity
     """
     return data.with_columns(
         pl.when(pl.col("power") < 0)
@@ -60,22 +56,22 @@ def deduplicateMeasurements(data, timestamp_column="utc_tstamp"):
     key_columns = ["c_id", timestamp_column]
     data_columns = data.collect_schema().names()
     other_columns = [
-        column
-        for column in data_columns
-        if column not in {*key_columns, "power"}
+        column for column in data_columns if column not in {*key_columns, "power"}
     ]
 
     grouped = data.group_by(
         key_columns,
         maintain_order=True,
-    ).agg([
-        pl.len().alias("_row_count"),
-        pl.col("power").null_count().alias("_power_null_count"),
-        pl.col("power").min().alias("_power_min"),
-        pl.col("power").max().alias("_power_max"),
-        pl.col("power").mean().alias("_power_mean"),
-        *[pl.col(column).first().alias(column) for column in other_columns],
-    ])
+    ).agg(
+        [
+            pl.len().alias("_row_count"),
+            pl.col("power").null_count().alias("_power_null_count"),
+            pl.col("power").min().alias("_power_min"),
+            pl.col("power").max().alias("_power_max"),
+            pl.col("power").mean().alias("_power_mean"),
+            *[pl.col(column).first().alias(column) for column in other_columns],
+        ]
+    )
 
     power_spread = pl.col("_power_max") - pl.col("_power_min")
     maximum_absolute_power = pl.max_horizontal(
@@ -118,8 +114,7 @@ def _utc_datetime_expression(data):
             return utc_expression.dt.replace_time_zone("UTC")
         return utc_expression.dt.convert_time_zone("UTC")
     raise TypeError(
-        "utc_tstamp must be a string or datetime column, "
-        f"not {utc_dtype!r}."
+        "utc_tstamp must be a string or datetime column, " f"not {utc_dtype!r}."
     )
 
 
@@ -131,17 +126,14 @@ def addLocalTStamp(data, timezone_column="timezone"):
     timezone-aware datetime types. The timezone column is retained alongside it.
     """
     if timezone_column not in data.collect_schema():
-        raise ValueError(
-            f"Missing required timezone column {timezone_column!r}."
-        )
+        raise ValueError(f"Missing required timezone column {timezone_column!r}.")
 
     utc_expression = _utc_datetime_expression(data)
     local_expression = None
     for timezone_name in SUPPORTED_LOCAL_TIMEZONES:
-        converted = (
-            utc_expression.dt.convert_time_zone(timezone_name)
-            .dt.replace_time_zone(None)
-        )
+        converted = utc_expression.dt.convert_time_zone(
+            timezone_name
+        ).dt.replace_time_zone(None)
         condition = pl.col(timezone_column) == timezone_name
         if local_expression is None:
             local_expression = pl.when(condition).then(converted)
@@ -151,10 +143,12 @@ def addLocalTStamp(data, timezone_column="timezone"):
     local_expression = local_expression.otherwise(
         utc_expression.dt.convert_time_zone(LOCAL_TIMEZONE).dt.replace_time_zone(None)
     )
-    return data.with_columns([
-        utc_expression.alias("utc_tstamp"),
-        local_expression.alias("local_tstamp"),
-    ])
+    return data.with_columns(
+        [
+            utc_expression.alias("utc_tstamp"),
+            local_expression.alias("local_tstamp"),
+        ]
+    )
 
 
 def addValidVoltage(
@@ -176,34 +170,29 @@ def addValidVoltage(
     df = df.with_columns(
         pl.col("voltage").cast(pl.Float64, strict=False).alias("voltage_f")
     )
-    valid_voltage = (
-        pl.when(
-            pl.col("voltage_f").is_not_null()
-            & pl.col("voltage_f").is_between(Vmin, Vmax)
-        )
-        .then(pl.col("voltage_f"))
-    )
+    valid_voltage = pl.when(
+        pl.col("voltage_f").is_not_null() & pl.col("voltage_f").is_between(Vmin, Vmax)
+    ).then(pl.col("voltage_f"))
     if fallback_col is not None:
         fallback_voltage = pl.col(fallback_col).cast(pl.Float64, strict=False)
         valid_voltage = valid_voltage.when(
-            fallback_voltage.is_not_null()
-            & fallback_voltage.is_between(Vmin, Vmax)
+            fallback_voltage.is_not_null() & fallback_voltage.is_between(Vmin, Vmax)
         ).then(fallback_voltage)
 
-    return df.with_columns(
-        valid_voltage.otherwise(None).alias("voltage_valid")
-    )
+    return df.with_columns(valid_voltage.otherwise(None).alias("voltage_valid"))
 
 
 def dedupeCircuitPolarity(circuitDetails):
     polarity_lookup = (
         circuitDetails.select(["c_id", "polarity"])
         .group_by("c_id")
-        .agg([
-            pl.len().alias("_metadata_rows"),
-            pl.col("polarity").n_unique().alias("_polarity_n_unique"),
-            pl.col("polarity").first().alias("polarity"),
-        ])
+        .agg(
+            [
+                pl.len().alias("_metadata_rows"),
+                pl.col("polarity").n_unique().alias("_polarity_n_unique"),
+                pl.col("polarity").first().alias("polarity"),
+            ]
+        )
     )
     conflicts = polarity_lookup.filter(pl.col("_polarity_n_unique") > 1)
     if not conflicts.is_empty():

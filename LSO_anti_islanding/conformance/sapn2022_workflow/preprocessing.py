@@ -4,7 +4,6 @@ from pathlib import Path
 
 import polars as pl
 import pyarrow.parquet as pq
-
 from config import LOCAL_TIMEZONE
 from core.data_cleaning import (
     addLocalTStamp,
@@ -58,13 +57,10 @@ def build_cleaned_site_data(
             f"Processing bucket {bucket_number + 1}/{num_buckets}...",
             flush=True,
         )
-        all_data = raw_data.filter(
-            (pl.col("c_id") % num_buckets) == bucket_number
-        )
-        all_data = (
-            all_data.join(mapped_circuit_ids, on="c_id", how="inner")
-            .with_columns(pl.lit(LOCAL_TIMEZONE).alias("timezone"))
-        )
+        all_data = raw_data.filter((pl.col("c_id") % num_buckets) == bucket_number)
+        all_data = all_data.join(
+            mapped_circuit_ids, on="c_id", how="inner"
+        ).with_columns(pl.lit(LOCAL_TIMEZONE).alias("timezone"))
         all_data = convertcWToKw(all_data)
         if deduplicate:
             all_data = deduplicateMeasurements(all_data)

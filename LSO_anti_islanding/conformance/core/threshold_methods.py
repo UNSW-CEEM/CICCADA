@@ -1,6 +1,5 @@
 """Existing Phase B threshold-profile policies."""
 
-
 import polars as pl
 
 
@@ -8,6 +7,7 @@ def _blend_threshold(default_value, learned_value, weight=0.5):
     if learned_value is None:
         return default_value
     return float(default_value) + weight * (float(learned_value) - float(default_value))
+
 
 def _default_threshold_profile(*, tau=0.3, ov1_floor_offset=0.5):
     return _build_threshold_profile(
@@ -53,7 +53,9 @@ def _build_threshold_profile(
         "ov1_floor_site": float(ov1_anchor) - ov1_floor_offset,
         "ov1_test_site": float(ov1_anchor) - tau,
         "ov1_basis": ov1_basis,
-        "delta_gap_v": None if (delta_los is None or delta_ov1 is None) else abs(delta_ov1 - delta_los),
+        "delta_gap_v": None
+        if (delta_los is None or delta_ov1 is None)
+        else abs(delta_ov1 - delta_los),
     }
 
 
@@ -70,17 +72,30 @@ def _raw_threshold_profile(raw_thresholds, *, tau=0.3, ov1_floor_offset=0.5):
     )
 
 
-def _blended_threshold_profile(raw_thresholds, *, tau=0.3, ov1_floor_offset=0.5, weight=0.5):
+def _blended_threshold_profile(
+    raw_thresholds, *, tau=0.3, ov1_floor_offset=0.5, weight=0.5
+):
     return _build_threshold_profile(
-        los_anchor=_blend_threshold(258.0, raw_thresholds["los_anchor_site"], weight=weight),
-        los_anchor_p25=_blend_threshold(258.0, raw_thresholds["los_anchor_p25_site"], weight=weight),
-        los_anchor_p10=_blend_threshold(258.0, raw_thresholds["los_anchor_p10_site"], weight=weight),
-        los_anchor_min=_blend_threshold(258.0, raw_thresholds["los_anchor_min_site"], weight=weight),
-        ov1_anchor=_blend_threshold(265.0, raw_thresholds["ov1_anchor_site"], weight=weight),
+        los_anchor=_blend_threshold(
+            258.0, raw_thresholds["los_anchor_site"], weight=weight
+        ),
+        los_anchor_p25=_blend_threshold(
+            258.0, raw_thresholds["los_anchor_p25_site"], weight=weight
+        ),
+        los_anchor_p10=_blend_threshold(
+            258.0, raw_thresholds["los_anchor_p10_site"], weight=weight
+        ),
+        los_anchor_min=_blend_threshold(
+            258.0, raw_thresholds["los_anchor_min_site"], weight=weight
+        ),
+        ov1_anchor=_blend_threshold(
+            265.0, raw_thresholds["ov1_anchor_site"], weight=weight
+        ),
         ov1_basis="blended",
         tau=tau,
         ov1_floor_offset=ov1_floor_offset,
     )
+
 
 def _profile_with_selection_metadata(profile, basis, score=None):
     return {
@@ -90,6 +105,7 @@ def _profile_with_selection_metadata(profile, basis, score=None):
         "selection_score_min_pct": None if score is None else score[1],
         "selection_score_mean_pct": None if score is None else score[2],
     }
+
 
 def _thresholds_row_from_threshold_dict(
     site_id,
@@ -115,7 +131,9 @@ def _thresholds_row_from_threshold_dict(
         "ov1_floor_site": thresholds["ov1_floor_site"],
         "ov1_test_site": thresholds["ov1_test_site"],
         "delta_gap_v": thresholds["delta_gap_v"],
-        "delta_gap_flag": None if thresholds["delta_gap_v"] is None else thresholds["delta_gap_v"] > 2.0,
+        "delta_gap_flag": None
+        if thresholds["delta_gap_v"] is None
+        else thresholds["delta_gap_v"] > 2.0,
         "ov1_basis": thresholds["ov1_basis"],
         "ov1_event_count": raw_thresholds["ov1_event_count"],
         "ov1_reclassified_count": raw_thresholds["ov1_reclassified_count"],
@@ -146,9 +164,8 @@ def _thresholds_row_from_threshold_dict(
     if method_key is not None:
         row["method_key"] = method_key
 
-    return (
-        pl.DataFrame([row])
-        .with_columns([
+    return pl.DataFrame([row]).with_columns(
+        [
             pl.col("site_id").cast(pl.Int64),
             pl.col("delta_los_site").cast(pl.Float64),
             pl.col("delta_los_p25_site").cast(pl.Float64),
@@ -192,5 +209,5 @@ def _thresholds_row_from_threshold_dict(
             pl.col("selection_score_min_pct").cast(pl.Float64),
             pl.col("selection_score_mean_pct").cast(pl.Float64),
             *([pl.col("method_key").cast(pl.Utf8)] if method_key is not None else []),
-        ])
+        ]
     )

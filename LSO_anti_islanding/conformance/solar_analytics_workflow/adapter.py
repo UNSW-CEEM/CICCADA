@@ -4,7 +4,6 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
-
 from config import (
     SITE_DAY_END,
     SITE_DAY_EXTRACTION_START,
@@ -49,9 +48,7 @@ def load_cleaned_site_data(cleaned_path=CLEANED_DATA_PATH):
 
 def load_solar_analytics_inputs():
     site_details = pl.read_csv(SITE_METADATA_PATH).with_columns(
-        pl.col("ac_capacity_kw")
-        .cast(pl.Float64, strict=False)
-        .alias("capacity_kw")
+        pl.col("ac_capacity_kw").cast(pl.Float64, strict=False).alias("capacity_kw")
     )
     circuit_details = load_circuit_details()
     all_data = load_cleaned_site_data()

@@ -9,13 +9,11 @@ from zoneinfo import ZoneInfo
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import polars as pl
+import sapn2022_metrics_5m_data_checks as data_checks
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 from path_config import require_local_path
-
-import sapn2022_metrics_5m_data_checks as data_checks
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ALL_UNCURTAILED = (
@@ -118,11 +116,13 @@ def _read_uncurtailed_rows(
     return (
         pl.scan_parquet(all_uncurtailed_path)
         .select(["site_id", "local_tstamp", "uncurtailed_P"])
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("local_tstamp").cast(pl.Datetime(time_zone=ADELAIDE_TZ)),
-            pl.col("uncurtailed_P").cast(pl.Float64),
-        ])
+        .with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("local_tstamp").cast(pl.Datetime(time_zone=ADELAIDE_TZ)),
+                pl.col("uncurtailed_P").cast(pl.Float64),
+            ]
+        )
         .filter(pl.col("site_id") == site_id)
         .filter(_window_filter("local_tstamp", target_date))
         .sort("local_tstamp")
@@ -137,23 +137,31 @@ def _read_bucket_rows(
     """Load full-timeline tier-based 5-minute bucket rows for one site and one local day window."""
     return (
         pl.scan_csv(eligible_buckets5m_path)
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("los_or_ov1_flag").cast(pl.Int8),
-            pl.col("site_power_kw_avg").cast(pl.Float64),
-            pl.col("v10m_avg_avg").cast(pl.Float64),
-            pl.col("bucket_5min_local")
-            .cast(pl.Utf8)
-            .str.strptime(
-                pl.Datetime(time_zone=ADELAIDE_TZ),
-                "%Y-%m-%d %H:%M:%S%z",
-                strict=False,
-            )
-            .alias("local_tstamp"),
-        ])
+        .with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("los_or_ov1_flag").cast(pl.Int8),
+                pl.col("site_power_kw_avg").cast(pl.Float64),
+                pl.col("v10m_avg_avg").cast(pl.Float64),
+                pl.col("bucket_5min_local")
+                .cast(pl.Utf8)
+                .str.strptime(
+                    pl.Datetime(time_zone=ADELAIDE_TZ),
+                    "%Y-%m-%d %H:%M:%S%z",
+                    strict=False,
+                )
+                .alias("local_tstamp"),
+            ]
+        )
         .filter(pl.col("local_tstamp").is_not_null())
         .select(
-            ["site_id", "local_tstamp", "site_power_kw_avg", "los_or_ov1_flag", "v10m_avg_avg"]
+            [
+                "site_id",
+                "local_tstamp",
+                "site_power_kw_avg",
+                "los_or_ov1_flag",
+                "v10m_avg_avg",
+            ]
         )
         .unique(subset=["site_id", "local_tstamp"], keep="first")
         .filter(pl.col("site_id") == site_id)
@@ -212,20 +220,21 @@ def prepare_site_day_evm_data(
         )
 
     return (
-        bucket_rows
-        .join(
+        bucket_rows.join(
             uncurtailed,
             on=["site_id", "local_tstamp"],
             how="left",
         )
-        .with_columns([
-            pl.col("site_power_kw_avg").alias("P_kw"),
-            pl.col("v10m_avg_avg").alias("voltage_10m_avg"),
-            pl.when(pl.col("los_or_ov1_flag") == 1)
-            .then(pl.col("site_power_kw_avg"))
-            .otherwise(pl.lit(0.0))
-            .alias("nonconformance_EVM"),
-        ])
+        .with_columns(
+            [
+                pl.col("site_power_kw_avg").alias("P_kw"),
+                pl.col("v10m_avg_avg").alias("voltage_10m_avg"),
+                pl.when(pl.col("los_or_ov1_flag") == 1)
+                .then(pl.col("site_power_kw_avg"))
+                .otherwise(pl.lit(0.0))
+                .alias("nonconformance_EVM"),
+            ]
+        )
         .select(PLOT_COLUMNS)
         .sort("local_tstamp")
     )
@@ -234,8 +243,7 @@ def prepare_site_day_evm_data(
 def site_with_days(site_id: int, curtailment_summary: pl.DataFrame) -> list[int]:
     """Return sorted unique day values for one site from the curtailment summary."""
     return (
-        curtailment_summary
-        .filter(pl.col("site_id") == site_id)
+        curtailment_summary.filter(pl.col("site_id") == site_id)
         .get_column("day")
         .unique()
         .sort()
@@ -322,7 +330,9 @@ def plot_site_day_evm(
 
         ax_left.set_xlim(x_start, x_end)
         ax_left.xaxis.set_major_locator(mdates.HourLocator(interval=1, tz=LOCAL_TZINFO))
-        ax_left.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=LOCAL_TZINFO))
+        ax_left.xaxis.set_major_formatter(
+            mdates.DateFormatter("%H:%M", tz=LOCAL_TZINFO)
+        )
 
         ax_left.grid(True, axis="y", color=GRID_COLOR, linewidth=0.8)
         ax_left.grid(True, axis="x", color=GRID_COLOR, linewidth=0.6, alpha=0.6)
@@ -339,8 +349,12 @@ def plot_site_day_evm(
         ax_left.set_ylabel("Power (kW)", color=TEXT_COLOR, fontsize=10)
         ax_right.set_ylabel("Voltage (V)", color=TEXT_COLOR, fontsize=10)
 
-        ax_left.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.1f} kW"))
-        ax_right.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.1f} V"))
+        ax_left.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _: f"{value:.1f} kW")
+        )
+        ax_right.yaxis.set_major_formatter(
+            FuncFormatter(lambda value, _: f"{value:.1f} V")
+        )
 
         handles_left, labels_left = ax_left.get_legend_handles_labels()
         handles_right, labels_right = ax_right.get_legend_handles_labels()

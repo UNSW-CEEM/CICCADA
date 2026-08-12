@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 import polars as pl
-
 from config import MAX_PV_SITE_NET_CIRCUITS, REQUIRED_SITE_METADATA_ROWS
 from core.check_pv_behaviour import CheckPVBehaviour
 from core.site_day_preparation import (
@@ -130,17 +129,19 @@ def _robust_observed_peak_kw(day_behaviours):
         ]
         if not power_cols:
             continue
-        complete_power = pl.all_horizontal([
-            pl.col(column).is_not_null() for column in power_cols
-        ])
+        complete_power = pl.all_horizontal(
+            [pl.col(column).is_not_null() for column in power_cols]
+        )
         site_power_frames.append(
             df.filter(complete_power).select(
-                pl.sum_horizontal([
-                    pl.col(column)
-                    .cast(pl.Float64, strict=False)
-                    .clip(lower_bound=0)
-                    for column in power_cols
-                ]).alias("site_power_kw")
+                pl.sum_horizontal(
+                    [
+                        pl.col(column)
+                        .cast(pl.Float64, strict=False)
+                        .clip(lower_bound=0)
+                        for column in power_cols
+                    ]
+                ).alias("site_power_kw")
             )
         )
     if not site_power_frames:
@@ -171,10 +172,7 @@ def rated_capacity_of_pv(
     metadata_kw = _metadata_capacity_kw(site_details, site_number)
     robust_peak_kw = _robust_observed_peak_kw(day_behaviours)
     if metadata_kw is not None:
-        if (
-            robust_peak_kw is None
-            or robust_peak_kw <= metadata_kw * metadata_tolerance
-        ):
+        if robust_peak_kw is None or robust_peak_kw <= metadata_kw * metadata_tolerance:
             return metadata_kw
         return _round_up_to_half_kw(robust_peak_kw)
     if robust_peak_kw is not None:
@@ -221,13 +219,15 @@ def collect_site_days(site_number, inputs, definition):
             analysis_day_df,
         )
         if eligibility["eligible"]:
-            eligible_day_behaviours.append({
-                "day": day_key,
-                "behaviour": CheckPVBehaviour(
-                    analysis_day_df,
-                    volCol="voltage_valid",
-                ),
-            })
+            eligible_day_behaviours.append(
+                {
+                    "day": day_key,
+                    "behaviour": CheckPVBehaviour(
+                        analysis_day_df,
+                        volCol="voltage_valid",
+                    ),
+                }
+            )
             continue
 
         excluded_row = {
@@ -235,13 +235,10 @@ def collect_site_days(site_number, inputs, definition):
             "day": day_key,
             "reason": eligibility["reason"],
         }
-        excluded_row.update({
-            field: eligibility[field]
-            for field in definition.exclusion_fields
-        })
-        excluded_row["coverage_threshold_pct"] = (
-            definition.coverage_threshold * 100.0
+        excluded_row.update(
+            {field: eligibility[field] for field in definition.exclusion_fields}
         )
+        excluded_row["coverage_threshold_pct"] = definition.coverage_threshold * 100.0
         excluded_day_rows.append(excluded_row)
 
     return {

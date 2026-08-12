@@ -2,7 +2,6 @@
 
 from datetime import time
 
-
 PHASE_B_METHODS = ("default", "original", "tier_based", "old_sweep", "blended")
 PRIMARY_PHASE_B_METHOD = "tier_based"
 
@@ -10,8 +9,10 @@ VALID_VOLTAGE_MIN = 80.0
 VALID_VOLTAGE_MAX = 300.0
 VOLTAGE_ROLLING_WINDOW = "10m"
 
-DEDUPLICATION_ABSOLUTE_TOLERANCE_KW = 0.2 # max absolute required for different P measurements
-DEDUPLICATION_RELATIVE_TOLERANCE = 0.05   # relative allowance
+DEDUPLICATION_ABSOLUTE_TOLERANCE_KW = (
+    0.2  # max absolute required for different P measurements
+)
+DEDUPLICATION_RELATIVE_TOLERANCE = 0.05  # relative allowance
 
 SITE_DAY_EXTRACTION_START = time(5, 50)
 SITE_DAY_ANALYSIS_START = time(6, 0)

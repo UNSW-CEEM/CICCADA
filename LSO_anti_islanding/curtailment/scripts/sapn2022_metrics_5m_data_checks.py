@@ -2,7 +2,6 @@
 
 import polars as pl
 
-
 KEY_COLUMNS = ["site_id", "local_tstamp"]
 
 
@@ -48,7 +47,9 @@ def find_unmatched_rows(left_df, right_df):
     )
 
 
-def assert_all_rows_have_match(left_df, right_df, left_label, right_label, sample_size=10):
+def assert_all_rows_have_match(
+    left_df, right_df, left_label, right_label, sample_size=10
+):
     """Raise if any site/timestamp key in left_df is missing from right_df."""
     unmatched = find_unmatched_rows(left_df, right_df)
     if unmatched.is_empty():

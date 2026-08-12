@@ -3,13 +3,11 @@
 from pathlib import Path
 
 import polars as pl
-
 from config import PHASE_B_METHODS, PRIMARY_PHASE_B_METHOD
 from reporting.plotting import (
     plot_site_threshold_distribution,
     plot_site_threshold_distribution_extremes,
 )
-
 
 PRIMARY_SITE_THRESHOLDS_NAME = f"site_thresholds_{PRIMARY_PHASE_B_METHOD}.csv"
 PRIMARY_PHASE_B_SUMMARY_NAME = f"phase_b_site_summary_{PRIMARY_PHASE_B_METHOD}.csv"
@@ -38,9 +36,7 @@ def summarize_multi_method_site_outputs(phase_b_summary_by_method_df):
     if phase_b_summary_by_method_df is None or phase_b_summary_by_method_df.is_empty():
         return {"site_comparison": pl.DataFrame()}
 
-    comparison = (
-        phase_b_summary_by_method_df.select("site_id").unique().sort("site_id")
-    )
+    comparison = phase_b_summary_by_method_df.select("site_id").unique().sort("site_id")
     pivot_specs = [
         "overall_pass",
         "los_pass",
@@ -53,22 +49,26 @@ def summarize_multi_method_site_outputs(phase_b_summary_by_method_df):
         "pass_basis",
     ]
     for value_col in pivot_specs:
-        pivot = phase_b_summary_by_method_df.select([
-            "site_id",
-            "method_key",
-            value_col,
-        ]).pivot(
+        pivot = phase_b_summary_by_method_df.select(
+            [
+                "site_id",
+                "method_key",
+                value_col,
+            ]
+        ).pivot(
             values=value_col,
             index="site_id",
             on="method_key",
             aggregate_function="first",
         )
         comparison = comparison.join(
-            pivot.rename({
-                col: f"{value_col}__{col}"
-                for col in pivot.columns
-                if col != "site_id"
-            }),
+            pivot.rename(
+                {
+                    col: f"{value_col}__{col}"
+                    for col in pivot.columns
+                    if col != "site_id"
+                }
+            ),
             on="site_id",
             how="left",
         )
@@ -76,77 +76,86 @@ def summarize_multi_method_site_outputs(phase_b_summary_by_method_df):
     overall_cols = sorted(
         c for c in comparison.columns if c.startswith("overall_pass__")
     )
-    comparison = comparison.with_columns([
-        pl.struct(overall_cols)
-        .map_elements(
-            lambda row: len(set(row.values())) > 1,
-            return_dtype=pl.Boolean,
-        )
-        .alias("any_disagreement"),
-        pl.struct(overall_cols)
-        .map_elements(
-            lambda row: len({v for v in row.values() if v is not None}) > 1,
-            return_dtype=pl.Boolean,
-        )
-        .alias("assessed_outcome_disagreement"),
-        pl.struct(overall_cols)
-        .map_elements(
-            lambda row: any(v is not None for v in row.values()),
-            return_dtype=pl.Boolean,
-        )
-        .alias("any_method_assessed"),
-        pl.struct(overall_cols)
-        .map_elements(
-            lambda row: all(v is None for v in row.values()),
-            return_dtype=pl.Boolean,
-        )
-        .alias("all_methods_unassessed"),
-    ])
+    comparison = comparison.with_columns(
+        [
+            pl.struct(overall_cols)
+            .map_elements(
+                lambda row: len(set(row.values())) > 1,
+                return_dtype=pl.Boolean,
+            )
+            .alias("any_disagreement"),
+            pl.struct(overall_cols)
+            .map_elements(
+                lambda row: len({v for v in row.values() if v is not None}) > 1,
+                return_dtype=pl.Boolean,
+            )
+            .alias("assessed_outcome_disagreement"),
+            pl.struct(overall_cols)
+            .map_elements(
+                lambda row: any(v is not None for v in row.values()),
+                return_dtype=pl.Boolean,
+            )
+            .alias("any_method_assessed"),
+            pl.struct(overall_cols)
+            .map_elements(
+                lambda row: all(v is None for v in row.values()),
+                return_dtype=pl.Boolean,
+            )
+            .alias("all_methods_unassessed"),
+        ]
+    )
     return {"site_comparison": comparison}
 
 
 def build_five_method_results_summary(phase_b_summary_by_method_df):
-    summary = pl.DataFrame({
-        "#": list(range(1, len(PHASE_B_METHODS) + 1)),
-        "method_key": list(PHASE_B_METHODS),
-        "Method": [
-            FIVE_METHOD_RESULTS_SUMMARY_METHOD_LABELS[method_key]
-            for method_key in PHASE_B_METHODS
-        ],
-    })
+    summary = pl.DataFrame(
+        {
+            "#": list(range(1, len(PHASE_B_METHODS) + 1)),
+            "method_key": list(PHASE_B_METHODS),
+            "Method": [
+                FIVE_METHOD_RESULTS_SUMMARY_METHOD_LABELS[method_key]
+                for method_key in PHASE_B_METHODS
+            ],
+        }
+    )
     if phase_b_summary_by_method_df is None or phase_b_summary_by_method_df.is_empty():
-        return summary.with_columns([
-            pl.lit(0, dtype=pl.Int64).alias("Assessed"),
-            pl.lit(0, dtype=pl.Int64).alias("Conformant"),
-            pl.lit(0, dtype=pl.Int64).alias("Non-conformant"),
-            pl.lit(0, dtype=pl.Int64).alias("Unassessed"),
-            pl.lit(None, dtype=pl.Float64).alias("Conformance % of assessed"),
-        ]).select(FIVE_METHOD_RESULTS_SUMMARY_COLUMNS)
+        return summary.with_columns(
+            [
+                pl.lit(0, dtype=pl.Int64).alias("Assessed"),
+                pl.lit(0, dtype=pl.Int64).alias("Conformant"),
+                pl.lit(0, dtype=pl.Int64).alias("Non-conformant"),
+                pl.lit(0, dtype=pl.Int64).alias("Unassessed"),
+                pl.lit(None, dtype=pl.Float64).alias("Conformance % of assessed"),
+            ]
+        ).select(FIVE_METHOD_RESULTS_SUMMARY_COLUMNS)
 
-    counts = (
-        phase_b_summary_by_method_df.group_by("method_key")
-        .agg([
+    counts = phase_b_summary_by_method_df.group_by("method_key").agg(
+        [
             pl.len().alias("_total_rows"),
             pl.col("overall_pass").is_not_null().sum().alias("Assessed"),
             pl.col("overall_pass").eq(True).sum().alias("Conformant"),
             pl.col("overall_pass").eq(False).sum().alias("Non-conformant"),
-        ])
+        ]
     )
     return (
         summary.join(counts, on="method_key", how="left")
-        .with_columns([
-            pl.col("_total_rows").fill_null(0).cast(pl.Int64),
-            pl.col("Assessed").fill_null(0).cast(pl.Int64),
-            pl.col("Conformant").fill_null(0).cast(pl.Int64),
-            pl.col("Non-conformant").fill_null(0).cast(pl.Int64),
-        ])
-        .with_columns([
-            (pl.col("_total_rows") - pl.col("Assessed")).alias("Unassessed"),
-            pl.when(pl.col("Assessed") > 0)
-            .then((pl.col("Conformant") / pl.col("Assessed") * 100).round(2))
-            .otherwise(pl.lit(None, dtype=pl.Float64))
-            .alias("Conformance % of assessed"),
-        ])
+        .with_columns(
+            [
+                pl.col("_total_rows").fill_null(0).cast(pl.Int64),
+                pl.col("Assessed").fill_null(0).cast(pl.Int64),
+                pl.col("Conformant").fill_null(0).cast(pl.Int64),
+                pl.col("Non-conformant").fill_null(0).cast(pl.Int64),
+            ]
+        )
+        .with_columns(
+            [
+                (pl.col("_total_rows") - pl.col("Assessed")).alias("Unassessed"),
+                pl.when(pl.col("Assessed") > 0)
+                .then((pl.col("Conformant") / pl.col("Assessed") * 100).round(2))
+                .otherwise(pl.lit(None, dtype=pl.Float64))
+                .alias("Conformance % of assessed"),
+            ]
+        )
         .drop(["method_key", "_total_rows"])
         .select(FIVE_METHOD_RESULTS_SUMMARY_COLUMNS)
     )
@@ -180,9 +189,7 @@ def build_output_tables(results, excluded_day_schema=None):
         "phase_a_brackets": results["phase_a_brackets"],
         "phase_b_site_summary": results["phase_b_site_summary"],
         "phase_b_timestamp_detail": results["phase_b_timestamp_detail"],
-        "phase_b_site_summary_by_method": results[
-            "phase_b_site_summary_by_method"
-        ],
+        "phase_b_site_summary_by_method": results["phase_b_site_summary_by_method"],
         "phase_b_timestamp_detail_by_method": results[
             "phase_b_timestamp_detail_by_method"
         ],
@@ -223,24 +230,28 @@ def build_output_tables(results, excluded_day_schema=None):
         tables["los_site_threshold_stats"] = (
             phase_a.filter(pl.col("mech") == "LOS")
             .group_by("site_id")
-            .agg([
-                pl.col("v_los_recorded").min().alias("min_v"),
-                pl.col("v_los_recorded").median().alias("median_v"),
-                pl.col("v_los_recorded").max().alias("max_v"),
-                pl.col("v_los_recorded").std().alias("std_v"),
-                pl.len().alias("n_events"),
-            ])
+            .agg(
+                [
+                    pl.col("v_los_recorded").min().alias("min_v"),
+                    pl.col("v_los_recorded").median().alias("median_v"),
+                    pl.col("v_los_recorded").max().alias("max_v"),
+                    pl.col("v_los_recorded").std().alias("std_v"),
+                    pl.len().alias("n_events"),
+                ]
+            )
         )
         tables["ov1_site_threshold_stats"] = (
             phase_a.filter(pl.col("mech") == "OV1")
             .group_by("site_id")
-            .agg([
-                pl.col("v_ov1_recorded").min().alias("min_v"),
-                pl.col("v_ov1_recorded").median().alias("median_v"),
-                pl.col("v_ov1_recorded").max().alias("max_v"),
-                pl.col("v_ov1_recorded").std().alias("std_v"),
-                pl.len().alias("n_events"),
-            ])
+            .agg(
+                [
+                    pl.col("v_ov1_recorded").min().alias("min_v"),
+                    pl.col("v_ov1_recorded").median().alias("median_v"),
+                    pl.col("v_ov1_recorded").max().alias("max_v"),
+                    pl.col("v_ov1_recorded").std().alias("std_v"),
+                    pl.len().alias("n_events"),
+                ]
+            )
         )
 
     tables["five_method_site_comparison"] = summarize_multi_method_site_outputs(

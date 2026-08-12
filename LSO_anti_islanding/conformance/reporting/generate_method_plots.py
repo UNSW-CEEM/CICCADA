@@ -3,10 +3,8 @@
 from pathlib import Path
 
 import polars as pl
-
 from config import METHOD_COMPARISON_METHODS
 from reporting.plotting import plot_method_threshold_overlay_day
-
 
 METHOD_COLOR_MAP = {
     "default": "#2ca02c",
@@ -63,9 +61,7 @@ def _status_label(value):
 def _comparison_methods():
     methods = tuple(METHOD_COMPARISON_METHODS)
     if len(methods) < 2:
-        raise ValueError(
-            "METHOD_COMPARISON_METHODS must contain at least two methods."
-        )
+        raise ValueError("METHOD_COMPARISON_METHODS must contain at least two methods.")
     if len(set(methods)) != len(methods):
         raise ValueError("METHOD_COMPARISON_METHODS must not contain duplicates.")
     return methods
@@ -96,8 +92,7 @@ def _load_method_rows(output_dir, methods):
 
     available_methods = sorted(joined["method_key"].unique().to_list())
     missing_methods = [
-        method_key for method_key in methods
-        if method_key not in available_methods
+        method_key for method_key in methods if method_key not in available_methods
     ]
     if missing_methods:
         raise ValueError(
@@ -169,62 +164,86 @@ def _build_method_event_overlays(base_timestamps, method_event_lookups):
     if len(method_event_lookups) != 2:
         overlays = []
         for overlay_info in method_event_lookups:
-            overlays.append({
-                "key": overlay_info["key"],
-                "label": overlay_info["label"],
-                "color": overlay_info["color"],
-                "alpha": overlay_info["alpha"],
-                "event_mask": [bool(overlay_info["event_lookup"].get(ts, False)) for ts in base_timestamps],
-            })
+            overlays.append(
+                {
+                    "key": overlay_info["key"],
+                    "label": overlay_info["label"],
+                    "color": overlay_info["color"],
+                    "alpha": overlay_info["alpha"],
+                    "event_mask": [
+                        bool(overlay_info["event_lookup"].get(ts, False))
+                        for ts in base_timestamps
+                    ],
+                }
+            )
         return overlays
 
     overlay_by_key = {overlay["key"]: overlay for overlay in method_event_lookups}
     if set(overlay_by_key) != {"tier_based", "blended"}:
         overlays = []
         for overlay_info in method_event_lookups:
-            overlays.append({
-                "key": overlay_info["key"],
-                "label": overlay_info["label"],
-                "color": overlay_info["color"],
-                "alpha": overlay_info["alpha"],
-                "event_mask": [bool(overlay_info["event_lookup"].get(ts, False)) for ts in base_timestamps],
-            })
+            overlays.append(
+                {
+                    "key": overlay_info["key"],
+                    "label": overlay_info["label"],
+                    "color": overlay_info["color"],
+                    "alpha": overlay_info["alpha"],
+                    "event_mask": [
+                        bool(overlay_info["event_lookup"].get(ts, False))
+                        for ts in base_timestamps
+                    ],
+                }
+            )
         return overlays
 
     tier_info = overlay_by_key["tier_based"]
     blended_info = overlay_by_key["blended"]
-    tier_mask = [bool(tier_info["event_lookup"].get(ts, False)) for ts in base_timestamps]
-    blended_mask = [bool(blended_info["event_lookup"].get(ts, False)) for ts in base_timestamps]
+    tier_mask = [
+        bool(tier_info["event_lookup"].get(ts, False)) for ts in base_timestamps
+    ]
+    blended_mask = [
+        bool(blended_info["event_lookup"].get(ts, False)) for ts in base_timestamps
+    ]
 
-    tier_only_mask = [tier and not blended for tier, blended in zip(tier_mask, blended_mask)]
+    tier_only_mask = [
+        tier and not blended for tier, blended in zip(tier_mask, blended_mask)
+    ]
     overlap_mask = [tier and blended for tier, blended in zip(tier_mask, blended_mask)]
-    blended_only_mask = [blended and not tier for tier, blended in zip(tier_mask, blended_mask)]
+    blended_only_mask = [
+        blended and not tier for tier, blended in zip(tier_mask, blended_mask)
+    ]
 
     overlays = []
     if any(tier_only_mask):
-        overlays.append({
-            "key": "tier_based_only",
-            "label": "Tier based only",
-            "color": METHOD_OVERLAP_STYLE_MAP["tier_based_only"]["color"],
-            "alpha": METHOD_OVERLAP_STYLE_MAP["tier_based_only"]["alpha"],
-            "event_mask": tier_only_mask,
-        })
+        overlays.append(
+            {
+                "key": "tier_based_only",
+                "label": "Tier based only",
+                "color": METHOD_OVERLAP_STYLE_MAP["tier_based_only"]["color"],
+                "alpha": METHOD_OVERLAP_STYLE_MAP["tier_based_only"]["alpha"],
+                "event_mask": tier_only_mask,
+            }
+        )
     if any(overlap_mask):
-        overlays.append({
-            "key": "both_methods",
-            "label": "Both methods",
-            "color": METHOD_OVERLAP_STYLE_MAP["both_methods"]["color"],
-            "alpha": METHOD_OVERLAP_STYLE_MAP["both_methods"]["alpha"],
-            "event_mask": overlap_mask,
-        })
+        overlays.append(
+            {
+                "key": "both_methods",
+                "label": "Both methods",
+                "color": METHOD_OVERLAP_STYLE_MAP["both_methods"]["color"],
+                "alpha": METHOD_OVERLAP_STYLE_MAP["both_methods"]["alpha"],
+                "event_mask": overlap_mask,
+            }
+        )
     if any(blended_only_mask):
-        overlays.append({
-            "key": "blended_only",
-            "label": "Blended only",
-            "color": METHOD_OVERLAP_STYLE_MAP["blended_only"]["color"],
-            "alpha": METHOD_OVERLAP_STYLE_MAP["blended_only"]["alpha"],
-            "event_mask": blended_only_mask,
-        })
+        overlays.append(
+            {
+                "key": "blended_only",
+                "label": "Blended only",
+                "color": METHOD_OVERLAP_STYLE_MAP["blended_only"]["color"],
+                "alpha": METHOD_OVERLAP_STYLE_MAP["blended_only"]["alpha"],
+                "event_mask": blended_only_mask,
+            }
+        )
     return overlays
 
 
@@ -250,41 +269,48 @@ def _build_comparison_day_payload(day_info, p_rated, method_rows, methods):
         for ts, active in method_event_lookup.items():
             event_lookup[ts] = event_lookup.get(ts, False) or active
 
-        total_day_eligible = (
-            int(day_plot["summary"].get("los_eligible", 0) or 0)
-            + int(day_plot["summary"].get("ov1_eligible", 0) or 0)
+        total_day_eligible = int(day_plot["summary"].get("los_eligible", 0) or 0) + int(
+            day_plot["summary"].get("ov1_eligible", 0) or 0
         )
         if total_day_eligible > 0:
             day_has_any_eligible = True
 
-        method_thresholds.append({
-            "label": method_row["method_label"],
-            "lso_threshold": float(method_row["los_threshold_used"]),
-            "status": _status_label(method_row["overall_pass"]),
-            "color": METHOD_COLOR_MAP.get(method_key, "#7f7f7f"),
-            "day_eligible_timestamps": total_day_eligible,
-            "day_compliant_timestamps": (
-                int(day_plot["summary"].get("los_compliant", 0) or 0)
-                + int(day_plot["summary"].get("ov1_compliant", 0) or 0)
-            ),
-        })
-        method_event_lookups.append({
-            "key": method_key,
-            "label": method_row["method_label"],
-            "color": METHOD_EVENT_SHADE_MAP.get(
-                method_key,
-                METHOD_COLOR_MAP.get(method_key, "#7f7f7f"),
-            ),
-            "alpha": METHOD_EVENT_ALPHA_MAP.get(method_key, 0.12),
-            "event_lookup": method_event_lookup,
-        })
+        method_thresholds.append(
+            {
+                "label": method_row["method_label"],
+                "lso_threshold": float(method_row["los_threshold_used"]),
+                "status": _status_label(method_row["overall_pass"]),
+                "color": METHOD_COLOR_MAP.get(method_key, "#7f7f7f"),
+                "day_eligible_timestamps": total_day_eligible,
+                "day_compliant_timestamps": (
+                    int(day_plot["summary"].get("los_compliant", 0) or 0)
+                    + int(day_plot["summary"].get("ov1_compliant", 0) or 0)
+                ),
+            }
+        )
+        method_event_lookups.append(
+            {
+                "key": method_key,
+                "label": method_row["method_label"],
+                "color": METHOD_EVENT_SHADE_MAP.get(
+                    method_key,
+                    METHOD_COLOR_MAP.get(method_key, "#7f7f7f"),
+                ),
+                "alpha": METHOD_EVENT_ALPHA_MAP.get(method_key, 0.12),
+                "event_lookup": method_event_lookup,
+            }
+        )
 
     if not day_has_any_eligible or base_frame is None or not method_thresholds:
         return None
 
     base_timestamps = base_frame["local_tstamp"].to_list()
-    comparison_event_mask = [bool(event_lookup.get(ts, False)) for ts in base_timestamps]
-    method_event_overlays = _build_method_event_overlays(base_timestamps, method_event_lookups)
+    comparison_event_mask = [
+        bool(event_lookup.get(ts, False)) for ts in base_timestamps
+    ]
+    method_event_overlays = _build_method_event_overlays(
+        base_timestamps, method_event_lookups
+    )
 
     return {
         "base_frame": base_frame,

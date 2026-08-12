@@ -7,11 +7,11 @@ OUTPUTS_ROOT = PROJECT_ROOT / "outputs"
 
 # all data - build_structured_high_resolution.py
 folderName = "all_structured_data_test"
-fileName   = "structured_data"
+fileName = "structured_data"
 
 # all data - build_structured_5m.py
 folderName = "all_structured_data_5m"
-fileName   = "structured_data_5m"
+fileName = "structured_data_5m"
 
 # trained model - fit_ghi_model.py
 # folderName = "local_model"
@@ -27,7 +27,7 @@ fileName   = "structured_data_5m"
 
 # 5m resolution for write_all_uncurtailedPV.py
 folderName = "prediction"
-fileName   = "all_uncurtailedPV_5m"
+fileName = "all_uncurtailedPV_5m"
 
 # # eligible timestamps for phase b - run_sapn2022_metrics.py
 # folderName = "curtailed_estimates"

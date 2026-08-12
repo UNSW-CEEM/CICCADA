@@ -1,7 +1,6 @@
 """SAPN duration-based site-day eligibility policy."""
 
 import polars as pl
-
 from config import (
     SAPN2022_DAY_COVERAGE_THRESHOLD,
     SAPN2022_DAY_WINDOW_SECONDS,
@@ -35,17 +34,17 @@ def summarize_nov2022_day_eligibility(
         site_day_long.group_by(["local_tstamp", "utc_tstamp", "duration"])
         .agg(pl.col("power").is_not_null().any().alias("_has_power"))
         .join(v10m_lookup, on="local_tstamp", how="left")
-        .with_columns([
-            pl.col("v10m_avg").is_not_null().alias("_has_v10m"),
-            pl.col("duration")
-            .cast(pl.Float64, strict=False)
-            .fill_null(0.0)
-            .alias("_duration_s"),
-        ])
         .with_columns(
-            (pl.col("_has_power") & pl.col("_has_v10m")).alias(
-                "_has_common_power_v10m"
-            )
+            [
+                pl.col("v10m_avg").is_not_null().alias("_has_v10m"),
+                pl.col("duration")
+                .cast(pl.Float64, strict=False)
+                .fill_null(0.0)
+                .alias("_duration_s"),
+            ]
+        )
+        .with_columns(
+            (pl.col("_has_power") & pl.col("_has_v10m")).alias("_has_common_power_v10m")
         )
     )
 

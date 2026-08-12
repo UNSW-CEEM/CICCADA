@@ -6,26 +6,40 @@ import polars as pl
 
 
 class CheckPVBehaviour:
-    def __init__(self, circuitData, volCol = None, minSamplesPercentage = None,
-                 timeWindowForClassification = 60, vDrop = None, powerMeasError = None,
-                 vMeasError = None):
+    def __init__(
+        self,
+        circuitData,
+        volCol=None,
+        minSamplesPercentage=None,
+        timeWindowForClassification=60,
+        vDrop=None,
+        powerMeasError=None,
+        vMeasError=None,
+    ):
         # mandatory params
         self.circuitData = circuitData
         # which voltage value to consider
-        self.volCol      = "vmean" if volCol is None else volCol
-        
-        self.minSamplesPercentage = 0.1 if minSamplesPercentage is None else minSamplesPercentage
-        self.timeWindowForClassification = 3 if timeWindowForClassification is None else timeWindowForClassification
+        self.volCol = "vmean" if volCol is None else volCol
+
+        self.minSamplesPercentage = (
+            0.1 if minSamplesPercentage is None else minSamplesPercentage
+        )
+        self.timeWindowForClassification = (
+            3 if timeWindowForClassification is None else timeWindowForClassification
+        )
 
         # site->terminal mapping (used in KPI math)
         self.vDrop = 2.3 if vDrop is None else vDrop
         self.powerMeasError = 0.04 if powerMeasError is None else powerMeasError
-        self.vMeasError     = 0 if vMeasError is None else vMeasError
+        self.vMeasError = 0 if vMeasError is None else vMeasError
         self._site_day_signals_cache = {}
-        
+
         # per-row time deltas & next values
         self.circuitData = self.circuitData.with_columns(
-            (pl.col("local_tstamp").cast(pl.Datetime).shift(-1) - pl.col("local_tstamp").cast(pl.Datetime))
+            (
+                pl.col("local_tstamp").cast(pl.Datetime).shift(-1)
+                - pl.col("local_tstamp").cast(pl.Datetime)
+            )
             .dt.total_seconds()
             .fill_null(0)
             .alias("dt_next_s")
@@ -39,7 +53,8 @@ class CheckPVBehaviour:
 
     def _power_columns(self, df):
         return [
-            c for c in df.columns
+            c
+            for c in df.columns
             if c.startswith("power")
             and not c.endswith("_next")
             and not c.endswith("_logic")
@@ -61,7 +76,8 @@ class CheckPVBehaviour:
         df = self.circuitData.clone()
         power_cols = self._power_columns(df)
         power_cols_next = [
-            c for c in df.columns
+            c
+            for c in df.columns
             if c.startswith("power")
             and c.endswith("_next")
             and not c.endswith("_logic_next")
@@ -81,9 +97,9 @@ class CheckPVBehaviour:
             logic_next_name = f"{c}_logic_next"
             df = df.with_columns(
                 pl.when(pl.col(c) < 0)
-                  .then(pl.lit(0.0))
-                  .otherwise(pl.col(c))
-                  .alias(logic_name)
+                .then(pl.lit(0.0))
+                .otherwise(pl.col(c))
+                .alias(logic_name)
             )
             logic_current.append(logic_name)
 
@@ -91,9 +107,9 @@ class CheckPVBehaviour:
             if next_name in power_cols_next:
                 df = df.with_columns(
                     pl.when(pl.col(next_name) < 0)
-                      .then(pl.lit(0.0))
-                      .otherwise(pl.col(next_name))
-                      .alias(logic_next_name)
+                    .then(pl.lit(0.0))
+                    .otherwise(pl.col(next_name))
+                    .alias(logic_next_name)
                 )
             else:
                 df = df.with_columns(
@@ -101,92 +117,112 @@ class CheckPVBehaviour:
                 )
             logic_next.append(logic_next_name)
 
-        df = df.with_columns([
-            pl.when(pl.all_horizontal([
-                pl.col(c).is_not_null() for c in logic_current
-            ]))
-            .then(pl.sum_horizontal([pl.col(c) for c in logic_current]))
-            .otherwise(pl.lit(None, dtype=pl.Float64))
-            .alias("site_power"),
-            pl.when(pl.all_horizontal([
-                pl.col(c).is_not_null() for c in logic_next
-            ]))
-            .then(pl.sum_horizontal([pl.col(c) for c in logic_next]))
-            .otherwise(pl.lit(None, dtype=pl.Float64))
-            .alias("site_power_next"),
-        ])
-
-        df = df.with_columns([
-            pl.when(pl.col("site_power").is_not_null())
-            .then(
-                pl.all_horizontal([pl.col(c) <= p_disconnect for c in logic_current]) &
-                (pl.col("site_power") <= p_disconnect)
-            )
-            .otherwise(pl.lit(None, dtype=pl.Boolean))
-            .alias("is_disc"),
-            pl.when(pl.col("site_power_next").is_not_null())
-            .then(
-                pl.all_horizontal([pl.col(c) <= p_disconnect for c in logic_next]) &
-                (pl.col("site_power_next") <= p_disconnect)
-            )
-            .otherwise(pl.lit(None, dtype=pl.Boolean))
-            .alias("is_disc_next"),
-        ])
-
-        df = df.with_columns([
-            (
-                pl.col("is_disc").is_not_null()
-                & (
-                    pl.col("is_disc").fill_null(False)
-                    | pl.col("is_disc_next").is_not_null()
+        df = df.with_columns(
+            [
+                pl.when(
+                    pl.all_horizontal([pl.col(c).is_not_null() for c in logic_current])
                 )
-            ).alias("_power_assessable"),
-            (pl.col("site_power").shift(1) - pl.col("site_power")).alias(
-                "site_power_drop"
-            ),
-            (pl.col("site_power") - pl.col("site_power").shift(1)).alias(
-                "site_power_rise"
-            ),
-        ])
+                .then(pl.sum_horizontal([pl.col(c) for c in logic_current]))
+                .otherwise(pl.lit(None, dtype=pl.Float64))
+                .alias("site_power"),
+                pl.when(
+                    pl.all_horizontal([pl.col(c).is_not_null() for c in logic_next])
+                )
+                .then(pl.sum_horizontal([pl.col(c) for c in logic_next]))
+                .otherwise(pl.lit(None, dtype=pl.Float64))
+                .alias("site_power_next"),
+            ]
+        )
 
-        df = df.with_columns([
-            (
-                pl.col("v10m_avg").is_not_null()
-                & pl.col("_power_assessable")
-            ).alias("eligible_los"),
-            (
-                pl.col("vinst_max").is_not_null()
-                & pl.col("_power_assessable")
-            ).alias("eligible_ov1"),
-        ])
+        df = df.with_columns(
+            [
+                pl.when(pl.col("site_power").is_not_null())
+                .then(
+                    pl.all_horizontal(
+                        [pl.col(c) <= p_disconnect for c in logic_current]
+                    )
+                    & (pl.col("site_power") <= p_disconnect)
+                )
+                .otherwise(pl.lit(None, dtype=pl.Boolean))
+                .alias("is_disc"),
+                pl.when(pl.col("site_power_next").is_not_null())
+                .then(
+                    pl.all_horizontal([pl.col(c) <= p_disconnect for c in logic_next])
+                    & (pl.col("site_power_next") <= p_disconnect)
+                )
+                .otherwise(pl.lit(None, dtype=pl.Boolean))
+                .alias("is_disc_next"),
+            ]
+        )
 
-        df = df.with_columns([
-            (
-                (~pl.col("is_disc").shift(1)) &
-                pl.col("is_disc") &
-                (pl.col("site_power_drop") >= p_step_strict)
-            ).fill_null(False).alias("disconnect_edge"),
-            (
-                pl.col("is_disc").shift(1) &
-                (~pl.col("is_disc")) &
-                (pl.col("site_power_rise") >= p_step_strict)
-            ).fill_null(False).alias("reconnect_edge"),
-        ])
+        df = df.with_columns(
+            [
+                (
+                    pl.col("is_disc").is_not_null()
+                    & (
+                        pl.col("is_disc").fill_null(False)
+                        | pl.col("is_disc_next").is_not_null()
+                    )
+                ).alias("_power_assessable"),
+                (pl.col("site_power").shift(1) - pl.col("site_power")).alias(
+                    "site_power_drop"
+                ),
+                (pl.col("site_power") - pl.col("site_power").shift(1)).alias(
+                    "site_power_rise"
+                ),
+            ]
+        )
 
-        df = df.with_columns([
-            (
-                (~pl.col("is_disc").shift(1)) &
-                pl.col("is_disc") &
-                (pl.col("site_power_drop") >= p_step_fallback) &
-                (~pl.col("disconnect_edge"))
-            ).fill_null(False).alias("disconnect_edge_fallback"),
-            (
-                pl.col("is_disc").shift(1) &
-                (~pl.col("is_disc")) &
-                (pl.col("site_power_rise") >= p_step_fallback) &
-                (~pl.col("reconnect_edge"))
-            ).fill_null(False).alias("reconnect_edge_fallback"),
-        ])
+        df = df.with_columns(
+            [
+                (pl.col("v10m_avg").is_not_null() & pl.col("_power_assessable")).alias(
+                    "eligible_los"
+                ),
+                (pl.col("vinst_max").is_not_null() & pl.col("_power_assessable")).alias(
+                    "eligible_ov1"
+                ),
+            ]
+        )
+
+        df = df.with_columns(
+            [
+                (
+                    (~pl.col("is_disc").shift(1))
+                    & pl.col("is_disc")
+                    & (pl.col("site_power_drop") >= p_step_strict)
+                )
+                .fill_null(False)
+                .alias("disconnect_edge"),
+                (
+                    pl.col("is_disc").shift(1)
+                    & (~pl.col("is_disc"))
+                    & (pl.col("site_power_rise") >= p_step_strict)
+                )
+                .fill_null(False)
+                .alias("reconnect_edge"),
+            ]
+        )
+
+        df = df.with_columns(
+            [
+                (
+                    (~pl.col("is_disc").shift(1))
+                    & pl.col("is_disc")
+                    & (pl.col("site_power_drop") >= p_step_fallback)
+                    & (~pl.col("disconnect_edge"))
+                )
+                .fill_null(False)
+                .alias("disconnect_edge_fallback"),
+                (
+                    pl.col("is_disc").shift(1)
+                    & (~pl.col("is_disc"))
+                    & (pl.col("site_power_rise") >= p_step_fallback)
+                    & (~pl.col("reconnect_edge"))
+                )
+                .fill_null(False)
+                .alias("reconnect_edge_fallback"),
+            ]
+        )
 
         self._site_day_signals_cache[cache_key] = df
         return self._site_day_signals_cache[cache_key]
@@ -218,32 +254,44 @@ class CheckPVBehaviour:
 
         disc_rows = (
             df.filter(pl.col("disconnect_edge") | pl.col("disconnect_edge_fallback"))
-              .select([
-                  "site_id", "local_tstamp", "v10m_avg", "vinst_max",
-                  "site_power_drop",
-                  "disconnect_edge", "disconnect_edge_fallback",
-              ])
-              .with_columns(
-                  pl.when(pl.col("disconnect_edge"))
-                    .then(pl.lit("strict_10pct"))
-                    .otherwise(pl.lit("fallback_5pct"))
-                    .alias("edge_source")
-              )
-              .sort("local_tstamp")
+            .select(
+                [
+                    "site_id",
+                    "local_tstamp",
+                    "v10m_avg",
+                    "vinst_max",
+                    "site_power_drop",
+                    "disconnect_edge",
+                    "disconnect_edge_fallback",
+                ]
+            )
+            .with_columns(
+                pl.when(pl.col("disconnect_edge"))
+                .then(pl.lit("strict_10pct"))
+                .otherwise(pl.lit("fallback_5pct"))
+                .alias("edge_source")
+            )
+            .sort("local_tstamp")
         )
         rec_rows = (
             df.filter(pl.col("reconnect_edge") | pl.col("reconnect_edge_fallback"))
-              .select([
-                  "site_id", "local_tstamp", "v10m_avg", "vinst_max",
-                  "reconnect_edge", "reconnect_edge_fallback",
-              ])
-              .with_columns(
-                  pl.when(pl.col("reconnect_edge"))
-                    .then(pl.lit("strict_10pct"))
-                    .otherwise(pl.lit("fallback_5pct"))
-                    .alias("edge_source")
-              )
-              .sort("local_tstamp")
+            .select(
+                [
+                    "site_id",
+                    "local_tstamp",
+                    "v10m_avg",
+                    "vinst_max",
+                    "reconnect_edge",
+                    "reconnect_edge_fallback",
+                ]
+            )
+            .with_columns(
+                pl.when(pl.col("reconnect_edge"))
+                .then(pl.lit("strict_10pct"))
+                .otherwise(pl.lit("fallback_5pct"))
+                .alias("edge_source")
+            )
+            .sort("local_tstamp")
         )
 
         if disc_rows.is_empty():
@@ -268,12 +316,20 @@ class CheckPVBehaviour:
             vinst = row["vinst_max"]
             edge_source = row["edge_source"]
             site_power_drop_kw = row["site_power_drop"]
-            site_power_drop_pct = None if PRated in [None, 0] or site_power_drop_kw is None else (float(site_power_drop_kw) / float(PRated)) * 100.0
+            site_power_drop_pct = (
+                None
+                if PRated in [None, 0] or site_power_drop_kw is None
+                else (float(site_power_drop_kw) / float(PRated)) * 100.0
+            )
             mech = None
             threshold_voltage = None
             grey_non_sustained = False
-            reconnect = next((r for r in reconnect_list if r["local_tstamp"] > tdisc), None)
-            vinst_in_ov1_region = vinst is not None and (los_hi_strict <= vinst <= los_hi_cap)
+            reconnect = next(
+                (r for r in reconnect_list if r["local_tstamp"] > tdisc), None
+            )
+            vinst_in_ov1_region = vinst is not None and (
+                los_hi_strict <= vinst <= los_hi_cap
+            )
 
             if v10m is not None and (los_lo <= v10m <= los_hi_strict):
                 mech = "LOS"
@@ -320,18 +376,20 @@ class CheckPVBehaviour:
             if vrec is None:
                 continue
 
-            brackets.append({
-                "site_id": row["site_id"],
-                "event_id": event_idx,
-                "edge_source": edge_source,
-                "mech": mech,
-                "ts_disc": tdisc,
-                "ts_rec": reconnect["local_tstamp"],
-                "L": vrec + eps,
-                "U": threshold_voltage,
-                "midpoint": (vrec + eps + threshold_voltage) / 2.0,
-                "width": threshold_voltage - (vrec + eps),
-            })
+            brackets.append(
+                {
+                    "site_id": row["site_id"],
+                    "event_id": event_idx,
+                    "edge_source": edge_source,
+                    "mech": mech,
+                    "ts_disc": tdisc,
+                    "ts_rec": reconnect["local_tstamp"],
+                    "L": vrec + eps,
+                    "U": threshold_voltage,
+                    "midpoint": (vrec + eps + threshold_voltage) / 2.0,
+                    "width": threshold_voltage - (vrec + eps),
+                }
+            )
 
         rec_df = (
             pl.DataFrame(records)
@@ -352,20 +410,22 @@ class CheckPVBehaviour:
                     "grey_non_sustained": pl.Boolean,
                 }
             )
-        ).with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("event_id").cast(pl.Int64),
-            pl.col("ts_disc").cast(timestamp_dtype),
-            pl.col("edge_source").cast(pl.Utf8),
-            pl.col("mech").cast(pl.Utf8),
-            pl.col("v_los_recorded").cast(pl.Float64),
-            pl.col("v_ov1_recorded").cast(pl.Float64),
-            pl.col("v10m_disc").cast(pl.Float64),
-            pl.col("vinst_disc").cast(pl.Float64),
-            pl.col("site_power_drop_kw").cast(pl.Float64),
-            pl.col("site_power_drop_pct_rated").cast(pl.Float64),
-            pl.col("grey_non_sustained").cast(pl.Boolean),
-        ])
+        ).with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("event_id").cast(pl.Int64),
+                pl.col("ts_disc").cast(timestamp_dtype),
+                pl.col("edge_source").cast(pl.Utf8),
+                pl.col("mech").cast(pl.Utf8),
+                pl.col("v_los_recorded").cast(pl.Float64),
+                pl.col("v_ov1_recorded").cast(pl.Float64),
+                pl.col("v10m_disc").cast(pl.Float64),
+                pl.col("vinst_disc").cast(pl.Float64),
+                pl.col("site_power_drop_kw").cast(pl.Float64),
+                pl.col("site_power_drop_pct_rated").cast(pl.Float64),
+                pl.col("grey_non_sustained").cast(pl.Boolean),
+            ]
+        )
         br_df = (
             pl.DataFrame(brackets)
             if brackets
@@ -383,18 +443,20 @@ class CheckPVBehaviour:
                     "width": pl.Float64,
                 }
             )
-        ).with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("event_id").cast(pl.Int64),
-            pl.col("edge_source").cast(pl.Utf8),
-            pl.col("mech").cast(pl.Utf8),
-            pl.col("ts_disc").cast(timestamp_dtype),
-            pl.col("ts_rec").cast(timestamp_dtype),
-            pl.col("L").cast(pl.Float64),
-            pl.col("U").cast(pl.Float64),
-            pl.col("midpoint").cast(pl.Float64),
-            pl.col("width").cast(pl.Float64),
-        ])
+        ).with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("event_id").cast(pl.Int64),
+                pl.col("edge_source").cast(pl.Utf8),
+                pl.col("mech").cast(pl.Utf8),
+                pl.col("ts_disc").cast(timestamp_dtype),
+                pl.col("ts_rec").cast(timestamp_dtype),
+                pl.col("L").cast(pl.Float64),
+                pl.col("U").cast(pl.Float64),
+                pl.col("midpoint").cast(pl.Float64),
+                pl.col("width").cast(pl.Float64),
+            ]
+        )
 
         return {
             "frame": df,
@@ -429,30 +491,55 @@ class CheckPVBehaviour:
                 },
             }
 
-        df = df.with_columns([
-            (pl.col("eligible_ov1") & (pl.col("vinst_max") >= (ov1_work_threshold - tau))).alias("ov1_responsible"),
-        ])
-        df = df.with_columns([
-            (
-                pl.col("eligible_los") &
-                (~pl.col("ov1_responsible")) &
-                (pl.col("v10m_avg") > los_threshold)
-            ).alias("los_responsible"),
-            (
-                pl.col("is_disc").fill_null(False)
-                | pl.col("is_disc_next").fill_null(False)
-            ).alias("is_disc_current_or_next"),
-        ])
-        df = df.with_columns([
-            (pl.col("los_responsible") & pl.col("is_disc_current_or_next")).alias("los_compliant"),
-            (pl.col("ov1_responsible") & pl.col("is_disc_current_or_next")).alias("ov1_compliant"),
-        ])
+        df = df.with_columns(
+            [
+                (
+                    pl.col("eligible_ov1")
+                    & (pl.col("vinst_max") >= (ov1_work_threshold - tau))
+                ).alias("ov1_responsible"),
+            ]
+        )
+        df = df.with_columns(
+            [
+                (
+                    pl.col("eligible_los")
+                    & (~pl.col("ov1_responsible"))
+                    & (pl.col("v10m_avg") > los_threshold)
+                ).alias("los_responsible"),
+                (
+                    pl.col("is_disc").fill_null(False)
+                    | pl.col("is_disc_next").fill_null(False)
+                ).alias("is_disc_current_or_next"),
+            ]
+        )
+        df = df.with_columns(
+            [
+                (pl.col("los_responsible") & pl.col("is_disc_current_or_next")).alias(
+                    "los_compliant"
+                ),
+                (pl.col("ov1_responsible") & pl.col("is_disc_current_or_next")).alias(
+                    "ov1_compliant"
+                ),
+            ]
+        )
 
-        detail = df.select([
-            "site_id", "local_tstamp", "utc_tstamp", "v10m_avg", "vinst_max",
-            "eligible_los", "eligible_ov1", "is_disc", "is_disc_next",
-            "los_responsible", "ov1_responsible", "los_compliant", "ov1_compliant",
-        ])
+        detail = df.select(
+            [
+                "site_id",
+                "local_tstamp",
+                "utc_tstamp",
+                "v10m_avg",
+                "vinst_max",
+                "eligible_los",
+                "eligible_ov1",
+                "is_disc",
+                "is_disc_next",
+                "los_responsible",
+                "ov1_responsible",
+                "los_compliant",
+                "ov1_compliant",
+            ]
+        )
 
         summary = {
             "los_eligible": int(detail.filter(pl.col("los_responsible")).height),

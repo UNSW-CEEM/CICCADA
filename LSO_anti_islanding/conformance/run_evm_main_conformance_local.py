@@ -76,7 +76,7 @@ def main(dataset):
     return results
 
 
-# verify if the following 
+# verify if the following
 # from main_run_conformance import main
 
 # results = main(dataset="solar_analytics")

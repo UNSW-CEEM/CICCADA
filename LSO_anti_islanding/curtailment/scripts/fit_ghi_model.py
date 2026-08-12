@@ -23,7 +23,6 @@ from pathlib import Path
 
 import polars as pl
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_STRUCTURED_DATA = (
@@ -60,8 +59,7 @@ def training_rows(structured_data):
     Only dataset_role == train is used to fit this model.
     """
     return (
-        structured_data
-        .filter(pl.col("dataset_role") == "train")
+        structured_data.filter(pl.col("dataset_role") == "train")
         .filter(pl.col("P_kw_norm_cs") > 0.2)
         .filter(pl.col("GHI") > 50)
         .filter(pl.col("P_kw_norm") > 0.05)
@@ -69,11 +67,13 @@ def training_rows(structured_data):
         .filter(pl.col("V") <= 253)
         # confirm S_norm works here as we dont have Q
         .filter((pl.col("P_kw_norm") >= 1) | (pl.col("S_norm") < 1.001))
-        .with_columns([
-            pl.col("actual_tod").alias("tod_bin"),
-            (pl.col("GHI") / pl.col("GHI_cs")).alias("x"),
-            (pl.col("P_kw_norm") / pl.col("P_kw_norm_cs")).alias("y"),
-        ])
+        .with_columns(
+            [
+                pl.col("actual_tod").alias("tod_bin"),
+                (pl.col("GHI") / pl.col("GHI_cs")).alias("x"),
+                (pl.col("P_kw_norm") / pl.col("P_kw_norm_cs")).alias("y"),
+            ]
+        )
         .select(["site_id", "tod_bin", "x", "y"])
     )
 
@@ -82,21 +82,28 @@ def fit_model(train_data):
     """Fit one slope per site and 5-minute time-of-day bin."""
     valid_xy = pl.col("x").is_not_null() & pl.col("y").is_not_null()
     grouped = (
-        train_data
-        .group_by(["site_id", "tod_bin"])
-        .agg([
-            pl.len().alias("n"),
-            pl.col("x").filter(valid_xy).count().alias("n_regr"),
-            pl.col("x").filter(valid_xy).sum().alias("sum_x"),
-            pl.col("y").filter(valid_xy).sum().alias("sum_y"),
-            (pl.col("x") * pl.col("y")).filter(valid_xy).sum().alias("sum_xy"),
-            (pl.col("x") * pl.col("x")).filter(valid_xy).sum().alias("sum_x2"),
-        ])
-        .with_columns(
-            ((pl.col("n_regr") * pl.col("sum_xy")) - (pl.col("sum_x") * pl.col("sum_y"))).alias("slope_num")
+        train_data.group_by(["site_id", "tod_bin"])
+        .agg(
+            [
+                pl.len().alias("n"),
+                pl.col("x").filter(valid_xy).count().alias("n_regr"),
+                pl.col("x").filter(valid_xy).sum().alias("sum_x"),
+                pl.col("y").filter(valid_xy).sum().alias("sum_y"),
+                (pl.col("x") * pl.col("y")).filter(valid_xy).sum().alias("sum_xy"),
+                (pl.col("x") * pl.col("x")).filter(valid_xy).sum().alias("sum_x2"),
+            ]
         )
         .with_columns(
-            ((pl.col("n_regr") * pl.col("sum_x2")) - (pl.col("sum_x") * pl.col("sum_x"))).alias("slope_den")
+            (
+                (pl.col("n_regr") * pl.col("sum_xy"))
+                - (pl.col("sum_x") * pl.col("sum_y"))
+            ).alias("slope_num")
+        )
+        .with_columns(
+            (
+                (pl.col("n_regr") * pl.col("sum_x2"))
+                - (pl.col("sum_x") * pl.col("sum_x"))
+            ).alias("slope_den")
         )
         .with_columns(
             pl.when(pl.col("slope_den") != 0)

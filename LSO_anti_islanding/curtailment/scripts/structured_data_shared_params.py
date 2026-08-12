@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-
 ADELAIDE_TZ = "Australia/Adelaide"
 
 # Capacity is normally taken from metadata. The observed-peak fallback is only
@@ -72,7 +71,9 @@ def evm_training_parquets(evm_training_dir, start_date, end_date):
     """
     files = sorted(Path(evm_training_dir).glob("*.parquet"))
     if not files:
-        raise FileNotFoundError(f"No EVM training parquet files found in {evm_training_dir}")
+        raise FileNotFoundError(
+            f"No EVM training parquet files found in {evm_training_dir}"
+        )
     return files
 
 
@@ -81,7 +82,13 @@ def bom_daily_parquets(bom_root, start_date, end_date):
     bom_root = Path(bom_root)
     files = []
     for day in date_range(start_date, end_date):
-        daily_path = bom_root / f"{day.year}" / f"{day.month}" / f"{day.day}" / f"{day:%Y%m%d}.parquet"
+        daily_path = (
+            bom_root
+            / f"{day.year}"
+            / f"{day.month}"
+            / f"{day.day}"
+            / f"{day:%Y%m%d}.parquet"
+        )
         if daily_path.exists():
             files.append(daily_path)
     if files:
@@ -125,21 +132,22 @@ def time_of_day_5min_expr(column_name):
 
 def read_sapn_site_details(path):
     """Read SAPN site metadata, including AC capacity in W."""
-    return pl.read_csv(path).with_columns([
-        pl.col("site_id").cast(pl.Int64),
-        pl.col("ac_cap_w").cast(pl.Float64, strict=False),
-    ])
+    return pl.read_csv(path).with_columns(
+        [
+            pl.col("site_id").cast(pl.Int64),
+            pl.col("ac_cap_w").cast(pl.Float64, strict=False),
+        ]
+    )
 
 
 def read_sapn_circuit_details(path):
     """Read SAPN circuit metadata and standardise ID/polarity types."""
-    return (
-        pl.read_csv(path)
-        .with_columns([
+    return pl.read_csv(path).with_columns(
+        [
             pl.col("site_id").cast(pl.Int64),
             pl.col("c_id").cast(pl.Int64),
             pl.col("polarity").cast(pl.Float64, strict=False),
-        ])
+        ]
     )
 
 
@@ -147,18 +155,22 @@ def read_evm_site_metadata(path):
     """Read EVM site metadata and rename fields to avoid SAPN/EVM ambiguity."""
     return (
         pl.read_csv(path)
-        .rename({
-            "postcode": "evm_postcode",
-            "latitude": "site_latitude",
-            "longitude": "site_longitude",
-            "ac_capacity_kw": "evm_ac_capacity_kw",
-        })
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("site_latitude").cast(pl.Float64, strict=False),
-            pl.col("site_longitude").cast(pl.Float64, strict=False),
-            pl.col("evm_ac_capacity_kw").cast(pl.Float64, strict=False),
-        ])
+        .rename(
+            {
+                "postcode": "evm_postcode",
+                "latitude": "site_latitude",
+                "longitude": "site_longitude",
+                "ac_capacity_kw": "evm_ac_capacity_kw",
+            }
+        )
+        .with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("site_latitude").cast(pl.Float64, strict=False),
+                pl.col("site_longitude").cast(pl.Float64, strict=False),
+                pl.col("evm_ac_capacity_kw").cast(pl.Float64, strict=False),
+            ]
+        )
     )
 
 
@@ -166,16 +178,20 @@ def read_evm_circuit_metadata(path):
     """Read EVM circuit metadata using the same names as SAPN circuit metadata."""
     return (
         pl.read_csv(path)
-        .rename({
-            "circuit_id": "c_id",
-            "circuit_type": "con_type",
-            "circuit_polarity": "polarity",
-        })
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("c_id").cast(pl.Int64),
-            pl.col("polarity").cast(pl.Float64, strict=False),
-        ])
+        .rename(
+            {
+                "circuit_id": "c_id",
+                "circuit_type": "con_type",
+                "circuit_polarity": "polarity",
+            }
+        )
+        .with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("c_id").cast(pl.Int64),
+                pl.col("polarity").cast(pl.Float64, strict=False),
+            ]
+        )
     )
 
 
@@ -192,8 +208,9 @@ def read_site_cohort(path):
     return cohort
 
 
-def build_eligible_sites(site_details, circuit_details, evm_sites,
-                         site_cohort=None, limit_sites=None):
+def build_eligible_sites(
+    site_details, circuit_details, evm_sites, site_cohort=None, limit_sites=None
+):
     """Validate which sites can be used in the structured-data build.
 
     Returns:
@@ -212,16 +229,12 @@ def build_eligible_sites(site_details, circuit_details, evm_sites,
     # Count SAPN site metadata rows. A duplicate/missing site metadata row makes
     # capacity and site-level joins ambiguous.
     site_row_counts = (
-        site_details
-        .group_by("site_id")
-        .len()
-        .rename({"len": "site_metadata_rows"})
+        site_details.group_by("site_id").len().rename({"len": "site_metadata_rows"})
     )
     # Count SAPN PV site-net circuits. These are the circuits that will be
     # summed into site-level PV generation.
     pv_counts = (
-        circuit_details
-        .filter(pl.col("con_type") == "pv_site_net")
+        circuit_details.filter(pl.col("con_type") == "pv_site_net")
         .group_by("site_id")
         .len()
         .rename({"len": "pv_site_net_count"})
@@ -230,22 +243,25 @@ def build_eligible_sites(site_details, circuit_details, evm_sites,
     # candidates keeps all sites and annotates each with an eligibility_status.
     # We keep excluded rows here so diagnostics can explain what happened.
     candidates = (
-        site_row_counts
-        .join(pv_counts, on="site_id", how="left")
+        site_row_counts.join(pv_counts, on="site_id", how="left")
         .with_columns(pl.col("pv_site_net_count").fill_null(0))
         .join(
-            site_details.select(["site_id", "ac_cap_w"]).unique(subset=["site_id"], keep="first"),
+            site_details.select(["site_id", "ac_cap_w"]).unique(
+                subset=["site_id"], keep="first"
+            ),
             on="site_id",
             how="left",
         )
         .join(
-            evm_sites.select([
-                "site_id",
-                "site_latitude",
-                "site_longitude",
-                "evm_postcode",
-                "evm_ac_capacity_kw",
-            ]),
+            evm_sites.select(
+                [
+                    "site_id",
+                    "site_latitude",
+                    "site_longitude",
+                    "evm_postcode",
+                    "evm_ac_capacity_kw",
+                ]
+            ),
             on="site_id",
             how="left",
         )
@@ -257,7 +273,9 @@ def build_eligible_sites(site_details, circuit_details, evm_sites,
             .then(pl.lit("no_pv_site_net"))
             .when(pl.col("pv_site_net_count") > 3)
             .then(pl.lit("more_than_3_pv_site_net"))
-            .when(pl.col("site_latitude").is_null() | pl.col("site_longitude").is_null())
+            .when(
+                pl.col("site_latitude").is_null() | pl.col("site_longitude").is_null()
+            )
             .then(pl.lit("missing_evm_lat_lon"))
             .otherwise(pl.lit("eligible"))
             .alias("eligibility_status")
@@ -269,8 +287,7 @@ def build_eligible_sites(site_details, circuit_details, evm_sites,
         # confidence-tier SAPN cohort. Sites outside this cohort are not errors;
         # they are marked as outside_site_cohort for diagnostics.
         candidates = (
-            candidates
-            .join(
+            candidates.join(
                 site_cohort.with_columns(pl.lit(True).alias("in_site_cohort")),
                 on="site_id",
                 how="left",
@@ -297,25 +314,27 @@ def pv_circuits_for_sites(circuit_details, eligible_sites):
     """Keep only PV circuits for selected sites."""
     site_ids = eligible_sites["site_id"].to_list()
     return (
-        circuit_details
-        .filter((pl.col("site_id").is_in(site_ids)) & (pl.col("con_type") == "pv_site_net"))
+        circuit_details.filter(
+            (pl.col("site_id").is_in(site_ids)) & (pl.col("con_type") == "pv_site_net")
+        )
         .select(["site_id", "c_id", "con_type", "polarity"])
         .unique()
     )
 
 
 def map_sites_to_bom_grid(eligible_sites, bom_points_csv):
-    """Map each site to the nearest available BOM grid point.
-    """
+    """Map each site to the nearest available BOM grid point."""
     # All candidate BOM grid points. Postcode is not used here; we choose the
     # closest grid point from the available latitude/longitude list.
     bom_points = (
         pl.read_csv(bom_points_csv)
         .select(["latitude", "longitude"])
-        .with_columns([
-            pl.col("latitude").cast(pl.Float64, strict=False),
-            pl.col("longitude").cast(pl.Float64, strict=False),
-        ])
+        .with_columns(
+            [
+                pl.col("latitude").cast(pl.Float64, strict=False),
+                pl.col("longitude").cast(pl.Float64, strict=False),
+            ]
+        )
         .drop_nulls()
         .unique()
     )
@@ -334,15 +353,17 @@ def map_sites_to_bom_grid(eligible_sites, bom_points_csv):
         # because we only need the nearest point in the local BOM grid.
         distance_sq = np.square(grid_lat - site_lat) + np.square(grid_lon - site_lon)
         nearest_idx = int(np.argmin(distance_sq))
-        rows.append({
-            "site_id": row["site_id"],
-            "site_latitude": site_lat,
-            "site_longitude": site_lon,
-            # n_lat/n_long are the BOM coordinates used in later joins.
-            "n_lat": float(grid_lat[nearest_idx]),
-            "n_long": float(grid_lon[nearest_idx]),
-            "bom_grid_distance_degrees": float(math.sqrt(distance_sq[nearest_idx])),
-        })
+        rows.append(
+            {
+                "site_id": row["site_id"],
+                "site_latitude": site_lat,
+                "site_longitude": site_lon,
+                # n_lat/n_long are the BOM coordinates used in later joins.
+                "n_lat": float(grid_lat[nearest_idx]),
+                "n_long": float(grid_lon[nearest_idx]),
+                "bom_grid_distance_degrees": float(math.sqrt(distance_sq[nearest_idx])),
+            }
+        )
 
     return pl.DataFrame(rows)
 
@@ -359,13 +380,16 @@ def resolve_capacity(eligible_sites, site_metrology):
     final fallback.
     """
     metadata = (
-        eligible_sites
-        .lazy()
+        eligible_sites.lazy()
         .select(["site_id", "ac_cap_w", "evm_ac_capacity_kw"])
-        .with_columns([
-            (pl.col("ac_cap_w").cast(pl.Float64, strict=False) / 1000.0).alias("sapn_ac_capacity_kw"),
-            pl.col("evm_ac_capacity_kw").cast(pl.Float64, strict=False),
-        ])
+        .with_columns(
+            [
+                (pl.col("ac_cap_w").cast(pl.Float64, strict=False) / 1000.0).alias(
+                    "sapn_ac_capacity_kw"
+                ),
+                pl.col("evm_ac_capacity_kw").cast(pl.Float64, strict=False),
+            ]
+        )
         .with_columns(
             pl.when(pl.col("sapn_ac_capacity_kw") > 0)
             .then(pl.col("sapn_ac_capacity_kw"))
@@ -379,49 +403,53 @@ def resolve_capacity(eligible_sites, site_metrology):
     positive_power = (
         # Robust observed peak is based on positive PV generation only. It is
         # not the normal path when metadata capacity is plausible.
-        site_metrology
-        .filter(pl.col("P_kw") > 0)
-        .select(["site_id", "P_kw"])
+        site_metrology.filter(pl.col("P_kw") > 0).select(["site_id", "P_kw"])
     )
     counts = positive_power.group_by("site_id").len().rename({"len": "sample_count"})
     ranked = (
-        positive_power
-        .join(counts, on="site_id", how="left")
+        positive_power.join(counts, on="site_id", how="left")
         .sort(["site_id", "P_kw"], descending=[False, True])
-        .with_columns([
-            pl.col("P_kw").cum_count().over("site_id").alias("rank_desc"),
-            pl.max_horizontal(
-                pl.lit(20),
-                (pl.col("sample_count").cast(pl.Float64) * 0.01).ceil().cast(pl.Int64),
-            ).alias("top_n"),
-        ])
+        .with_columns(
+            [
+                pl.col("P_kw").cum_count().over("site_id").alias("rank_desc"),
+                pl.max_horizontal(
+                    pl.lit(20),
+                    (pl.col("sample_count").cast(pl.Float64) * 0.01)
+                    .ceil()
+                    .cast(pl.Int64),
+                ).alias("top_n"),
+            ]
+        )
         .filter(pl.col("rank_desc") <= pl.col("top_n"))
     )
-    robust_peak = (
-        ranked
-        .group_by("site_id")
-        .agg([
+    robust_peak = ranked.group_by("site_id").agg(
+        [
             pl.col("P_kw").median().alias("robust_peak_kw"),
             pl.col("P_kw").max().alias("raw_peak_kw"),
             pl.col("sample_count").max().alias("positive_power_samples"),
-        ])
+        ]
     )
 
     return (
-        metadata
-        .join(robust_peak, on="site_id", how="left")
+        metadata.join(robust_peak, on="site_id", how="left")
         .with_columns(
             pl.when(
                 pl.col("metadata_capacity_kw").is_not_null()
                 & (
                     pl.col("robust_peak_kw").is_null()
-                    | (pl.col("robust_peak_kw") <= pl.col("metadata_capacity_kw") * CAPACITY_TOLERANCE)
+                    | (
+                        pl.col("robust_peak_kw")
+                        <= pl.col("metadata_capacity_kw") * CAPACITY_TOLERANCE
+                    )
                 )
             )
             .then(pl.col("metadata_capacity_kw"))
             .when(
                 pl.col("metadata_capacity_kw").is_not_null()
-                & (pl.col("robust_peak_kw") > pl.col("metadata_capacity_kw") * CAPACITY_TOLERANCE)
+                & (
+                    pl.col("robust_peak_kw")
+                    > pl.col("metadata_capacity_kw") * CAPACITY_TOLERANCE
+                )
             )
             .then(round_up_to_half_kw_expr("robust_peak_kw"))
             .when(pl.col("robust_peak_kw").is_not_null())
@@ -434,13 +462,19 @@ def resolve_capacity(eligible_sites, site_metrology):
                 pl.col("metadata_capacity_kw").is_not_null()
                 & (
                     pl.col("robust_peak_kw").is_null()
-                    | (pl.col("robust_peak_kw") <= pl.col("metadata_capacity_kw") * CAPACITY_TOLERANCE)
+                    | (
+                        pl.col("robust_peak_kw")
+                        <= pl.col("metadata_capacity_kw") * CAPACITY_TOLERANCE
+                    )
                 )
             )
             .then(pl.lit("metadata"))
             .when(
                 pl.col("metadata_capacity_kw").is_not_null()
-                & (pl.col("robust_peak_kw") > pl.col("metadata_capacity_kw") * CAPACITY_TOLERANCE)
+                & (
+                    pl.col("robust_peak_kw")
+                    > pl.col("metadata_capacity_kw") * CAPACITY_TOLERANCE
+                )
             )
             .then(pl.lit("observed_peak_metadata_exceeded"))
             .when(pl.col("robust_peak_kw").is_not_null())
@@ -461,9 +495,10 @@ def as_lazy(df):
 def add_capacity_and_grid(site_metrology, capacity, bom_mapping):
     """Attach capacity, n_lat/n_long, and normalised P/Q/S columns."""
     return (
-        site_metrology
-        .join(
-            as_lazy(capacity).select(["site_id", "ac_capacity_kw", "S_99", "capacity_source"]),
+        site_metrology.join(
+            as_lazy(capacity).select(
+                ["site_id", "ac_capacity_kw", "S_99", "capacity_source"]
+            ),
             on="site_id",
             how="inner",
         )
@@ -472,38 +507,44 @@ def add_capacity_and_grid(site_metrology, capacity, bom_mapping):
             on="site_id",
             how="inner",
         )
-        .with_columns([
-            (pl.col("P_kw") / pl.col("S_99")).alias("P_kw_norm"),
-            # Q is unavailable in these local extracts. S_norm=1.0 makes the
-            # original apparent-power filter pass without pretending Q exists.
-            pl.lit(None).cast(pl.Float64).alias("Q_kvar_norm"),
-            pl.lit(S_NORM_REACTIVE_POWER_UNAVAILABLE).cast(pl.Float64).alias("S_norm"),
-        ])
+        .with_columns(
+            [
+                (pl.col("P_kw") / pl.col("S_99")).alias("P_kw_norm"),
+                # Q is unavailable in these local extracts. S_norm=1.0 makes the
+                # original apparent-power filter pass without pretending Q exists.
+                pl.lit(None).cast(pl.Float64).alias("Q_kvar_norm"),
+                pl.lit(S_NORM_REACTIVE_POWER_UNAVAILABLE)
+                .cast(pl.Float64)
+                .alias("S_norm"),
+            ]
+        )
     )
 
 
 def prepare_bom10min(bom_files, bom_mapping):
     """Read BOM rows only for the selected nearest grid points."""
-    grid_points = (
-        bom_mapping
-        .select([
+    grid_points = bom_mapping.select(
+        [
             pl.col("n_lat").alias("latitude"),
             pl.col("n_long").alias("longitude"),
-        ])
-        .unique()
-    )
+        ]
+    ).unique()
 
     return (
         # The BOM scan is restricted to selected n_lat/n_long points before
         # downstream joins so sample runs do not carry every BOM grid location.
         pl.scan_parquet([str(path) for path in bom_files])
-        .with_columns([
-            pl.col("latitude").cast(pl.Float64, strict=False),
-            pl.col("longitude").cast(pl.Float64, strict=False),
-            pl.col("time").cast(pl.Datetime).alias("time"),
-            pl.col("surface_global_irradiance").cast(pl.Float64, strict=False).alias("GHI"),
-            pl.col("cloud_type").cast(pl.Float64, strict=False).alias("cloud_type"),
-        ])
+        .with_columns(
+            [
+                pl.col("latitude").cast(pl.Float64, strict=False),
+                pl.col("longitude").cast(pl.Float64, strict=False),
+                pl.col("time").cast(pl.Datetime).alias("time"),
+                pl.col("surface_global_irradiance")
+                .cast(pl.Float64, strict=False)
+                .alias("GHI"),
+                pl.col("cloud_type").cast(pl.Float64, strict=False).alias("cloud_type"),
+            ]
+        )
         .join(grid_points.lazy(), on=["latitude", "longitude"], how="inner")
         .select(["time", "latitude", "longitude", "GHI", "cloud_type"])
         .unique()
@@ -514,37 +555,44 @@ def bom10_to_5min(bom10min):
     """Replicate the original BOM 10-minute to 5-minute expansion."""
     # Original workflow treats each 10-minute BOM irradiance value as applying
     # to its timestamp and the +5 minute timestamp.
-    original = bom10min.select([
-        pl.col("time").alias("time_5min"),
-        "latitude",
-        "longitude",
-        "GHI",
-        "cloud_type",
-    ])
-    plus_five = bom10min.select([
-        (pl.col("time") + pl.duration(minutes=5)).alias("time_5min"),
-        "latitude",
-        "longitude",
-        "GHI",
-        "cloud_type",
-    ])
+    original = bom10min.select(
+        [
+            pl.col("time").alias("time_5min"),
+            "latitude",
+            "longitude",
+            "GHI",
+            "cloud_type",
+        ]
+    )
+    plus_five = bom10min.select(
+        [
+            (pl.col("time") + pl.duration(minutes=5)).alias("time_5min"),
+            "latitude",
+            "longitude",
+            "GHI",
+            "cloud_type",
+        ]
+    )
     return pl.concat([original, plus_five], how="vertical")
 
 
 def clear_sky_days(bom10min, start_day=None, end_day=None):
     """Find low-cloud/high-GHI BOM days by grid point and local month."""
     daily_cloud = (
-        bom10min
-        .with_columns([
-            adelaide_datetime_expr("time").dt.date().alias("day"),
-            adelaide_datetime_expr("time").dt.month().alias("month"),
-        ])
+        bom10min.with_columns(
+            [
+                adelaide_datetime_expr("time").dt.date().alias("day"),
+                adelaide_datetime_expr("time").dt.month().alias("month"),
+            ]
+        )
         .filter(~pl.col("day").is_in(sorted(EXCLUDED_LOCAL_DAYS)))
         .group_by(["latitude", "longitude", "day", "month"])
-        .agg([
-            pl.col("cloud_type").sum().alias("cloud_sum"),
-            pl.col("GHI").max().alias("max_GHI"),
-        ])
+        .agg(
+            [
+                pl.col("cloud_type").sum().alias("cloud_sum"),
+                pl.col("GHI").max().alias("max_GHI"),
+            ]
+        )
     )
 
     if start_day is not None and end_day is not None:
@@ -555,18 +603,26 @@ def clear_sky_days(bom10min, start_day=None, end_day=None):
     return (
         # Select up to the first three low-cloud, high-irradiance days per
         # month/grid point. These become candidates for clear-sky references.
-        daily_cloud
-        .sort(["month", "latitude", "longitude", "cloud_sum", "day"])
+        daily_cloud.sort(["month", "latitude", "longitude", "cloud_sum", "day"])
         .with_columns(
-            pl.col("day").cum_count().over(["month", "latitude", "longitude"]).alias("rn")
+            pl.col("day")
+            .cum_count()
+            .over(["month", "latitude", "longitude"])
+            .alias("rn")
         )
-        .filter((pl.col("rn") <= BOM_CLEAR_SKY_CANDIDATES) & (pl.col("cloud_sum") <= 60) & (pl.col("max_GHI") > 200))
-        .select([
-            pl.col("day").alias("clear_sky_day"),
-            "latitude",
-            "longitude",
-            "cloud_sum",
-            "max_GHI",
-            "rn",
-        ])
+        .filter(
+            (pl.col("rn") <= BOM_CLEAR_SKY_CANDIDATES)
+            & (pl.col("cloud_sum") <= 60)
+            & (pl.col("max_GHI") > 200)
+        )
+        .select(
+            [
+                pl.col("day").alias("clear_sky_day"),
+                "latitude",
+                "longitude",
+                "cloud_sum",
+                "max_GHI",
+                "rn",
+            ]
+        )
     )

@@ -43,22 +43,27 @@ from config import SITE_DAY_END, SITE_DAY_EXTRACTION_START
 from core.check_pv_behaviour import CheckPVBehaviour
 from core.site_day_preparation import (
     extract_site_day,
-    map_circuit_data_to_site as mapCircuitDataToSite,
     select_site_pv_data,
     trim_site_day_analysis_window,
+)
+from core.site_day_preparation import (
+    map_circuit_data_to_site as mapCircuitDataToSite,
+)
+from sapn2022_workflow.adapter import (
+    load_cleaned_site_data as loadCleanedSiteData,
 )
 from sapn2022_workflow.sapn_paths import (
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
 )
-from sapn2022_workflow.adapter import (
-    load_cleaned_site_data as loadCleanedSiteData,
+
+PHASE_B_SUMMARY_PATH = Path(
+    "updated results/site_compliance/phase_b_site_summary_tier_based.csv"
 )
-
-
-PHASE_B_SUMMARY_PATH = Path("updated results/site_compliance/phase_b_site_summary_tier_based.csv")
-SITE_THRESHOLDS_PATH = Path("updated results/site_compliance/site_thresholds_tier_based.csv")
-CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH # this is the cleaned circuit data parquet
+SITE_THRESHOLDS_PATH = Path(
+    "updated results/site_compliance/site_thresholds_tier_based.csv"
+)
+CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH  # this is the cleaned circuit data parquet
 OUTPUT_DIR = Path("updated results/phase b info for curtailment/tier based")
 TIMESTAMP_OUTPUT_PATH = OUTPUT_DIR / "tier_based_timestamp_flags.csv"
 BUCKET_OUTPUT_PATH = OUTPUT_DIR / "tier_based_5min_buckets.csv"
@@ -123,8 +128,7 @@ def _load_assessed_sites() -> pl.DataFrame:
 
     assessed_summary = summary_df.filter(pl.col("overall_pass").is_not_null())
     assessed_sites = (
-        assessed_summary
-        .select(["site_id", "los_threshold_used"])
+        assessed_summary.select(["site_id", "los_threshold_used"])
         .join(
             # We need both files: the Phase B summary tells us which sites were
             # assessed and which LOS threshold finally passed, while the site
@@ -133,11 +137,13 @@ def _load_assessed_sites() -> pl.DataFrame:
             on="site_id",
             how="left",
         )
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("los_threshold_used").cast(pl.Float64),
-            pl.col("ov1_work_site").cast(pl.Float64),
-        ])
+        .with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("los_threshold_used").cast(pl.Float64),
+                pl.col("ov1_work_site").cast(pl.Float64),
+            ]
+        )
         .sort("site_id")
     )
 
@@ -200,12 +206,15 @@ def _window_for_day(day: int) -> tuple[datetime, datetime]:
 def _signal_columns(site_day_df: pl.DataFrame) -> tuple[list[str], list[str]]:
     """Identify site-day power and voltage columns produced by ``mapCircuitDataToSite``."""
     power_cols = [
-        col for col in site_day_df.columns
+        col
+        for col in site_day_df.columns
         if col.startswith("power")
         and not col.endswith("_next")
         and not col.endswith("_logic")
     ]
-    voltage_cols = [col for col in site_day_df.columns if col.startswith("voltage_valid")]
+    voltage_cols = [
+        col for col in site_day_df.columns if col.startswith("voltage_valid")
+    ]
     return power_cols, voltage_cols
 
 
@@ -220,17 +229,21 @@ def _add_rolling_voltage_metrics(
         rolled = (
             updated_df.filter(pl.col(col).is_not_null())
             .with_columns(
-                pl.col(col).rolling_mean_by(
+                pl.col(col)
+                .rolling_mean_by(
                     by="local_tstamp",
                     window_size="10m",
                     closed="right",
-                ).alias(rolled_name)
+                )
+                .alias(rolled_name)
             )
             .select(["local_tstamp", rolled_name])
         )
         updated_df = updated_df.join(rolled, on="local_tstamp", how="left")
 
-    vmean_cols = [col for col in updated_df.columns if col.startswith("vmean_rolling_10m")]
+    vmean_cols = [
+        col for col in updated_df.columns if col.startswith("vmean_rolling_10m")
+    ]
     return updated_df, vmean_cols
 
 
@@ -241,19 +254,25 @@ def _add_site_level_metrics(
     vmean_cols: list[str],
 ) -> pl.DataFrame:
     """Collapse per-circuit power and voltage into site-level signals."""
-    return site_day_df.with_columns([
-        pl.mean_horizontal([pl.col(col) for col in vmean_cols]).alias("v10m_avg"),
-        pl.max_horizontal([pl.col(col) for col in voltage_cols]).alias("vinst_max"),
-        pl.sum_horizontal([
-            # Negative PV power is clipped to zero so the site total reflects
-            # export/available generation rather than import artefacts.
-            pl.when(pl.col(col).cast(pl.Float64, strict=False).fill_null(0) < 0)
-            .then(pl.lit(0.0))
-            .otherwise(pl.col(col).cast(pl.Float64, strict=False).fill_null(0))
-            for col in power_cols
-        ]).alias("site_power_kw"),
-        pl.any_horizontal([pl.col(col).is_not_null() for col in power_cols]).alias("_has_power"),
-    ])
+    return site_day_df.with_columns(
+        [
+            pl.mean_horizontal([pl.col(col) for col in vmean_cols]).alias("v10m_avg"),
+            pl.max_horizontal([pl.col(col) for col in voltage_cols]).alias("vinst_max"),
+            pl.sum_horizontal(
+                [
+                    # Negative PV power is clipped to zero so the site total reflects
+                    # export/available generation rather than import artefacts.
+                    pl.when(pl.col(col).cast(pl.Float64, strict=False).fill_null(0) < 0)
+                    .then(pl.lit(0.0))
+                    .otherwise(pl.col(col).cast(pl.Float64, strict=False).fill_null(0))
+                    for col in power_cols
+                ]
+            ).alias("site_power_kw"),
+            pl.any_horizontal([pl.col(col).is_not_null() for col in power_cols]).alias(
+                "_has_power"
+            ),
+        ]
+    )
 
 
 def _add_responsibility_flags(
@@ -263,43 +282,56 @@ def _add_responsibility_flags(
     ov1_work_threshold: float,
 ) -> pl.DataFrame:
     """Flag timestamps that sit above the site's final LOS or OV1 thresholds."""
-    with_keep_flags = site_day_df.with_columns([
-        # Keep only rows where we can compare site power against a valid 10-minute
-        # voltage mean. Rows with power but no usable voltage stay out of the
-        # curtailment outputs.
-        (pl.col("_has_power") & pl.col("v10m_avg").is_not_null()).alias("_keep_row"),
-        (pl.col("vinst_max") >= (ov1_work_threshold - TAU)).fill_null(False).alias("_ov1_kicks_in"),
-    ])
+    with_keep_flags = site_day_df.with_columns(
+        [
+            # Keep only rows where we can compare site power against a valid 10-minute
+            # voltage mean. Rows with power but no usable voltage stay out of the
+            # curtailment outputs.
+            (pl.col("_has_power") & pl.col("v10m_avg").is_not_null()).alias(
+                "_keep_row"
+            ),
+            (pl.col("vinst_max") >= (ov1_work_threshold - TAU))
+            .fill_null(False)
+            .alias("_ov1_kicks_in"),
+        ]
+    )
 
-    return with_keep_flags.with_columns([
-        # OV1 takes priority over LOS at the same timestamp, matching the Phase B
-        # responsibility ordering.
-        (pl.col("_keep_row") & pl.col("_ov1_kicks_in")).alias("_ov1_responsible"),
-        (
-            pl.col("_keep_row")
-            & ~pl.col("_ov1_kicks_in")
-            & (pl.col("v10m_avg") > los_threshold_used)
-        ).fill_null(False).alias("_los_responsible"),
-    ])
+    return with_keep_flags.with_columns(
+        [
+            # OV1 takes priority over LOS at the same timestamp, matching the Phase B
+            # responsibility ordering.
+            (pl.col("_keep_row") & pl.col("_ov1_kicks_in")).alias("_ov1_responsible"),
+            (
+                pl.col("_keep_row")
+                & ~pl.col("_ov1_kicks_in")
+                & (pl.col("v10m_avg") > los_threshold_used)
+            )
+            .fill_null(False)
+            .alias("_los_responsible"),
+        ]
+    )
 
 
 def _select_timestamp_output(site_day_df: pl.DataFrame) -> pl.DataFrame:
     """Select the timestamp-level columns written to the curtailment CSV."""
     return (
-        site_day_df
-        .filter(pl.col("_keep_row"))
-        .select([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("local_tstamp").cast(pl.Datetime(time_zone="Australia/Adelaide")),
-            pl.col("utc_tstamp").cast(pl.Utf8),
-            pl.col("local_tstamp").dt.day().cast(pl.Int64).alias("event_day"),
-            pl.col("site_power_kw").cast(pl.Float64),
-            pl.col("v10m_avg").cast(pl.Float64),
-            pl.col("vinst_max").cast(pl.Float64),
-            (pl.col("_ov1_responsible") | pl.col("_los_responsible"))
-            .cast(pl.Int8)
-            .alias("los_or_ov1_flag"),
-        ])
+        site_day_df.filter(pl.col("_keep_row"))
+        .select(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("local_tstamp").cast(
+                    pl.Datetime(time_zone="Australia/Adelaide")
+                ),
+                pl.col("utc_tstamp").cast(pl.Utf8),
+                pl.col("local_tstamp").dt.day().cast(pl.Int64).alias("event_day"),
+                pl.col("site_power_kw").cast(pl.Float64),
+                pl.col("v10m_avg").cast(pl.Float64),
+                pl.col("vinst_max").cast(pl.Float64),
+                (pl.col("_ov1_responsible") | pl.col("_los_responsible"))
+                .cast(pl.Int8)
+                .alias("los_or_ov1_flag"),
+            ]
+        )
         .sort("local_tstamp")
     )
 
@@ -343,8 +375,7 @@ def _build_bucket_frame(timestamp_df: pl.DataFrame) -> pl.DataFrame:
         return _empty_bucket_frame()
 
     return (
-        timestamp_df
-        .with_columns(
+        timestamp_df.with_columns(
             pl.col("local_tstamp").dt.truncate("5m").alias("_bucket_floor")
         )
         .with_columns(
@@ -356,31 +387,39 @@ def _build_bucket_frame(timestamp_df: pl.DataFrame) -> pl.DataFrame:
             .otherwise(pl.col("_bucket_floor") + pl.duration(minutes=5))
             .alias("bucket_5min_local")
         )
-        .with_columns([
-            pl.col("bucket_5min_local").dt.strftime("%H:%M:%S").alias("tod_bin"),
-            pl.col("bucket_5min_local").dt.strftime("%Y-%m-%d %H:%M:%S%z").alias("_bucket_text_raw"),
-        ])
         .with_columns(
-            pl.concat_str([
-                pl.col("_bucket_text_raw").str.slice(0, 22),
-                pl.lit(":"),
-                pl.col("_bucket_text_raw").str.slice(22, 2),
-            ]).alias("bucket_5min_local")
+            [
+                pl.col("bucket_5min_local").dt.strftime("%H:%M:%S").alias("tod_bin"),
+                pl.col("bucket_5min_local")
+                .dt.strftime("%Y-%m-%d %H:%M:%S%z")
+                .alias("_bucket_text_raw"),
+            ]
+        )
+        .with_columns(
+            pl.concat_str(
+                [
+                    pl.col("_bucket_text_raw").str.slice(0, 22),
+                    pl.lit(":"),
+                    pl.col("_bucket_text_raw").str.slice(22, 2),
+                ]
+            ).alias("bucket_5min_local")
         )
         .group_by(["site_id", "event_day", "bucket_5min_local"])
-        .agg([
-            pl.col("tod_bin").first().alias("tod_bin"),
-            pl.col("site_power_kw").min().alias("site_power_kw_min"),
-            pl.col("site_power_kw").mean().alias("site_power_kw_avg"),
-            pl.col("site_power_kw").max().alias("site_power_kw_max"),
-            pl.col("v10m_avg").min().alias("v10m_avg_min"),
-            pl.col("v10m_avg").mean().alias("v10m_avg_avg"),
-            pl.col("v10m_avg").max().alias("v10m_avg_max"),
-            pl.col("vinst_max").min().alias("vinst_max_min"),
-            pl.col("vinst_max").mean().alias("vinst_max_avg"),
-            pl.col("vinst_max").max().alias("vinst_max_max"),
-            pl.col("los_or_ov1_flag").max().cast(pl.Int8).alias("los_or_ov1_flag"),
-        ])
+        .agg(
+            [
+                pl.col("tod_bin").first().alias("tod_bin"),
+                pl.col("site_power_kw").min().alias("site_power_kw_min"),
+                pl.col("site_power_kw").mean().alias("site_power_kw_avg"),
+                pl.col("site_power_kw").max().alias("site_power_kw_max"),
+                pl.col("v10m_avg").min().alias("v10m_avg_min"),
+                pl.col("v10m_avg").mean().alias("v10m_avg_avg"),
+                pl.col("v10m_avg").max().alias("v10m_avg_max"),
+                pl.col("vinst_max").min().alias("vinst_max_min"),
+                pl.col("vinst_max").mean().alias("vinst_max_avg"),
+                pl.col("vinst_max").max().alias("vinst_max_max"),
+                pl.col("los_or_ov1_flag").max().cast(pl.Int8).alias("los_or_ov1_flag"),
+            ]
+        )
         .sort(["site_id", "event_day", "bucket_5min_local"])
     )
 

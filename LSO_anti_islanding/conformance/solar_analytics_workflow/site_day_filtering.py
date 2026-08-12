@@ -1,7 +1,6 @@
 """Solar Analytics count-based site-day eligibility policy."""
 
 import polars as pl
-
 from config import (
     SOLAR_ANALYTICS_DAY_COVERAGE_THRESHOLD,
     SOLAR_ANALYTICS_EXPECTED_TIMESTAMPS,
@@ -41,13 +40,15 @@ def summarize_solar_analytics_day_eligibility(
         }
 
     timestamp_status = (
-        prepared_day_df.select([
-            "local_tstamp",
-            pl.all_horizontal([
-                pl.col(column).is_not_null() for column in power_columns
-            ]).alias("_has_all_power"),
-            pl.col("v10m_avg").is_not_null().alias("_has_v10m"),
-        ])
+        prepared_day_df.select(
+            [
+                "local_tstamp",
+                pl.all_horizontal(
+                    [pl.col(column).is_not_null() for column in power_columns]
+                ).alias("_has_all_power"),
+                pl.col("v10m_avg").is_not_null().alias("_has_v10m"),
+            ]
+        )
         .unique(subset=["local_tstamp"], keep="first")
         .with_columns(
             (pl.col("_has_all_power") & pl.col("_has_v10m")).alias(

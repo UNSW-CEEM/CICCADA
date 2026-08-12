@@ -4,7 +4,6 @@ from pathlib import Path
 
 import polars as pl
 import pyarrow.parquet as pq
-
 from config import LOCAL_TIMEZONE
 from core.data_cleaning import (
     addLocalTStamp,
@@ -20,7 +19,6 @@ from solar_analytics_workflow.solar_paths import (
     SITE_METADATA_PATH,
     SOLAR_ANALYTICS_DATA_DIR,
 )
-
 
 STATE_TIMEZONES = {
     "ACT": "Australia/Sydney",
@@ -39,17 +37,18 @@ def _raw_parquet_paths(data_dir, cleaned_path):
     return sorted(
         path
         for path in data_dir.glob("*.parquet")
-        if path.resolve() != cleaned_path
-        and path.name != CLEANED_DATA_PATH.name
+        if path.resolve() != cleaned_path and path.name != CLEANED_DATA_PATH.name
     )
 
 
 def load_circuit_details(path=CIRCUIT_METADATA_PATH):
-    circuit_details = pl.read_csv(path).rename({
-        "circuit_id": "c_id",
-        "circuit_polarity": "polarity",
-        "circuit_type": "con_type",
-    })
+    circuit_details = pl.read_csv(path).rename(
+        {
+            "circuit_id": "c_id",
+            "circuit_polarity": "polarity",
+            "circuit_type": "con_type",
+        }
+    )
     if circuit_details["c_id"].n_unique() != circuit_details.height:
         raise ValueError(
             "Solar Analytics circuit_id must be unique when device_id is ignored."
@@ -75,9 +74,7 @@ def build_cleaned_site_data(
     if not data_dir.exists():
         raise FileNotFoundError(f"Missing Solar Analytics folder at {data_dir}.")
     if not circuit_metadata_path.exists():
-        raise FileNotFoundError(
-            f"Missing circuit metadata at {circuit_metadata_path}."
-        )
+        raise FileNotFoundError(f"Missing circuit metadata at {circuit_metadata_path}.")
     if not site_metadata_path.exists():
         raise FileNotFoundError(f"Missing site metadata at {site_metadata_path}.")
 
@@ -103,17 +100,21 @@ def build_cleaned_site_data(
 
     raw_data = (
         pl.scan_parquet([str(path) for path in raw_parquet_paths])
-        .rename({
-            "circuit_id": "c_id",
-            "t_stamp": "utc_tstamp",
-        })
+        .rename(
+            {
+                "circuit_id": "c_id",
+                "t_stamp": "utc_tstamp",
+            }
+        )
         .filter(pl.col("utc_tstamp").is_not_null())
-        .select([
-            pl.col("c_id").cast(pl.Int64),
-            pl.col("utc_tstamp"),
-            pl.col("power").cast(pl.Float64, strict=False),
-            pl.col("voltage").cast(pl.Float64, strict=False),
-        ])
+        .select(
+            [
+                pl.col("c_id").cast(pl.Int64),
+                pl.col("utc_tstamp"),
+                pl.col("power").cast(pl.Float64, strict=False),
+                pl.col("voltage").cast(pl.Float64, strict=False),
+            ]
+        )
     )
 
     cleaned_path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,9 +124,7 @@ def build_cleaned_site_data(
             f"Processing bucket {bucket_number + 1}/{num_buckets}...",
             flush=True,
         )
-        all_data = raw_data.filter(
-            (pl.col("c_id") % num_buckets) == bucket_number
-        )
+        all_data = raw_data.filter((pl.col("c_id") % num_buckets) == bucket_number)
         all_data = (
             all_data.join(circuit_site_lookup, on="c_id", how="inner")
             .join(site_lookup, on="site_id", how="left")
@@ -147,18 +146,20 @@ def build_cleaned_site_data(
         # after polarity is applied here
         # all_data = clipNegativePower(all_data)
 
-        all_data = all_data.select([
-            "c_id",
-            "site_id",
-            "con_type",
-            "state",
-            "timezone",
-            "utc_tstamp",
-            "local_tstamp",
-            "power",
-            "voltage",
-            "voltage_valid",
-        ])
+        all_data = all_data.select(
+            [
+                "c_id",
+                "site_id",
+                "con_type",
+                "state",
+                "timezone",
+                "utc_tstamp",
+                "local_tstamp",
+                "power",
+                "voltage",
+                "voltage_valid",
+            ]
+        )
 
         cleaned_bucket = all_data.collect(engine="streaming")
         if cleaned_bucket.is_empty():

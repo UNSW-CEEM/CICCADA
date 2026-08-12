@@ -5,7 +5,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import polars as pl
-
 from config import (
     SAPN2022_DAY_COVERAGE_THRESHOLD,
     SAPN2022_DAY_END,
@@ -48,10 +47,7 @@ def load_sapn2022_inputs():
     site_details = site_details.with_columns(
         pl.Series(
             "capacity_kw",
-            [
-                _capacity_w_to_kw(capacity_w)
-                for capacity_w in site_details["ac_cap_w"]
-            ],
+            [_capacity_w_to_kw(capacity_w) for capacity_w in site_details["ac_cap_w"]],
             dtype=pl.Float64,
         )
     )
@@ -63,9 +59,7 @@ def load_sapn2022_inputs():
 def _sapn2022_days(site_data):
     timestamp_dtype = site_data.schema["local_tstamp"]
     timezone_name = (
-        timestamp_dtype.time_zone
-        if isinstance(timestamp_dtype, pl.Datetime)
-        else None
+        timestamp_dtype.time_zone if isinstance(timestamp_dtype, pl.Datetime) else None
     )
     timezone = ZoneInfo(timezone_name) if timezone_name else None
     return [
