@@ -181,9 +181,14 @@ def classify_voltvar_interval(
 #    explore_plots.py::plot_vvar_month_scatter, recoloured by the full
 #    classify_voltvar_interval() status instead of a simple in/out-of-band flag.
 # ===========================================================================
-def plot_vvar_month_scatter_ausgrid(scatter_df, serial, capacity_kw, period_label,
-                                     capability_profile="review_corrected",
-                                     tol=None, manufacturer=""):
+def plot_vvar_month_scatter_ausgrid(scatter_df, 
+                                    serial, 
+                                    capacity_kw, 
+                                    period_label,
+                                    capability_profile="review_corrected",
+                                    tol=None, 
+                                    manufacturer="",
+                                    figsize=(12, 8)):
     """Q-vs-V scatter for a full site-month, coloured by Q_impact status.
 
     scatter_df needs columns V (volts), P_kW, Q_kvar -- GENERATOR convention,
@@ -238,20 +243,15 @@ def plot_vvar_month_scatter_ausgrid(scatter_df, serial, capacity_kw, period_labe
         ax.set_xlabel("Voltage (V)", fontsize=9)
         ax.set_ylabel("Reactive power (% solar_capacity_kw PROXY, not S_rated)\n+ = supplying, - = absorbing", fontsize=9)
         ax.set_title(
-            f"Site {serial}  ·  {manufacturer}  ·  {period_label}  ·  {subtitle}\n"
-            f"Volt-Var response vs AS/NZS 4777.2:2020 ({capability_profile})  ·  "
+            f"Site {serial}  ·  {manufacturer}  ·  {period_label}\n"
+            f"Volt-Var response vs AS/NZS 4777.2:2020 ({capability_profile})\n"
             f"solar_capacity_kw proxy {S:.1f} kW (NOT verified S_rated)",
             fontsize=8.5, fontweight="bold", loc="left")
         ax.legend(fontsize=6.5, loc="lower left", framealpha=0.92, edgecolor="#cccccc", ncol=1)
         ax.grid(color="#ebebeb", lw=0.5)
         ax.set_facecolor("white")
 
-    fig1, ax1 = plt.subplots(figsize=(9, 6), dpi=130)
-    _draw(ax1, 200, 280, -100, 100, 5, 20, "overview")
-    plt.tight_layout()
-    plt.show()
-
-    fig2, ax2 = plt.subplots(figsize=(9, 6), dpi=130)
+    fig, ax2 = plt.subplots(figsize=figsize, dpi=130)
     _draw(ax2, 230, 260, -60, 40, 2, 10, "operating range zoom")
     plt.tight_layout()
     plt.show()

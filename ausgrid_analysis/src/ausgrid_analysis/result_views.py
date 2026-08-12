@@ -163,6 +163,20 @@ _CONTEXT_COLUMNS_CURVE_ONLY: tuple[str, ...] = (
 _CONTEXT_COLUMNS_VOLTWATT_ONLY: tuple[str, ...] = ("voltage_basis", "capacity_basis")
 _CONTEXT_COLUMNS_RESPONSE_ONLY: tuple[str, ...] = ("reactive_sign_review_state",)
 
+# Stamped onto every curve-table view below (denominator/status/site-
+# conformance) so a caller can tell which track produced a given DataFrame
+# without a second call or having to remember what `mechanism=` it passed in
+# -- the exact ambiguity that caused confusion comparing a per-site
+# conformance table against a notebook's `mechanism_p99`/`mechanism_solar_
+# proxy` variables. `any_value()` is a lightweight convenience read, not a
+# consistency check: each namespaced result file only ever has one value for
+# these anyway (see `build_voltvar_results`/`build_voltwatt_results`), and
+# `result_context()` above already raises if that assumption is ever wrong.
+_TRACK_CONTEXT_SELECT_SQL = (
+    "any_value(methodology_id) AS methodology_id,\n            "
+    "any_value(capacity_basis) AS capacity_basis"
+)
+
 CURTAILMENT_UNAVAILABLE_CONTEXT: dict[str, object] = {
     "status": "unavailable",
     "reason": "methodology gate 7 unmet",
@@ -471,7 +485,8 @@ def voltvar_denominator_view(
     )
     query = f"""
         SELECT
-            {_select_prefix(dims)}{sum_cols}
+            {_select_prefix(dims)}{sum_cols},
+            {_TRACK_CONTEXT_SELECT_SQL}
         FROM read_parquet({sql_string(str(path))})
         {_group_by_clause(dims)}
         ORDER BY {", ".join(quote_identifier(d) for d in dims) or "1"}
@@ -499,7 +514,8 @@ def voltvar_status_view(
         SELECT
             {_select_prefix(dims)}{sum_cols},
             sum(mean_q_impact * n_assessable)
-                / nullif(sum(n_assessable), 0) AS mean_q_impact_weighted
+                / nullif(sum(n_assessable), 0) AS mean_q_impact_weighted,
+            {_TRACK_CONTEXT_SELECT_SQL}
         FROM read_parquet({sql_string(str(path))})
         {_group_by_clause(dims)}
         ORDER BY {", ".join(quote_identifier(d) for d in dims) or "1"}
@@ -544,7 +560,8 @@ def voltvar_site_conformance_view(
         f"sum({c}) AS {c}" for c in ("n_assessable", *VOLTVAR_STATUS_COLUMNS)
     )
     query = f"""
-        SELECT serial, {sum_cols}
+        SELECT serial, {sum_cols},
+            {_TRACK_CONTEXT_SELECT_SQL}
         FROM read_parquet({sql_string(str(path))})
         GROUP BY serial
         ORDER BY serial
@@ -593,7 +610,8 @@ def voltwatt_denominator_view(
     )
     query = f"""
         SELECT
-            {_select_prefix(dims)}{sum_cols}
+            {_select_prefix(dims)}{sum_cols},
+            {_TRACK_CONTEXT_SELECT_SQL}
         FROM read_parquet({sql_string(str(path))})
         {_group_by_clause(dims)}
         ORDER BY {", ".join(quote_identifier(d) for d in dims) or "1"}
@@ -624,7 +642,8 @@ def voltwatt_status_view(
     )
     query = f"""
         SELECT
-            {_select_prefix(dims)}{sum_cols}
+            {_select_prefix(dims)}{sum_cols},
+            {_TRACK_CONTEXT_SELECT_SQL}
         FROM read_parquet({sql_string(str(path))})
         {_group_by_clause(dims)}
         ORDER BY {", ".join(quote_identifier(d) for d in dims) or "1"}
