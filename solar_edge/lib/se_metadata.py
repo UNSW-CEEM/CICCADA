@@ -43,6 +43,9 @@ __all__ = [
     "bom_grid_snap_sql",
     "site_summary",
     "check_site_dimension",
+    "assert_checks",
+    "is_stale",
+    "refresh_dimensions",
 ]
 
 #: Provenance string written beside every capacity estimate, mirroring
@@ -117,7 +120,13 @@ def build_site_dimension(
             CAST(NULL AS DOUBLE)                        AS centroid_lat,
             CAST(NULL AS DOUBLE)                        AS centroid_lon,
             CAST(NULL AS DOUBLE)                        AS postcode_area_km2,
-            CAST(NULL AS VARCHAR)                       AS geography_source
+            CAST(NULL AS VARCHAR)                       AS geography_source,
+            -- Provenance, so staleness is detectable rather than silent. A
+            -- dimension table built against a partial store will happily answer
+            -- queries with the wrong denominator, and nothing downstream would
+            -- notice. See is_stale().
+            (SELECT count(*) FROM se_interval)          AS source_interval_rows,
+            CAST(now() AS TIMESTAMP)                    AS built_at
         FROM per_site p
         ORDER BY p.site_alias
         """
@@ -367,6 +376,87 @@ def site_summary(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     ).df()
 
 
+def is_stale(con: duckdb.DuckDBPyConnection) -> bool:
+    """
+    Has ``se_interval`` changed since ``se_site`` was built?
+
+    Returns True if the dimension tables are missing, lack provenance, or were
+    built against a different number of interval rows.
+
+    This exists because the obvious guard is wrong. ``if not se_site.exists()``
+    happily reuses a dimension table built against a partial store: every query
+    then runs on a cohort of 1,554 sites while the store holds 1,600, and nothing
+    downstream complains. The failure is silent and the numbers are simply wrong.
+    """
+    if not C.store_path("se_site").exists():
+        return True
+    try:
+        row = con.execute(
+            """
+            SELECT any_value(source_interval_rows)      AS built_against,
+                   (SELECT count(*) FROM se_interval)   AS current_rows
+            FROM se_site
+            """
+        ).fetchone()
+    except duckdb.Error:
+        # Built before provenance columns existed -- cannot verify, so rebuild.
+        return True
+    return row[0] is None or int(row[0]) != int(row[1])
+
+
+def refresh_dimensions(
+    con: duckdb.DuckDBPyConnection, force: bool = False, verbose: bool = True
+) -> bool:
+    """
+    Rebuild ``se_site`` and ``se_site_capacity`` if they are stale (or if forced).
+
+    Returns True if anything was rebuilt. Use this in place of an existence check.
+    """
+    if not force and not is_stale(con):
+        if verbose:
+            print("Site dimension is current with se_interval - no rebuild needed.")
+        return False
+
+    if verbose:
+        reason = "forced" if force else "stale or missing"
+        print(f"Rebuilding site dimension ({reason})...")
+    build_site_dimension(con)
+    build_capacity_proxies(con)
+    if verbose:
+        n = con.execute("SELECT count(*) FROM se_site").fetchone()[0]
+        print(f"  se_site: {n:,} sites")
+    return True
+
+
+def assert_checks(checks: pd.DataFrame, label: str = "D4") -> bool:
+    """
+    Report which checks failed, and why, instead of raising a bare AssertionError.
+
+    A notebook that stops on ``assert checks["pass"].all()`` tells you nothing about
+    which of nine assertions broke. This prints the failing rows with their expected
+    and observed values before raising, so the traceback is the last thing you read
+    rather than the only thing.
+    """
+    failed = checks.loc[~checks["pass"]]
+    n_pass = len(checks) - len(failed)
+    print(f"{label}: {n_pass}/{len(checks)} checks passed")
+
+    if failed.empty:
+        return True
+
+    print(f"\n{len(failed)} FAILED:\n")
+    for row in failed.itertuples():
+        print(f"  x {row.check}")
+        print(f"      expected: {row.expected}")
+        print(f"      observed: {row.observed}")
+        if row.note:
+            print(f"      note:     {row.note}")
+        print()
+    raise AssertionError(
+        f"{label} failed on: {', '.join(failed.check)}. See the detail printed above."
+    )
+
+
 def check_site_dimension(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     """D4 acceptance checks."""
     site = con.execute(
@@ -380,12 +470,19 @@ def check_site_dimension(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         """
     ).df().iloc[0]
 
+    # Relative, not absolute. s_99 and p_99 come from two independent T-Digest
+    # sketches, and approx_quantile is not bit-reproducible across thread counts --
+    # the merge order of the digests varies. An absolute kVA threshold calibrated
+    # on one machine will therefore fail on another with more cores, which is a
+    # property of the check, not of the data. 1% of p_99 is comfortably above the
+    # sketch error and still far below anything that would indicate a real fault.
     cap = con.execute(
         """
         SELECT count(*) n, count(DISTINCT site_alias) n_unique,
                count(*) FILTER (WHERE s_99 IS NULL OR s_99 <= 0) n_bad_s99,
-               count(*) FILTER (WHERE s_99 < p_99 - 0.05) n_s99_below_p99,
-               round(coalesce(max(p_99 - s_99), 0), 4) max_s99_p99_gap,
+               count(*) FILTER (WHERE s_99 < p_99 * 0.99) n_s99_below_p99,
+               round(coalesce(max((p_99 - s_99) / nullif(p_99, 0)), 0) * 100, 3)
+                                                          AS max_s99_p99_gap_pct,
                round(median(s_99), 3) median_s_99
         FROM se_site_capacity
         """
@@ -407,9 +504,22 @@ def check_site_dimension(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         return {"check": check, "expected": expected, "observed": observed,
                 "pass": bool(passed), "note": note}
 
+    stale = is_stale(con)
+    store_sites = int(
+        con.execute("SELECT count(DISTINCT site_alias) FROM se_interval").fetchone()[0]
+    )
+    n_absent = max(store_sites - int(cap.n), 0)
+
     return pd.DataFrame([
+        row("se_site is current with se_interval", "not stale",
+            "STALE - rebuild required" if stale else "current", not stale,
+            "se_site was built against a different store. Run "
+            "meta.refresh_dimensions(con, force=True). Every check below is "
+            "measured against the stale table until you do."),
         row("se_site has one row per site", f"{C.EXPECTED_N_SITES:,}",
-            f"{int(site.n):,}", int(site.n) == C.EXPECTED_N_SITES),
+            f"{int(site.n):,}", int(site.n) == C.EXPECTED_N_SITES,
+            "" if int(site.n) == C.EXPECTED_N_SITES else
+            f"se_interval currently holds {store_sites:,} distinct sites"),
         row("site_alias unique", f"{int(site.n):,}", f"{int(site.n_unique):,}",
             int(site.n) == int(site.n_unique)),
         row("every site has a timezone", "0 nulls", f"{int(site.n_null_tz)}",
@@ -421,16 +531,17 @@ def check_site_dimension(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
             "2-phase would mean a dropped phase, not a real configuration"),
         row("se_site_capacity covers every estimable site", f"{estimable:,}",
             f"{int(cap.n):,}", int(cap.n) == estimable,
-            f"{int(site.n) - estimable} site(s) have no interval with S > 0, so there "
+            f"{n_absent} site(s) in the store have no interval with S > 0, so there "
             "is no capacity to estimate -- legitimately absent, not missing"),
         row("s_99 positive everywhere", "0 bad", f"{int(cap.n_bad_s99)}",
             int(cap.n_bad_s99) == 0),
-        row("s_99 >= p_99 within tolerance", "0 violations > 0.05 kVA",
-            f"{int(cap.n_s99_below_p99)} (max gap {cap.max_s99_p99_gap} kVA)",
+        row("s_99 >= p_99 within tolerance", "0 violations beyond 1% of p_99",
+            f"{int(cap.n_s99_below_p99)} (max gap {cap.max_s99_p99_gap_pct}%)",
             int(cap.n_s99_below_p99) == 0,
             "S = sqrt(P^2+Q^2) >= P exactly, but s_99 and p_99 come from separate "
             "T-Digest sketches, so they can cross by a hair where Q is small. "
-            "Observed max gap 0.018 kVA (0.25%) -- approximation noise, not a data fault"),
+            "Tolerance is relative because approx_quantile is not reproducible "
+            "across thread counts"),
         row("geography attached (optional)", "1,602 or 0 (pending shapefile)",
             f"{int(site.n_with_geo):,}", True,
             "D12 irradiance needs this; D5/D6 do not"),

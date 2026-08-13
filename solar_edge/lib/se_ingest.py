@@ -727,39 +727,76 @@ def night_generation_anomaly(
     con: duckdb.DuckDBPyConnection, p_threshold_kw: float = 0.5
 ) -> pd.DataFrame:
     """
-    Sites reporting daytime-scale generation at physically impossible hours.
+    Sites reporting active power at hours when photovoltaic generation is impossible.
 
-    Found while reconciling D3. A small number of rows appear to be timestamped in
-    a different frame -- most consistent with UTC -- while the overwhelming majority
-    of the fleet is in local civil time. A UTC-stamped daytime reading lands around
-    21:00-03:00 in the AEST analysis frame, producing several kW of "generation" in
-    the middle of the night.
+    CORRECTED 13 Aug 2026. This was originally reported as a single phenomenon --
+    "mis-framed timestamps" -- which was wrong. Interrogating the sites individually
+    shows TWO distinct populations, and only one of them is a data fault:
 
-    Measured on this delivery: **22,124 rows, 0.026% of the store, confined to 20
-    sites**, peaking at 9.16 kW. For context, the fleet-wide AEST diurnal profile is
-    otherwise textbook, peaking at hour 12 and falling to a 0.03 kW mean overnight,
-    which is what confirms the timezone resolution is right for everyone else.
+    ``likely_storage`` (6 sites, ~95% of the affected rows)
+        These inverters report CONTINUOUSLY: about 105,000 rows a year, which is
+        24 h x 12 intervals x 365 exactly, with overnight row counts equal to midday
+        row counts. Their night output is a low, flat plateau that scales with
+        season -- AUS639 averages 0.46 kW overnight in January and 0.10 kW in June,
+        and is flat 0.4-0.5 kW right across the night rather than peaking at any
+        hour. A displaced solar curve would show a peak somewhere; a battery
+        discharging overnight looks exactly like this.
 
-    Small, but it would quietly corrupt anything touching the overnight envelope --
-    exactly the nighttime Volt-VAr question the Ausgrid AMI workstream treats as a
-    differentiator. Excluding these sites is an analysis-layer decision for D6/D7,
-    where it can be swept, not something the ingest should do silently.
+    ``stray_timestamps`` (14 sites, ~5% of the affected rows)
+        These report daylight hours only, about 53,000 rows a year, and carry a
+        handful of night rows -- 3 to 323 across the year -- at daytime power
+        levels. This IS the original hypothesis, and it holds here: a few readings
+        landing in the wrong frame.
 
-    Returns one row per affected site, worst first.
+    Why the distinction matters
+    --------------------------
+    Storage is not a defect, it is a population. CICCADA covers BESS explicitly, so
+    six battery sites are of interest rather than something to discard. But they
+    cannot be treated like PV-only sites either:
+
+      * ``s_99`` absorbs battery discharge, inflating the capacity proxy and hence
+        the required-Q curve that scales off it;
+      * a drop in active power may be the battery charging, not curtailment, which
+        breaks the core assumption of both Method A and Method B.
+
+    The classification here is INFERRED from reporting behaviour, not read from
+    metadata -- the delivery has no storage flag. Confirm with SolarEdge before
+    relying on it.
+
+    Returns one row per affected site with its classification, worst first.
     """
     return con.execute(
         f"""
-        SELECT site_alias,
-               any_value(state)                          AS state,
-               count(*)                                  AS n_night_rows,
-               round(max(P_kW), 2)                       AS max_night_P_kW,
-               round(avg(P_kW), 2)                       AS mean_night_P_kW,
-               min(ts_aest)                              AS first_ts_aest,
-               max(ts_aest)                              AS last_ts_aest
-        FROM se_interval
-        WHERE (hour(ts_aest) >= 21 OR hour(ts_aest) < 4)
-          AND P_kW > {p_threshold_kw}
-        GROUP BY site_alias
+        WITH per_site AS (
+            SELECT site_alias,
+                   any_value(state)                                          AS state,
+                   count(*)                                                  AS n_rows,
+                   count(*) FILTER (WHERE hour(ts_aest) BETWEEN 0 AND 3)      AS n_deep_night,
+                   count(*) FILTER (WHERE hour(ts_aest) BETWEEN 10 AND 13)    AS n_midday,
+                   count(*) FILTER (
+                       WHERE (hour(ts_aest) >= 21 OR hour(ts_aest) < 4)
+                         AND P_kW > {p_threshold_kw}
+                   )                                                          AS n_night_rows,
+                   round(max(P_kW) FILTER (
+                       WHERE hour(ts_aest) >= 21 OR hour(ts_aest) < 4), 2)    AS max_night_P_kW,
+                   round(avg(P_kW) FILTER (
+                       WHERE hour(ts_aest) BETWEEN 0 AND 3), 3)               AS mean_deep_night_P_kW,
+                   round(avg(P_kW) FILTER (
+                       WHERE hour(ts_aest) BETWEEN 10 AND 13), 3)             AS mean_midday_P_kW
+            FROM se_interval
+            GROUP BY site_alias
+        )
+        SELECT site_alias, state, n_rows, n_night_rows,
+               round(100.0 * n_deep_night / nullif(n_midday, 0), 1) AS night_coverage_pct,
+               max_night_P_kW, mean_deep_night_P_kW, mean_midday_P_kW,
+               -- Continuous overnight reporting is the discriminator. An inverter
+               -- that logs all night is energised all night; one that logs only in
+               -- daylight cannot legitimately produce a night reading.
+               CASE WHEN n_deep_night > 0.5 * n_midday
+                    THEN 'likely_storage'
+                    ELSE 'stray_timestamps' END          AS classification
+        FROM per_site
+        WHERE n_night_rows > 0
         ORDER BY n_night_rows DESC
         """
     ).df()

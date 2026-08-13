@@ -108,14 +108,24 @@ bug class that produced R3/R9 in the legacy conformance tables.
 Single-site queries run ~14× faster than against the raw delivery, whose files have one
 row group each and so cannot be pruned at all.
 
-### Known data-quality finding
+### Sites generating outside daylight hours
 
-**20 sites carry mis-framed timestamps** — 22,124 rows, 0.026% of the store — most
-consistent with a UTC-stamped subset landing at 21:00–03:00 AEST and showing several kW
-of impossible night-time generation. Site list in
-`artefacts/night_generation_anomaly_sites.csv`. These sites are **not** excluded at
-ingest; that is an analysis-layer decision for D6/D7 where it can be swept. It matters
-most for anything touching the overnight envelope.
+20 sites, 22,124 rows, 0.026% of the store — and **two different phenomena**, corrected
+13 Aug 2026 after the sites were examined individually:
+
+- **Likely storage (5 sites, 92% of rows).** Continuous 24-hour reporting (~105,000
+  rows/year = 24 × 12 × 365 exactly) with a flat overnight power plateau that scales with
+  season. A displaced solar curve would peak at some night hour; a battery discharging
+  overnight is flat. Inferred from reporting behaviour — the delivery has no storage flag.
+- **Stray timestamps (15 sites, 8% of rows).** Daylight-only reporting with a handful of
+  night rows at daytime power. The original hypothesis, which holds for these.
+
+Both are flagged, not dropped. `night_anomaly_selection="exclude"` removes both by
+default, which is defensible for a PV conformance study — storage sites are not PV-only,
+their `s_99` absorbs battery discharge, and a fall in active power may be charging rather
+than curtailment. But it is a judgement, and given CICCADA's BESS scope the five storage
+sites may deserve a cohort rather than an exclusion. Site list in
+`artefacts/night_generation_sites.csv`.
 
 ## What the fleet looks like (D6)
 

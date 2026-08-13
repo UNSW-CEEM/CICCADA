@@ -77,8 +77,20 @@ class SEAnalysisConfig:
     # --- cohort filters ---------------------------------------------------
     day_night: str = "all"
     derating_selection: str = "include"
-    #: The 20 sites carrying mis-framed timestamps (D3). Excluded by default:
-    #: they inject daytime power at night, which corrupts any overnight analysis.
+    #: The 20 sites that report active power outside daylight hours. Excluded by
+    #: default -- but note the reason changed once they were examined properly.
+    #:
+    #: They are NOT one phenomenon. Five report continuously with a flat overnight
+    #: plateau and look like BATTERY STORAGE; fifteen report daylight-only with a
+    #: handful of stray night rows and look like a timestamp fault. See
+    #: `se_ingest.night_generation_anomaly`.
+    #:
+    #: Excluding both is defensible for a PV conformance study -- storage sites are
+    #: not PV-only, their `s_99` absorbs battery discharge, and a fall in active
+    #: power may be charging rather than curtailment -- but it is a JUDGEMENT, and
+    #: the five storage sites are of independent interest given CICCADA's BESS
+    #: scope. Sweep it in D15; consider a separate storage cohort rather than a
+    #: silent exclusion.
     night_anomaly_selection: str = "exclude"
     #: Sites with fewer than this many observed days are dropped from the cohort.
     min_days_observed: int = 0
