@@ -389,6 +389,143 @@ def run_d1_checks(
     return result[["group", "check", "expected", "observed", "pass", "note"]]
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# D7. DATA-QUALITY REPORT
+# ═══════════════════════════════════════════════════════════════════════════
+
+def data_quality_report(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    """
+    Every known data-quality issue, quantified against an explicit threshold.
+
+    Deliverable D7. Runs against the built store, so it reports what the analysis
+    will actually see rather than what the raw delivery contained.
+
+    Two kinds of row, and the distinction matters:
+
+    * ``status = "ok"`` / ``"WARN"`` -- measurable defects with a threshold. These
+      can pass or fail.
+    * ``status = "STRUCTURAL"`` -- properties of the delivery that cannot be fixed
+      and must instead be carried as stated limitations (no nameplate, no
+      irradiance, a flag with no explicit zero). They are listed here so that a
+      clean quality report cannot be mistaken for a complete dataset.
+    """
+    rows: list[dict] = []
+
+    def add(issue, measure, value, threshold, ok, note=""):
+        rows.append({
+            "issue": issue, "measure": measure, "value": value,
+            "threshold": threshold, "status": "ok" if ok else "WARN", "note": note,
+        })
+
+    def structural(issue, measure, value, note):
+        rows.append({
+            "issue": issue, "measure": measure, "value": value,
+            "threshold": "-", "status": "STRUCTURAL", "note": note,
+        })
+
+    totals = con.execute(
+        """
+        SELECT count(*)                                             AS n,
+               count(DISTINCT site_alias)                           AS n_sites,
+               count(*) FILTER (WHERE V_max IS NULL)                AS n_null_v,
+               count(*) FILTER (WHERE V_max <= 0)                   AS n_zero_v,
+               count(*) FILTER (WHERE V_max > 270)                  AS n_high_v,
+               count(*) FILTER (WHERE V_max < 180 AND V_max > 0)    AS n_low_v,
+               count(*) FILTER (WHERE P_kW IS NULL)                 AS n_null_p,
+               count(*) FILTER (WHERE P_kW < 0)                     AS n_neg_p,
+               count(*) FILTER (WHERE Q_kvar IS NULL)               AS n_null_q,
+               count(*) FILTER (WHERE freq_hz IS NOT NULL
+                                  AND (freq_hz < 45 OR freq_hz > 55)) AS n_bad_freq,
+               count(*) FILTER (WHERE n_phases_reporting = 0)       AS n_no_phase
+        FROM se_interval
+        """
+    ).df().iloc[0]
+
+    n = int(totals.n)
+
+    def pct(x):
+        return 100.0 * int(x) / n
+
+    add("voltage missing", "% intervals with NULL V_max", f"{pct(totals.n_null_v):.4f}%",
+        "< 1%", pct(totals.n_null_v) < 1)
+    add("voltage zero", "% intervals with V_max <= 0", f"{pct(totals.n_zero_v):.4f}%",
+        "< 0.1%", pct(totals.n_zero_v) < 0.1,
+        "zeros are inverter-off states, not measurements; filter in analysis")
+    add("voltage implausibly high", "% intervals with V_max > 270 V",
+        f"{pct(totals.n_high_v):.4f}%", "< 0.01%", pct(totals.n_high_v) < 0.01)
+    add("voltage implausibly low", "% intervals with 0 < V_max < 180 V",
+        f"{pct(totals.n_low_v):.4f}%", "< 0.1%", pct(totals.n_low_v) < 0.1)
+    add("active power missing", "% intervals with NULL P_kW",
+        f"{pct(totals.n_null_p):.4f}%", "< 1%", pct(totals.n_null_p) < 1)
+    add("active power negative", "% intervals with P_kW < 0",
+        f"{pct(totals.n_neg_p):.4f}%", "0%", int(totals.n_neg_p) == 0,
+        "SolarEdge reports production magnitude; any negative would break the "
+        "generator-convention assumption")
+    add("reactive power missing", "% intervals with NULL Q_kvar",
+        f"{pct(totals.n_null_q):.4f}%", "< 5%", pct(totals.n_null_q) < 5)
+    add("frequency out of range", "% intervals outside 45-55 Hz",
+        f"{pct(totals.n_bad_freq):.4f}%", "< 0.01%", pct(totals.n_bad_freq) < 0.01)
+    add("no phase reporting", "% intervals with zero phases",
+        f"{pct(totals.n_no_phase):.4f}%", "< 0.1%", pct(totals.n_no_phase) < 0.1)
+
+    # Night-time generation (the D3 finding).
+    night = con.execute(
+        """
+        SELECT count(*) AS n_rows, count(DISTINCT site_alias) AS n_sites
+        FROM se_interval
+        WHERE (hour(ts_aest) >= 21 OR hour(ts_aest) < 4) AND P_kW > 0.5
+        """
+    ).df().iloc[0]
+    add("night-time generation (mis-framed timestamps)",
+        "% intervals with P > 0.5 kW at 21:00-04:00 AEST",
+        f"{pct(night.n_rows):.4f}% across {int(night.n_sites)} sites",
+        "< 0.1%", pct(night.n_rows) < 0.1,
+        "excluded by default via night_anomaly_selection; see artefacts CSV")
+
+    # Coverage.
+    coverage = con.execute(
+        """
+        SELECT count(*) FILTER (WHERE n_days_observed < 30)  AS n_under_30d,
+               count(*) FILTER (WHERE n_days_observed >= 300) AS n_over_300d,
+               count(*)                                       AS n_sites
+        FROM se_site
+        """
+    ).df().iloc[0]
+    add("short-observation sites", "sites with < 30 observed days",
+        f"{int(coverage.n_under_30d)} of {int(coverage.n_sites)}",
+        "< 5% of sites", coverage.n_under_30d / coverage.n_sites < 0.05,
+        "filter with min_days_observed if a stable denominator is needed")
+
+    # Night coverage: structural, not a defect.
+    night_cov = con.execute(
+        """
+        SELECT round(100.0 * count(*) FILTER (WHERE hour(ts_aest) IN (0,1,2,3,22,23))
+                     / count(*), 3) AS pct_night
+        FROM se_interval
+        """
+    ).df().iloc[0]
+    structural("sparse overnight coverage",
+               "% intervals in 22:00-04:00 AEST", f"{night_cov.pct_night}%",
+               "Most inverters stop reporting after dark. Night-time Volt-VAr "
+               "assessment -- the Ausgrid AMI differentiator -- is largely "
+               "unavailable on this dataset.")
+
+    structural("no nameplate capacity", "sites with a manufacturer rating", "0",
+               "s_99 is the sole capacity basis. It is an observed p99, so a site "
+               "that never approached its limit gets a low s_99, which flatters "
+               "its conformance. Swept in D15.")
+    structural("no irradiance", "clear-sky reference available", "none",
+               "Method B is not runnable until the D12 bom_nci.solar extract lands.")
+    structural("derating flag has no explicit zero", "distinct raw values", "1.0 and NULL",
+               "'not derating' and 'not reported' are indistinguishable, so "
+               "precision against the flag is interpretable but recall is not.")
+    structural("timestamps not on a common grid", "per-site phase offset", "arbitrary",
+               "Each site reports on its own 5-minute offset. Any cross-site or "
+               "external join needs an explicit alignment rule.")
+
+    return pd.DataFrame(rows)
+
+
 def summarise(checks: pd.DataFrame, label: str = "D1") -> bool:
     """Print a one-line verdict and return True if everything passed."""
     n_pass = int(checks["pass"].sum())

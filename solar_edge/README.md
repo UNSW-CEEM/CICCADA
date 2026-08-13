@@ -117,6 +117,77 @@ of impossible night-time generation. Site list in
 ingest; that is an analysis-layer decision for D6/D7 where it can be swept. It matters
 most for anything touching the overnight envelope.
 
+## What the fleet looks like (D6)
+
+| | |
+|---|---|
+| Volt-VAr band (240–253 V) | **74.4%** of intervals, 1,580 sites |
+| Deadband (220–240 V) | 24.6% |
+| Volt-Watt overlap (253–258 V) | 0.96% — thin, so D10 rates will carry wide intervals |
+| Above 258 V | 0.003% |
+| Cohort funnel | 86.6 M → 85.3 M cohort → 20.1 M peak-solar → 16.6 M in band → 10.5 M absorbing |
+| `s_99` median | 5.0 kVA (SA), 5.7 (NSW), 6.7 (QLD) |
+| Median power factor | 0.995–0.997 — reactive power is small across the whole fleet |
+| Derating flag vs voltage | 7.2% at 240 V → 54% at 252.5 V → 85% at 257.5 V |
+
+Two findings worth carrying forward:
+
+**Most of this fleet does very little Volt-VAr.** The strong responders found during the
+sign-convention work are a minority; the fleet median reactive power is small at every
+voltage. Conformance rates in D9 have to be read against how little most inverters are
+doing, not just against the curve.
+
+**Single- and three-phase cohorts move in opposite reactive directions** — and both show
+a |Q| minimum at 230–235 V, almost exactly the standard's 220–240 V deadband. Two near
+mirror-image curves. That geometry leans toward a reporting-sign difference in
+three-phase inverters rather than 405 sites genuinely responding backwards, but it is not
+proof. **D9 should score the two cohorts separately until it is resolved** — pooling them
+averages a response against its mirror image and understates both.
+
+## Conformance results (D9, D10)
+
+Site-day grain, matching `conformance_voltvar_v2` / `conformance_voltwatt_v2`.
+**Cohorts are scored separately by default** — see the sign question below.
+
+| Volt-VAr | single-phase | three-phase |
+|---|---|---|
+| Sites | 1,165 | 415 |
+| Capability-assessable intervals | 37.6 M | 13.1 M |
+| Reduced non-conformance | **64.5%** | **81.7%** as stored / **62.5%** sign-flipped |
+| Dominant category | significant shortfall | adverse (as stored) |
+| Site verdicts | 111 conformant / 1,054 not | 13 / 402 |
+
+| Volt-Watt | single-phase | three-phase |
+|---|---|---|
+| Exposed intervals (V > 253 V) | 631 k | 185 k |
+| Non-conformant share of exposed | 19.7% | 30.9% |
+| Site verdicts | 402 / 101 / 662 not exposed | 101 / 94 / 220 not exposed |
+
+`reduced_nonconf` = adverse + inactive + significant shortfall. `Q_near_conformant` is
+excluded — those inverters deliver 90–110% of required reactive power. Milestone 3
+included that band and excluded the shortfall band (the R4 name swap), so these figures
+will not match it, and should not.
+
+### The three-phase sign question (D8)
+
+Under the convention as stored, the three-phase cohort scores 81.7% reduced
+non-conformance dominated by `Q_adverse`. Flipping the sign moves ~10.1 M intervals out
+of that category and lands the cohort at 62.5% — within two points of single-phase, with
+the same category profile. Both cohorts also put their |Q| minimum at 232–235 V, inside
+the standard's 220–240 V deadband.
+
+That is evidence for a reporting-sign difference, not proof. **D9 scores the cohorts
+separately until it is resolved** with SolarEdge documentation or a site with known
+ground truth. Getting it wrong either invents a fleet-wide non-conformance across 415
+sites or erases a real one.
+
+### A latent bug in the original, worth checking
+
+`build_conformance_voltwatt.py` (~line 160) sets `vw_exposed = "round(V,6) > 253.0"` then
+writes `CASE WHEN V > {vw_exposed}`, expanding to the chained comparison
+`V > round(V,6) > 253.0`. The GHI variant in the same file uses `WHEN {vw_exposed}`
+correctly. Not reproduced here; may affect published basic Volt-Watt rates.
+
 ## Deliverable status
 
 | | Deliverable | Status |
@@ -125,11 +196,13 @@ most for anything touching the overnight envelope.
 | D1 | Raw inventory and schema contract | **done** |
 | D2 | Timestamp and DST resolution, unit-tested | **done** — 22 tests |
 | D3 | Tidy store builder | **done** — reconciles exactly |
-| D4 | Site dimension, capacity proxies, BOM grid-point mapping | next |
-| D5 | Params, contract, manifest | |
-| D6–D7 | Fleet EDA and data-quality report | |
-| D8 | Q sign convention locked | resolved early — see `se_config` §3 |
-| D9–D10 | Volt-VAr and Volt-Watt conformance | |
+| D4 | Site dimension and capacity proxies | **done** — geography pending shapefile |
+| D5 | Params, contract, manifest | **done** |
+| D6 | Fleet EDA | **done** |
+| D7 | Data-quality report | **done** — 0 warnings, 5 structural limitations |
+| D8 | Reactive sign convention | **done** — single-phase locked; three-phase bounded |
+| D9 | Volt-VAr conformance | **done** |
+| D10 | Volt-Watt conformance | **done** (basic variant; GHI variant needs D12) |
 | D11 | Method A symptom scan | |
 | D12a–c | BOM extract, `se_structured`, GHI model and counterfactual | |
 | D13 | Method B attribution and evidence tiers | |

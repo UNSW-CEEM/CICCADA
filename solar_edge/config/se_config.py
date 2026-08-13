@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import sys
 from pathlib import Path
 
@@ -75,16 +76,53 @@ RAW_DIR = DELIVERY_DIR / "data_2025_01_12_alias_zipped"
 #: Alias -> postcode/state mapping (the entire available site metadata).
 ALIAS_MAPPING_CSV = DELIVERY_DIR / "alias_mapping_alias_only.csv"
 
-#: Derived store. Kept beside the raw data by default, NOT in the git repository,
-#: because it is regenerable and large.
-#:
-#: Worth overriding with CICCADA_SE_STORE_DIR if DATA_ROOT is inside OneDrive: the
-#: store is several hundred MB and rebuilding it would push the whole thing through
-#: cloud sync each time. A local scratch disk is faster and quieter.
-STORE_DIR = Path(os.environ.get("CICCADA_SE_STORE_DIR", DATA_ROOT / "_store"))
+def _default_store_dir() -> Path:
+    """
+    Where the derived store lives by default: a LOCAL application-data directory,
+    deliberately NOT inside OneDrive and NOT inside the git repository.
+
+    The store is ~1.5 GB and is rewritten on every rebuild. Inside a synced folder
+    that means OneDrive re-uploading the whole thing each time, competing for the
+    file handles DuckDB is writing through. It is also fully regenerable from the
+    raw delivery, so it is exactly the kind of thing that should not be synced or
+    versioned.
+
+    Windows      -> %LOCALAPPDATA%\\ciccada\\solar_edge_store
+    Linux/macOS  -> $XDG_DATA_HOME/ciccada/solar_edge_store, else
+                    ~/.local/share/ciccada/solar_edge_store
+
+    Override with CICCADA_SE_STORE_DIR. The override is passed through
+    `expandvars`/`expanduser`, so both `%LOCALAPPDATA%\\...` and `~/...` work.
+    """
+    override = os.environ.get("CICCADA_SE_STORE_DIR")
+    if override:
+        return Path(os.path.expandvars(override)).expanduser()
+
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_DATA_HOME")
+    if base:
+        return Path(base) / "ciccada" / "solar_edge_store"
+    return Path.home() / ".local" / "share" / "ciccada" / "solar_edge_store"
+
+
+STORE_DIR = _default_store_dir()
 
 #: Small, human-reviewable outputs that DO belong in the repository.
 ARTEFACT_DIR = REPO_ROOT / "solar_edge" / "artefacts"
+
+#: ABS POA-2021 postcode boundaries, needed only for D4 geography and D12 irradiance.
+#: The same shapefile `BOM_NCI/Get_ALL_postcodes_ABS.ipynb` reads. Not in this
+#: repository; set CICCADA_SE_POA_SHAPEFILE to wherever your copy lives.
+POA_SHAPEFILE = Path(
+    os.environ.get(
+        "CICCADA_SE_POA_SHAPEFILE",
+        DATA_ROOT.parent / "POA_2021_AUST_GDA2020_SHP" / "POA_2021_AUST_GDA2020.shp",
+    )
+)
+
+#: Node spacing of the `bom_nci.solar` satellite grid, in degrees.
+#: UNCONFIRMED -- inferred from BOM_NCI/process_bom.ipynb rounding lat/lon to 2dp.
+#: Verify at D12a with `SELECT DISTINCT latitude FROM bom_nci.solar ORDER BY 1 LIMIT 20`.
+BOM_GRID_SPACING_DEG = 0.02
 
 #: Filename pattern of the raw files, e.g. "data_2025_06_alias_zipped (1).parquet".
 RAW_FILENAME_RE = re.compile(
@@ -366,6 +404,10 @@ STORE_TABLES: dict[str, str] = {
     "se_structured":     "se_structured",       # se_interval + GHI / GHI_cs
     "se_ghi_model":      "se_ghi_model.parquet",
     "se_uncurtailedpv":  "se_uncurtailedpv",
+    # Stage 2 conformance, site-day grain, matching conformance_voltvar_v2 /
+    # conformance_voltwatt_v2 so the two studies compare directly.
+    "se_conformance_voltvar":  "se_conformance_voltvar.parquet",
+    "se_conformance_voltwatt": "se_conformance_voltwatt.parquet",
 }
 
 #: Which store tables exist as Hive-partitioned directories rather than single files.
@@ -425,8 +467,16 @@ DUCKDB_MEMORY_LIMIT = os.environ.get("CICCADA_SE_DUCKDB_MEMORY") or None
 _threads = os.environ.get("CICCADA_SE_DUCKDB_THREADS")
 DUCKDB_THREADS = int(_threads) if _threads else None
 
-#: Spill directory for out-of-core operations (large sorts and joins during ingest).
-DUCKDB_TEMP_DIR = STORE_DIR / "_duckdb_tmp"
+#: Spill directory for out-of-core operations (the large sorts during ingest).
+#:
+#: Deliberately NOT inside STORE_DIR. Spill files are transient and can run to
+#: gigabytes; putting them next to the store would make OneDrive sync churn on
+#: every rebuild, and on read-only or permission-restricted mounts DuckDB cannot
+#: clean them up at all. The system temp directory is local and fast, which is
+#: what a spill target should be.
+DUCKDB_TEMP_DIR = Path(
+    os.environ.get("CICCADA_SE_DUCKDB_TEMP", Path(tempfile.gettempdir()) / "ciccada_se_duckdb")
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
