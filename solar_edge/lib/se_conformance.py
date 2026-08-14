@@ -65,6 +65,9 @@ __all__ = [
     "voltvar_measures",
     "site_verdict_measures",
     "VERDICT_MEASURES",
+    "DENOMINATOR_CONVENTIONS",
+    "denominator_comparison",
+    "denominator_note",
     "MEASURES",
     "voltvar_site_verdicts",
     "voltvar_impact_distribution",
@@ -627,6 +630,43 @@ def voltvar_summary(site_day: pd.DataFrame, by_cohort: bool = True) -> pd.DataFr
     return pd.DataFrame(rows)
 
 
+#: The two site-denominator conventions, kept explicit because they produce very
+#: different headlines from identical data and neither is wrong.
+#:
+#: ``assessed``  matches Hossein's original and ``bms_sa_review``. In
+#:   ``Volt-Watt-Trino.ipynb`` the build carries ``HAVING avg(voltage) > 253``, so
+#:   a site that never saw high voltage produces no rows at all and cannot reach
+#:   any downstream rate. ``conformance_metrics.aggregate_sites`` does the same
+#:   thing explicitly with ``d[d[denominator] >= min_intervals]``.
+#:   Question answered: *of the inverters actually tested, how many passed?*
+#:
+#: ``all``  keeps never-tested sites as their own category. Question answered:
+#:   *what share of the fleet has demonstrated conformance?* On this fleet ~71% of
+#:   sites never reach 253 V, so the distinction moves the Volt-Watt headline from
+#:   80% to 23%.
+#:
+#: Neither convention counts a never-tested site as CONFORMANT. That would be a
+#: third thing, it is what a careless reading of the original suggests, and it is
+#: indefensible -- it would mostly measure the absence of high voltage.
+DENOMINATOR_CONVENTIONS = {
+    "assessed": "sites with >= min_intervals in the denominator "
+                "(Hossein / bms_sa_review)",
+    "all": "every site in the cohort, never-tested ones as their own category",
+}
+
+
+def _apply_denominator(frame, denominator, count_col, min_intervals):
+    """Filter a per-site frame to the chosen convention. Shared by both modes."""
+    if denominator not in DENOMINATOR_CONVENTIONS:
+        raise ValueError(
+            f"denominator must be one of {sorted(DENOMINATOR_CONVENTIONS)}, "
+            f"got {denominator!r}"
+        )
+    if denominator == "assessed":
+        return frame[frame[count_col].fillna(0) >= min_intervals].copy()
+    return frame
+
+
 VERDICT_MEASURES = {
     "pct_sites": ("% of sites", "one vote each"),
     "pct_intervals": ("% of intervals", "volume-weighted"),
@@ -636,7 +676,8 @@ VERDICT_MEASURES = {
 
 
 def site_verdict_measures(site_day: pd.DataFrame, config=None,
-                          by_cohort: bool = True) -> pd.DataFrame:
+                          by_cohort: bool = True, denominator: str = "all",
+                          min_intervals: int = 1) -> pd.DataFrame:
     """
     The 10% site verdict expressed in the same four currencies as
     ``voltvar_measures``, so the two figures can be read against each other.
@@ -649,6 +690,11 @@ def site_verdict_measures(site_day: pd.DataFrame, config=None,
     counts toward the kVArh attributed to a verdict -- the same three categories
     the verdict itself is computed from, so the energy column and the pass/fail
     decision cannot disagree about what "non-conformance" means.
+
+    ``denominator`` selects which sites are counted; see
+    ``DENOMINATOR_CONVENTIONS``. ``"all"`` (default here) keeps
+    ``not assessable`` sites visible as their own category; ``"assessed"``
+    reproduces the original study's population.
     """
     import numpy as np
 
@@ -667,6 +713,7 @@ def site_verdict_measures(site_day: pd.DataFrame, config=None,
     frame = verdicts.merge(per_site, on="site_alias", how="left")
     frame["cohort"] = frame.is_three_phase.map(
         {True: "three-phase", False: "single-phase"})
+    frame = _apply_denominator(frame, denominator, "assessable", min_intervals)
 
     keys = ["cohort"] if by_cohort else []
     rows = []
@@ -678,6 +725,7 @@ def site_verdict_measures(site_day: pd.DataFrame, config=None,
             sub_assessable = float(sub.assessable.sum())
             rows.append({
                 "cohort": cohort,
+                "denominator": denominator,
                 "verdict": verdict,
                 "n_sites": len(sub),
                 "pct_sites": _pct(len(sub), n_sites),
@@ -998,7 +1046,8 @@ VW_VERDICT_MEASURES = {
 
 
 def voltwatt_verdict_measures(site_day: pd.DataFrame, config=None,
-                              by_cohort: bool = True) -> pd.DataFrame:
+                              by_cohort: bool = True, denominator: str = "all",
+                              min_intervals: int = 1) -> pd.DataFrame:
     """
     The Volt-Watt 10% verdict in the same four currencies as the Volt-VAr one.
 
@@ -1014,6 +1063,11 @@ def voltwatt_verdict_measures(site_day: pd.DataFrame, config=None,
 
     Sites with no exposed intervals carry the verdict ``not exposed``. They are
     not conformant; they were never asked the question.
+
+    ``denominator="assessed"`` drops them entirely, which is what the original
+    study did -- ``HAVING avg(voltage) > 253`` in ``Volt-Watt-Trino.ipynb`` means
+    a never-exposed site produces no rows to aggregate. See
+    ``DENOMINATOR_CONVENTIONS``.
     """
     import numpy as np
 
@@ -1029,6 +1083,7 @@ def voltwatt_verdict_measures(site_day: pd.DataFrame, config=None,
     frame = verdicts.merge(per_site, on="site_alias", how="left")
     frame["cohort"] = frame.is_three_phase.map(
         {True: "three-phase", False: "single-phase"})
+    frame = _apply_denominator(frame, denominator, "exposed", min_intervals)
 
     keys = ["cohort"] if by_cohort else []
     rows = []
@@ -1040,6 +1095,7 @@ def voltwatt_verdict_measures(site_day: pd.DataFrame, config=None,
             sub_exposed = float(sub.exposed.sum())
             rows.append({
                 "cohort": cohort,
+                "denominator": denominator,
                 "verdict": verdict,
                 "n_sites": len(sub),
                 "pct_sites": _pct(len(sub), n_sites),
@@ -1214,6 +1270,98 @@ def voltwatt_ghi_site_verdicts(site_day: pd.DataFrame, config=None) -> pd.DataFr
         empty_label="not supported",
     )
     return site
+
+
+def denominator_comparison(site_day: pd.DataFrame, mode: str = "voltvar",
+                           config=None, min_intervals: int = 1) -> pd.DataFrame:
+    """
+    The same verdicts under both site-denominator conventions, side by side.
+
+    Deliberately mirrors ``bms_sa_review.conformance_metrics.fleet_result``, which
+    carries ``n_sites_contained_in_table`` and ``n_assessed_sites`` as separate
+    fields for exactly this reason: a conformance percentage is meaningless
+    without the population it was taken over, and the two populations here differ
+    by a factor of three.
+
+    ``pct_conformant_assessed`` is the number comparable to the Solar Analytics
+    study. ``pct_conformant_all`` is the fleet-assurance number. Reporting either
+    alone is defensible; reporting one while implying the other is not, which is
+    why they are produced together and never separately.
+
+    ``pct_excluded`` is the size of the gap -- the share of the cohort that was
+    never tested at all. On Volt-Watt this fleet runs around 70%, so the two
+    headlines differ by roughly 57 percentage points.
+    """
+    config = (config or se_params.CONFIG).validate()
+    if mode not in ("voltvar", "voltwatt"):
+        raise ValueError(f"mode must be 'voltvar' or 'voltwatt', got {mode!r}")
+
+    if mode == "voltvar":
+        verdicts = voltvar_site_verdicts(site_day, config)
+        count_col, excluded_label = "assessable", "not assessable"
+        denom_label = "capability-assessable intervals (P >= 0.2 S)"
+    else:
+        verdicts = voltwatt_site_verdicts(site_day, config)
+        count_col, excluded_label = "exposed", "not exposed"
+        denom_label = "voltage-exposed intervals (V > 253 V)"
+
+    verdicts = verdicts.copy()
+    verdicts["cohort"] = verdicts.is_three_phase.map(
+        {True: "three-phase", False: "single-phase"})
+
+    rows = []
+    groups = list(verdicts.groupby("cohort")) + [("all sites", verdicts)]
+    for cohort, group in groups:
+        in_table = len(group)
+        assessed = group[group[count_col].fillna(0) >= min_intervals]
+        n_assessed = len(assessed)
+        conf = int((group.verdict == "conformant").sum())
+        nonconf = int((group.verdict == "non-conformant").sum())
+        excluded = in_table - n_assessed
+        rows.append({
+            "mode": "Volt-VAr" if mode == "voltvar" else "Volt-Watt",
+            "cohort": cohort,
+            "denominator_intervals": denom_label,
+            "n_sites_in_table": in_table,
+            "n_assessed_sites": n_assessed,
+            f"n_{excluded_label.replace(' ', '_')}": excluded,
+            "pct_excluded": _pct(excluded, in_table),
+            # Hossein / bms_sa_review: denominator = assessed sites only
+            "pct_conformant_assessed": _pct(conf, n_assessed),
+            "pct_nonconformant_assessed": _pct(nonconf, n_assessed),
+            # fleet assurance: denominator = every site in the cohort
+            "pct_conformant_all": _pct(conf, in_table),
+            "pct_nonconformant_all": _pct(nonconf, in_table),
+        })
+    return pd.DataFrame(rows)
+
+
+def denominator_note(comparison: pd.DataFrame) -> None:
+    """Print the reading of a ``denominator_comparison`` frame, in plain terms."""
+    row = comparison[comparison.cohort == "all sites"].iloc[0]
+
+    if row.pct_excluded < 0.05:
+        print(f"{row['mode']} — the denominator question does NOT bite here.\n")
+        print(f"  Every one of the {row.n_sites_in_table:,} sites has at least "
+              f"{1:,} interval in the")
+        print("  denominator, so 'assessed only' and 'whole cohort' are the same "
+              "population")
+        print(f"  and both give {row.pct_conformant_assessed:.1f}% conformant.")
+        print("\n  Worth stating explicitly rather than leaving implied: the choice")
+        print("  that moves the Volt-Watt headline by ~57 points is immaterial here,")
+        print("  because Volt-VAr's band (V > 240 V, P >= 0.2 S) catches every site.")
+        return
+
+    print(f"{row['mode']} — the same sites, two defensible denominators:\n")
+    print(f"  assessed only : {row.pct_conformant_assessed:5.1f}% conformant "
+          f"of {row.n_assessed_sites:,} tested sites")
+    print("                  -> comparable with the Solar Analytics study")
+    print(f"  whole cohort  : {row.pct_conformant_all:5.1f}% conformant "
+          f"of {row.n_sites_in_table:,} sites")
+    print(f"                  -> {row.pct_excluded:.1f}% were never tested at all\n")
+    print("  Neither counts a never-tested site as conformant. Doing so would give")
+    print(f"  {row.pct_conformant_all + row.pct_excluded:.1f}%, which would mostly "
+          "measure the absence of exposure.")
 
 
 def conformance_funnel(vvar_site_day: pd.DataFrame, vwatt_site_day: pd.DataFrame) -> pd.DataFrame:
