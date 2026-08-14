@@ -47,6 +47,7 @@ _DAY_NIGHT = ("all", "day", "night")
 _PHASE_COHORTS = ("all", "single", "three")
 _DERATING_SELECTIONS = ("include", "exclude", "only")
 _ANOMALY_SELECTIONS = ("exclude", "include")
+_ORIENTATIONS = ("as_delivered", "flipped")
 
 
 @dataclass(frozen=True)
@@ -69,10 +70,35 @@ class SEAnalysisConfig:
     tolerance_fraction: float = _AS4777["TOL_FRAC"]
 
     # --- measurement choices ----------------------------------------------
-    #: Which phase voltage represents the site. 'max' matches the legacy Method A
-    #: (`max(voltage)` across circuits); 'mean' matches the corrected Stage 2.
-    voltage_aggregation: str = "max"
+    #: Which phase voltage represents the site.
+    #:
+    #: 'mean' is the DEFAULT and the physically correct choice for a three-phase
+    #: inverter: the machine responds to the condition it sees across its terminals,
+    #: not to whichever single phase happens to be highest. Taking the max would let
+    #: one high phase drive the whole site into a response band it is not actually
+    #: in, and 405 of these sites are three-phase.
+    #:
+    #: It also matches the original SolA2024 analysis, which aggregates circuits with
+    #: `avg(voltage)` in both Volt-VAr and Volt-Watt.
+    #:
+    #: 'max' is retained as a sensitivity axis only -- it reproduces the legacy
+    #: Method A symptom scan, which used `max(voltage)` across circuits. On this
+    #: fleet the choice is worth ~5 percentage points of site conformance.
+    voltage_aggregation: str = "mean"
     phase_cohort: str = "all"
+
+    #: Reactive-power orientation applied at ANALYSIS time, on top of whatever the
+    #: store holds. A parameter rather than an ingest constant, so the unresolved
+    #: sign question can be swept in D15 without a 10-minute rebuild.
+    #:
+    #:   "as_delivered"  use the store as-is (SolarEdge's own sign)
+    #:   "flipped"       negate it
+    #:
+    #: Default "as_delivered": the fleet test fits 213 sites this way against 106
+    #: flipped, and the three-phase cohort 86:1. It is NOT unanimous -- 106 sites
+    #: are misoriented under this default, which is exactly what se_adverse exists
+    #: to separate out. See se_config section 3.
+    reactive_orientation: str = "as_delivered"
 
     # --- cohort filters ---------------------------------------------------
     day_night: str = "all"
@@ -109,6 +135,8 @@ class SEAnalysisConfig:
             raise ValueError(f"voltage_aggregation must be one of {_VOLTAGE_AGGREGATIONS}")
         if self.phase_cohort not in _PHASE_COHORTS:
             raise ValueError(f"phase_cohort must be one of {_PHASE_COHORTS}")
+        if self.reactive_orientation not in _ORIENTATIONS:
+            raise ValueError(f"reactive_orientation must be one of {_ORIENTATIONS}")
         if self.day_night not in _DAY_NIGHT:
             raise ValueError(f"day_night must be one of {_DAY_NIGHT}")
         if self.derating_selection not in _DERATING_SELECTIONS:

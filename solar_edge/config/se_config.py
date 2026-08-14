@@ -298,14 +298,58 @@ STUDY_MONTHS = tuple(EXPECTED_RAW_ROWS)
 #: +1.0 -- SolarEdge active power is already generator-positive.
 ACTIVE_POWER_SIGN = +1.0
 
-#: -1.0 -- SolarEdge reactive power is load-convention; flip to generator convention.
-REACTIVE_POWER_SIGN = -1.0
+# ---------------------------------------------------------------------------
+# REACTIVE SIGN -- REVISED 13 Aug 2026. The store now holds the value AS
+# DELIVERED. Read the reasoning before changing this.
+# ---------------------------------------------------------------------------
+# This was -1.0 from 12 to 13 Aug, on the strength of a sample of 53 single-phase
+# sites whose median raw Q rose +56.7 var between the low- and high-voltage bands.
+# That sample was dominated by the ~800 sites which barely respond at all (fleet
+# median power factor 0.995-0.997); their tens-of-var wobble is noise around a
+# small standing offset, not a Volt-VAr signature. The sites that actually
+# implement the curve move by KILOvars, and they move in BOTH directions.
+#
+# The fleet-wide test (se_sign.fleet_orientation_fit, all 1,590 assessable sites)
+# compares measured Q against the required curve across the 241-253 V ramp in both
+# orientations, against the +/-4% tolerance band:
+#
+#     cohort          neither fits   raw fits   stored (flipped) fits
+#     single-phase             944        127                     105
+#     three-phase              327         86                       1
+#     all                    1,271        213                     106
+#
+# So: as-delivered fits twice as many sites as flipped, and the three-phase cohort
+# is 86:1 in its favour. Hence +1.0.
+#
+# BUT NOTE WHAT THAT TABLE ALSO SAYS. It is not a clean answer. Single-phase splits
+# 127/105 -- the reported polarity is inconsistent WITHIN a cohort, and no single
+# constant is correct for the whole fleet. 106 sites are misoriented under this
+# setting, just as 213 were under the previous one.
+#
+# The residual is handled downstream rather than pretended away:
+#   * se_analysis orientation is a CONFIG PARAMETER (SEAnalysisConfig.
+#     reactive_orientation), so it can be swept without another ingest;
+#   * se_adverse classifies every adverse-direction site by whether its MAGNITUDE
+#     tracks the required curve, which separates a likely polarity artefact from
+#     genuinely adverse behaviour.
+#
+# Direction-based conformance remains formally unresolved until SolarEdge confirms
+# the convention. Magnitude-based conformance is orientation-independent and is
+# not affected.
+REACTIVE_POWER_SIGN = +1.0
 
 #: Human-readable labels, printed by `manifest()` so the choice travels with every result.
 ACTIVE_POWER_SOURCE_CONVENTION = "generator (production magnitude, always >= 0)"
-REACTIVE_POWER_SOURCE_CONVENTION = "load (positive = absorbing / inductive)"
+REACTIVE_POWER_SOURCE_CONVENTION = (
+    "AS DELIVERED -- majority of curve-following sites are already generator "
+    "convention (negative = absorbing)"
+)
 TARGET_CONVENTION = "generator (AS/NZS 4777.2 Fig 3.2; negative Q = absorbing)"
-SIGN_CONVENTION_BASIS = "empirical Volt-VAr slope, single-phase cohort; confirmed 2026-08-12"
+SIGN_CONVENTION_BASIS = (
+    "fleet_orientation_fit over all 1,590 assessable sites, 2026-08-13: "
+    "213 fit as-delivered, 106 fit flipped, 1,271 fit neither. "
+    "NOT unanimous -- 106 sites remain misoriented; see se_adverse"
+)
 
 W_TO_KW = 1.0 / 1000.0
 VAR_TO_KVAR = 1.0 / 1000.0
@@ -505,8 +549,9 @@ def describe_conventions():
     rows = [
         ("active power: source convention", ACTIVE_POWER_SOURCE_CONVENTION),
         ("active power: sign applied", f"{ACTIVE_POWER_SIGN:+.0f} (no change)"),
+        ("reactive sign: sites fitting", "213 as-delivered / 106 flipped / 1,271 neither"),
         ("reactive power: source convention", REACTIVE_POWER_SOURCE_CONVENTION),
-        ("reactive power: sign applied", f"{REACTIVE_POWER_SIGN:+.0f} (flip)"),
+        ("reactive power: sign applied", f"{REACTIVE_POWER_SIGN:+.0f} (no change)"),
         ("target convention", TARGET_CONVENTION),
         ("basis for the reactive sign", SIGN_CONVENTION_BASIS),
         ("active power units", "W -> kW"),

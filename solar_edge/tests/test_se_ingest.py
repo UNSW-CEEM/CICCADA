@@ -19,6 +19,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -257,14 +258,90 @@ def test_analysis_frame_is_a_fixed_ten_hour_offset(con):
 # Conventions
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_reactive_power_sign_is_flipped_and_active_is_not():
+def test_reactive_power_is_stored_as_delivered():
     """
-    The single most consequential constant in the port. SolarEdge reports reactive
-    power in the load convention (positive = absorbing); CICCADA and AS/NZS 4777.2
-    use the generator convention (negative = absorbing).
+    The single most consequential constant in the port.
+
+    REVISED 13 Aug 2026. This asserted -1.0 for one day, on the strength of a
+    53-site sample. The fleet-wide test (se_sign.fleet_orientation_fit, all 1,590
+    assessable sites) overturned it: measured against the required curve across the
+    241-253 V ramp, 213 sites fit the value AS DELIVERED, 106 fit it flipped, and
+    1,271 fit neither. The three-phase cohort is 86:1 in favour of as-delivered.
+
+    So the store keeps SolarEdge's own sign, and the residual misorientation is
+    triaged by se_adverse rather than absorbed into a global constant.
+
+    If this assertion ever fails, the store and every conformance number computed
+    from it are on a different convention than the analysis assumes.
     """
     assert C.ACTIVE_POWER_SIGN == +1.0
-    assert C.REACTIVE_POWER_SIGN == -1.0
+    assert C.REACTIVE_POWER_SIGN == +1.0
+
+
+def test_orientation_is_an_analysis_parameter_not_only_an_ingest_constant():
+    """
+    The sign is not fully resolved, so it must remain sweepable WITHOUT a rebuild.
+    `q_expr` is the single point every module reads Q through.
+    """
+    from solar_edge.lib import se_contract as contract
+    from solar_edge.lib import se_params
+
+    config = se_params.CONFIG
+    assert config.reactive_orientation == "as_delivered"
+    assert contract.q_expr(config) == "i.Q_kvar"
+
+    flipped = config.with_changes(reactive_orientation="flipped")
+    assert contract.q_expr(flipped) == "(-1.0 * i.Q_kvar)"
+
+    with pytest.raises(ValueError):
+        config.with_changes(reactive_orientation="sideways")
+
+
+def test_site_conformance_threshold_is_inclusive():
+    """
+    Matches the ORIGINAL SolA2024 analysis (OEM_installDate_confrate.ipynb):
+
+        conf_data    = ... where nonconf_ratio <= .1
+        nonconf_data = ... where nonconf_ratio >  .1
+
+    A site exactly on 0.10 is CONFORMANT.
+
+    Note bms_sa_review.conformance_metrics.aggregate_sites uses strict ``<``
+    instead. The two differ only at exactly 0.10; the original is followed here for
+    comparability with the published SolA2024 figures.
+    """
+    import numpy as np
+
+    from solar_edge.lib import se_conformance as cf
+
+    threshold = C.as4777()["SITE_CONF_THRESH"]
+    fractions = np.array([0.0, 0.099, threshold, 0.101, 1.0])
+    denominators = pd.Series([100, 100, 100, 100, 100])
+    verdicts = cf._verdict(fractions, denominators, threshold, "not assessable")
+
+    assert list(verdicts) == [
+        "conformant", "conformant", "conformant", "non-conformant", "non-conformant"
+    ]
+    # An empty denominator is never "conformant".
+    assert cf._verdict(np.array([np.nan]), pd.Series([0]), threshold, "x")[0] == "x"
+
+
+def test_voltage_aggregation_defaults_to_mean():
+    """
+    Three-phase inverters respond to the condition across their terminals, not to
+    whichever single phase is highest, and 405 of these sites are three-phase.
+
+    It also matches the original SolA2024 analysis, which aggregates circuits with
+    ``avg(voltage)`` in both the Volt-VAr and Volt-Watt builds.
+    """
+    from solar_edge.lib import se_contract as contract
+    from solar_edge.lib import se_params
+
+    config = se_params.CONFIG
+    assert config.voltage_aggregation == "mean"
+    assert contract.voltage_sql(config.voltage_aggregation, "i") == "i.V_mean"
+    # 'max' stays available as a sensitivity axis.
+    assert contract.voltage_sql("max", "i") == "i.V_max"
 
 
 def test_reactive_power_is_not_scaled_like_solar_analytics():

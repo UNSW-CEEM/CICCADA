@@ -585,8 +585,9 @@ def reconcile(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     3. **Sites conserved** -- 1,602 in both.
     4. **Active energy conserved** -- raw phase sums == store site-level `P_kW`.
        Exercises the phase folding and the W -> kW conversion.
-    5. **Reactive energy sign-flipped** -- store total == -1 x raw total. The sign
-       correction stated as a testable claim rather than a comment.
+    5. **Reactive energy matches the configured sign** -- store total ==
+       ``REACTIVE_POWER_SIGN`` x raw total, read from config rather than hard-coded
+       so the check cannot outlive the transform it verifies.
 
     Time is deliberately not reconciled here; it cannot be, because the raw
     timestamps are local and the store's are UTC. D2's unit tests cover the
@@ -617,8 +618,17 @@ def reconcile(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     n_dups = int(raw.duplicate_rows.sum())
     n_conflicting = int(raw.conflicting_keys.sum())
 
-    p_rel = _rel(raw_p, float(store.store_p_kw))
-    q_rel = _rel(raw_q, -float(store.store_q_kvar))
+    # Compare against the sign the ingest ACTUALLY applies, read from config.
+    # This previously hard-coded -1, which silently became wrong the moment
+    # REACTIVE_POWER_SIGN changed to +1 on 13 Aug -- the data was fine and the
+    # check was stale. A reconciliation that can disagree with the transform it
+    # is reconciling is worse than no reconciliation.
+    p_rel = _rel(raw_p, C.ACTIVE_POWER_SIGN * float(store.store_p_kw))
+    q_rel = _rel(raw_q, C.REACTIVE_POWER_SIGN * float(store.store_q_kvar))
+    q_rule = (
+        "unchanged (as delivered)" if C.REACTIVE_POWER_SIGN > 0
+        else "sign-flipped (-1 x raw)"
+    )
 
     checks = [
         {
@@ -654,10 +664,11 @@ def reconcile(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
             "pass": p_rel < 1e-6,
         },
         {
-            "check": "reactive energy sign-flipped (kvar-sum)",
+            "check": f"reactive energy {q_rule} (kvar-sum)",
             "raw": f"{raw_q:,.3f}",
             "store": f"{store.store_q_kvar:,.3f}",
-            "delta": f"relative {q_rel:.2e} vs -1 x raw",
+            "delta": f"relative {q_rel:.2e} vs "
+                     f"{C.REACTIVE_POWER_SIGN:+.0f} x raw",
             "pass": q_rel < 1e-6,
         },
     ]

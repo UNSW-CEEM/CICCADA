@@ -34,6 +34,7 @@ __all__ = [
     "cohort_join_sql",
     "cohort_where_sql",
     "capacity_column",
+    "q_expr",
 ]
 
 
@@ -78,6 +79,7 @@ def manifest(config=None, params=None, include_conventions: bool = True) -> pd.D
         ("basis", "tolerance_basis", config.tolerance_basis),
         ("basis", "tolerance_fraction", config.tolerance_fraction),
         ("basis", "voltage_aggregation", config.voltage_aggregation),
+        ("basis", "reactive_orientation", config.reactive_orientation),
         ("basis", "site_nonconf_threshold", config.site_nonconf_threshold),
 
         ("detection", "voltage band", f"{params.v_low:.0f} - {params.v_high:.0f} V"),
@@ -92,6 +94,10 @@ def manifest(config=None, params=None, include_conventions: bool = True) -> pd.D
 
     # Substitutions stated, not implied.
     rows.extend([
+        ("substitution", "reactive sign convention",
+         "UNRESOLVED across the fleet -- 213 sites fit as-delivered, 106 fit flipped, "
+         "1,271 fit neither. Magnitude conformance is orientation-independent; "
+         "DIRECTION conformance (Q_adverse) is not. See se_adverse."),
         ("substitution", "nameplate capacity",
          "NOT AVAILABLE in this delivery -- s_99 used as the sole capacity basis"),
         ("substitution", "AS/NZS 4777.2 tolerance anchor",
@@ -116,6 +122,22 @@ def capacity_column(basis: str, alias: str = "c") -> str:
     if basis not in se_params.CAPACITY_BASES:
         raise ValueError(f"unknown capacity basis {basis!r}")
     return f"{alias}.{basis}"
+
+
+def q_expr(config, alias: str = "i", column: str = "Q_kvar") -> str:
+    """
+    The reactive-power expression for a given analysis orientation.
+
+    Every module that reads Q must go through this rather than referencing
+    ``i.Q_kvar`` directly, so that a single config change re-orients the whole
+    analysis and nothing is left behind on the old convention.
+
+    ``as_delivered`` returns the column untouched; ``flipped`` negates it.
+    """
+    config = config.validate()
+    if config.reactive_orientation == "as_delivered":
+        return f"{alias}.{column}"
+    return f"(-1.0 * {alias}.{column})"
 
 
 def voltage_sql(aggregation: str, alias: str = "i") -> str:
