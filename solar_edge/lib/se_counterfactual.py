@@ -67,11 +67,27 @@ MAPE_MAX = 0.50                    # site quality gate
 MIN_TRAIN_POINTS = 5
 
 
-def _require(table: str, hint: str):
+def _require(con: duckdb.DuckDBPyConnection, table: str, hint: str):
+    """
+    Check a store table exists, then make sure this connection can see it.
+
+    The re-registration is the important half. Each step here WRITES a parquet
+    table and the next step READS it, but the DuckDB views are created once at
+    ``se_store.connect()``. Run the whole chain in one session -- which is exactly
+    what notebook 04 does -- and the connection has no view for a table that was
+    written after it opened, so a perfectly good file fails with
+    ``Catalog Error: Table with name bom_solar does not exist``.
+
+    Refreshing here rather than asking every caller to remember
+    ``register_store_views`` makes the pipeline order-independent.
+    """
     if not C.store_path(table).exists():
         raise FileNotFoundError(
             f"{table} not found at {C.store_path(table)}.\n  {hint}"
         )
+    from solar_edge.lib import se_store
+
+    se_store.register_store_views(con)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -100,7 +116,7 @@ def build_structured(
        the nearest clear-sky day.
     """
     config = (config or se_params.CONFIG).validate()
-    _require("bom_solar", "Run notebook 04 (BOM extract) first.")
+    _require(con, "bom_solar", "Run notebook 04 (BOM extract) first.")
 
     out = C.store_path("se_structured")
     # bom_solar arrives ALREADY averaged to postcode -- se_bom.extract_bom does the
@@ -236,7 +252,7 @@ def fit_ghi_model(
     which is precisely why the resulting counterfactual is conservative and
     Method B is a LOWER bound.
     """
-    _require("se_structured", "Run build_structured() first.")
+    _require(con, "se_structured", "Run build_structured() first.")
     out = C.store_path("se_ghi_model")
 
     sql = f"""
@@ -296,7 +312,7 @@ def mape_quality_gate(
     postcodes failing more often, because their averaged irradiance is a worse
     proxy for the site -- is visible rather than inferred.
     """
-    _require("se_ghi_model", "Run fit_ghi_model() first.")
+    _require(con, "se_ghi_model", "Run fit_ghi_model() first.")
     return con.execute(
         f"""
         WITH pred AS (
@@ -341,7 +357,7 @@ def build_uncurtailedpv(
     Only sites passing the MAPE gate get a counterfactual. Everything else is
     absent, not zero.
     """
-    _require("se_ghi_model", "Run fit_ghi_model() first.")
+    _require(con, "se_ghi_model", "Run fit_ghi_model() first.")
     gate = mape_quality_gate(con) if gate is None else gate
     passing = gate.loc[gate.passes_gate, "site_alias"]
     if len(passing) == 0:
@@ -424,7 +440,7 @@ def check_ghi_alignment(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     a one- or two-hour offset -- would not empty the training set, it would just
     bias every counterfactual, so check the peak gap, not only the row count.
     """
-    _require("se_structured", "Run build_structured() first.")
+    _require(con, "se_structured", "Run build_structured() first.")
     profile = con.execute(
         """
         SELECT hour(ts_aest)      AS hour_aest,
@@ -468,7 +484,7 @@ def counterfactual_coverage(con: duckdb.DuckDBPyConnection, config=None) -> pd.D
     The headline number for D12c. If coverage is low and concentrated in small
     urban postcodes, Method B is measuring a biased subset and must say so.
     """
-    _require("se_uncurtailedpv", "Run build_uncurtailedpv() first.")
+    _require(con, "se_uncurtailedpv", "Run build_uncurtailedpv() first.")
     return con.execute(
         """
         WITH per_site AS (

@@ -13,6 +13,8 @@ the reference lines cannot drift from the thresholds the analysis uses.
 
 from __future__ import annotations
 
+import pathlib
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -34,6 +36,8 @@ __all__ = [
     "plot_conformance_dashboard",
     "plot_site_verdicts",
     "plot_breakdown_rates",
+    "plot_postcode_map",
+    "postcode_centroids",
     "plot_q_impact_distribution",
     "plot_sign_flip",
 ]
@@ -538,6 +542,149 @@ def plot_breakdown_rates(site_pct, interval_pct, by, interval_col,
     axes[0].set_yticklabels([str(v) for v in merged[by]], fontsize=8.5)
     axes[0].invert_yaxis()
     fig.suptitle(label or by, fontsize=10.5, fontweight="bold", y=1.02)
+    fig.tight_layout()
+    return _done(fig)
+
+
+def postcode_centroids(con, shapefile=None) -> pd.DataFrame:
+    """
+    Postcode -> representative point, from the store if D4 attached geography,
+    otherwise straight from the POA-2021 shapefile.
+
+    ``representative_point()`` rather than the geometric centroid: a centroid can
+    fall outside a concave or multi-part polygon, and Australian postcodes include
+    plenty of both.
+    """
+    from solar_edge.config import se_config as C
+
+    got = con.execute(
+        """
+        SELECT postcode,
+               any_value(centroid_lat) AS lat,
+               any_value(centroid_lon) AS lon
+        FROM se_site
+        WHERE centroid_lat IS NOT NULL AND postcode IS NOT NULL
+        GROUP BY postcode
+        """
+    ).df()
+    if len(got):
+        return got
+
+    import geopandas as gpd
+
+    path = pathlib.Path(shapefile or C.POA_SHAPEFILE)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No centroids in se_site and no shapefile at {path}.\n"
+            "  Run notebook 04 section 2 (attach_geography) first."
+        )
+    poa = gpd.read_file(path)[["POA_CODE21", "geometry"]].to_crs("EPSG:4326")
+    pts = poa.geometry.representative_point()
+    return pd.DataFrame({"postcode": poa.POA_CODE21.astype(str),
+                         "lat": pts.y.values, "lon": pts.x.values})
+
+
+def plot_postcode_map(con, frame, value_col="pct_reduced_nonconf", *,
+                      min_sites=5, label=None, title=None, shapefile=None,
+                      context=True, extent=None, figsize=(10.5, 9.0),
+                      cmap="RdYlGn_r", vmin=None, vmax=None):
+    """
+    Conformance by postcode, as a **bubble map** rather than a choropleth.
+
+    That is a deliberate choice, not a convenience. Australian postcode areas span
+    more than four orders of magnitude -- 4702 covers ~50,000 km^2, a Sydney
+    postcode a couple. Filling polygons by rate hands almost the entire visual
+    field to a handful of enormous rural postcodes carrying a handful of sites,
+    while the dense metropolitan postcodes where most of the fleet actually lives
+    shrink to invisible specks. The reader's eye then weights the map by land
+    area, which is the one variable that carries no information here.
+
+    So: one marker per postcode at its representative point, **area proportional
+    to the number of sites** and **colour to the rate**. Both variables the reader
+    should be weighting are then encoded explicitly, and the postcode outlines are
+    drawn faintly underneath only as geographic context.
+
+    Postcodes below ``min_sites`` are drawn as small hollow grey markers rather
+    than dropped. A 100% rate over two sites is not a finding, but silently
+    deleting it would misrepresent coverage -- the reader should see where the
+    fleet is thin.
+
+    ``label`` names the colour scale, ``title`` heads the figure; zoomed panels
+    want a different title but the same scale label. The colour limits are taken
+    from the WHOLE frame, not from what falls inside ``extent``, so a set of metro
+    zooms stays comparable with each other and with the national view. Rescaling
+    per panel would let a well-behaved city look as red as a badly behaved one.
+    """
+    from solar_edge.config import se_config as C
+
+    data = frame.copy()
+    data["postcode"] = data.postcode.astype(str)
+    centroids = postcode_centroids(con, shapefile)
+    centroids["postcode"] = centroids.postcode.astype(str)
+    data = data.merge(centroids, on="postcode", how="left")
+
+    missing = int(data.lat.isna().sum())
+    data = data.dropna(subset=["lat", "lon", value_col])
+    if data.empty:
+        raise ValueError(f"No postcode in {value_col} could be located.")
+
+    big = data[data.n_sites >= min_sites]
+    small = data[data.n_sites < min_sites]
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=130)
+
+    if context:
+        try:
+            import geopandas as gpd
+
+            path = pathlib.Path(shapefile or C.POA_SHAPEFILE)
+            if path.exists():
+                poa = gpd.read_file(path)[["POA_CODE21", "geometry"]].to_crs("EPSG:4326")
+                poa = poa[poa.POA_CODE21.astype(str).isin(set(data.postcode))]
+                poa.boundary.plot(ax=ax, linewidth=0.35, color="#c9c9c9", zorder=1)
+        except Exception as exc:            # context is optional, never fatal
+            print(f"(postcode outlines skipped: {exc})")
+
+    # Area, not radius, proportional to site count -- perceived size is area.
+    size = 18 + 5.5 * big.n_sites.clip(upper=big.n_sites.quantile(0.98))
+    sc = ax.scatter(big.lon, big.lat, s=size, c=big[value_col], cmap=cmap,
+                    vmin=vmin if vmin is not None else float(big[value_col].min()),
+                    vmax=vmax if vmax is not None else float(big[value_col].max()),
+                    edgecolor="#333333", linewidth=0.4, alpha=0.9, zorder=3)
+    if len(small):
+        ax.scatter(small.lon, small.lat, s=10, facecolor="none",
+                   edgecolor=C_NA_GREY, linewidth=0.5, alpha=0.7, zorder=2,
+                   label=f"< {min_sites} sites (not ranked)")
+        ax.legend(loc="lower left", fontsize=8, framealpha=0.9)
+
+    cbar = fig.colorbar(sc, ax=ax, shrink=0.62, pad=0.02)
+    cbar.set_label(label or value_col, fontsize=9)
+
+    # Count what the reader can actually see, not the national total.
+    if extent:
+        in_view = big[(big.lon.between(extent[0], extent[1]))
+                      & (big.lat.between(extent[2], extent[3]))]
+    else:
+        in_view = big
+
+    if extent:
+        ax.set_xlim(extent[0], extent[1]); ax.set_ylim(extent[2], extent[3])
+    else:
+        pad = 1.0
+        ax.set_xlim(data.lon.min() - pad, data.lon.max() + pad)
+        ax.set_ylim(data.lat.min() - pad, data.lat.max() + pad)
+    ax.set_aspect(1 / np.cos(np.radians(float(data.lat.mean()))))
+    ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude")
+    ax.grid(color="#f0f0f0", lw=0.5)
+    ax.set_axisbelow(True)
+
+    heading = title or label or value_col
+    shown = (f"{len(in_view):,} postcodes shown with >= {min_sites} sites"
+             if extent else
+             f"{len(big):,} postcodes with >= {min_sites} sites")
+    ax.set_title(f"{heading}\nmarker area = sites in postcode  |  {shown}"
+                 + (f"  |  {missing} unlocated" if missing else ""),
+                 fontsize=10.5)
     fig.tight_layout()
     return _done(fig)
 
