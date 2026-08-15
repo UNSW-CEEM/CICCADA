@@ -1,13 +1,18 @@
 import sys
 from pathlib import Path
-# continie debugging from line 115
+
 import polars as pl
 
 CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from config import LOCAL_TIMEZONE, PHASE_B_METHODS
+from config import (
+    LOCAL_TIMEZONE,
+    PHASE_B_METHODS,
+    SITE_DAY_END,
+    SITE_DAY_EXTRACTION_START,
+)
 from core.check_pv_behaviour import CheckPVBehaviour
 from core.data_cleaning import (
     addLocalTStamp,
@@ -27,7 +32,10 @@ from core.site_day_preparation import (
 from core.workflow import rated_capacity_of_pv
 from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_DEFINITION
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
-from trino_connection import local_trino_engine
+from trino_connection_local_to_s3 import local_trino_engine, read_query_via_parquet
+
+
+EVM_TRINO_SITE_BATCH_SIZE = None
 
 # these are the columns for conformance results that will be pushed to trino
 # and utilised for grafana plotting
@@ -67,7 +75,7 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
     # and downloads/queries sites in batches, then yields one complete batch to
     # the existing processing loop.
 
-    # Preserve the order in which physical postcode buckets first appear.
+    # Preserve the order in which Iceberg postcode buckets first appear.
     postcode_buckets = (
         eligible_sites.get_column("postcode_bucket")
         .unique(maintain_order=True)
@@ -78,64 +86,107 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
             pl.col("postcode_bucket") == postcode_bucket
         )
 
-        # Limit each Trino query to at most 20 sites from the same physical
-        # postcode bucket.
-        for batch_start in range(0, bucket_sites.height, 20):
-            batch_sites = bucket_sites.slice(batch_start, 20)
-            batch_site_ids = batch_sites.get_column("site_id")
-
-            # Use the selected site IDs to include every eligible PV circuit
-            # belonging to this 20-site batch.
-            batch_circuit_data = circuit_data.filter(
-                pl.col("site_id").is_in(batch_site_ids.implode())
-            )
-            batch_circuit_ids = (
-                batch_circuit_data.get_column("c_id")
-                .unique(maintain_order=True)
-            )
-            batch_postcodes = (
-                batch_sites.get_column("postcode")
-                .unique(maintain_order=True)
+        # A postcode hash bucket can contain sites from multiple Australian
+        # timezones. Keep each query timezone-homogeneous so its UTC-to-local
+        # analysis-window predicate is correct for every site in the batch.
+        batch_timezones = (
+            bucket_sites.get_column("timezone")
+            .unique(maintain_order=True)
+        )
+        for batch_timezone in batch_timezones:
+            timezone_sites = bucket_sites.filter(
+                pl.col("timezone") == batch_timezone
             )
 
-            circuit_ids = ", ".join(
-                batch_circuit_ids.cast(pl.String).to_list()
+            # Query the complete postcode-bucket/timezone group by default.
+            # Setting EVM_TRINO_SITE_BATCH_SIZE to a positive integer retains
+            # the option to split large groups into smaller queries.
+            site_batch_size = (
+                timezone_sites.height
+                if EVM_TRINO_SITE_BATCH_SIZE is None
+                else EVM_TRINO_SITE_BATCH_SIZE
             )
-            postcodes = ", ".join(
-                batch_postcodes.cast(pl.Int64).cast(pl.String).to_list()
-            )
+            for batch_start in range(
+                0,
+                timezone_sites.height,
+                site_batch_size,
+            ):
+                batch_sites = timezone_sites.slice(
+                    batch_start,
+                    site_batch_size,
+                )
+                batch_site_ids = batch_sites.get_column("site_id")
 
-            # Retrieve all available 2024 and 2025 measurements for the whole
-            # batch in one Trino query.
-            # year, is_pv, and postcode bucket predicates align with the Iceberg
-            # partition definition. Month is deliberately not filtered because
-            # all months are required.
-            batch_query = f"""
-                SELECT
-                    circuit_id,
-                    t_stamp,
-                    power,
-                    voltage
-                FROM iceberg.solar_analytics_iceberg.ts
-                WHERE system.bucket(postcode, 16) = {int(postcode_bucket)}
-                    AND postcode IN ({postcodes})
-                    AND circuit_id IN ({circuit_ids})
-                    AND is_pv = TRUE
-                    AND year IN (2024, 2025)
-            """
+                print(
+                    "Querying time series: "
+                    f"postcode_bucket={postcode_bucket} "
+                    f"timezone={batch_timezone} "
+                    f"sites={batch_sites.height}",
+                    flush=True,
+                )
 
-            batch_timeseries_data = pl.read_database(
-                query=batch_query,
-                connection=engine,
-            ).rename({
-                "circuit_id": "c_id",
-                "t_stamp": "utc_tstamp",
-            })
+                # Use the selected site IDs to include every eligible PV circuit
+                # belonging to this configured site batch.
+                batch_circuit_data = circuit_data.filter(
+                    pl.col("site_id").is_in(batch_site_ids.implode())
+                )
+                batch_circuit_ids = (
+                    batch_circuit_data.get_column("c_id")
+                    .unique(maintain_order=True)
+                )
+                batch_postcodes = (
+                    batch_sites.get_column("postcode")
+                    .unique(maintain_order=True)
+                )
 
-            # Yield the complete batch and pause this generator with the current
-            # batch_start retained. After the caller processes every site in the
-            # batch, the generator resumes and advances to the next batch_start.
-            yield batch_sites, batch_circuit_data, batch_timeseries_data
+                circuit_ids = ", ".join(
+                    batch_circuit_ids.cast(pl.String).to_list()
+                )
+                postcodes = ", ".join(
+                    batch_postcodes.cast(pl.Int64).cast(pl.String).to_list()
+                )
+
+                # Retrieve the 2024 and 2025 measurements needed by the
+                # configured local conformance extraction window. year, is_pv,
+                # and postcode bucket predicates align with the Iceberg
+                # partition definition. Month is deliberately not filtered
+                # because all months are required.
+                # casting UTC as local time to further limit num rows filtered based on loacl time
+                batch_query = f"""
+                    SELECT
+                        circuit_id,
+                        t_stamp,
+                        power,
+                        voltage
+                    FROM iceberg.solar_analytics_iceberg.ts
+                    WHERE system.bucket(postcode, 16) = {int(postcode_bucket)}
+                        AND postcode IN ({postcodes})
+                        AND circuit_id IN ({circuit_ids})
+                        AND is_pv = TRUE
+                        AND year IN (2024, 2025)
+                        AND CAST(
+                            at_timezone(
+                                with_timezone(t_stamp, 'UTC'),
+                                '{batch_timezone}'
+                            ) AS time
+                        ) BETWEEN TIME '{SITE_DAY_EXTRACTION_START.isoformat()}'
+                            AND TIME '{SITE_DAY_END.isoformat()}'
+                """
+
+                # Stage the large query result as Parquet so Polars can avoid
+                # Trino's slow row-oriented Python transfer path.
+                batch_timeseries_data = read_query_via_parquet(
+                    trino_engine=engine,
+                    query=batch_query,
+                ).rename({
+                    "circuit_id": "c_id",
+                    "t_stamp": "utc_tstamp",
+                })
+
+                # Yield the complete batch and pause this generator with the
+                # current batch_start retained. After the caller processes every
+                # site in the batch, the generator resumes and advances.
+                yield batch_sites, batch_circuit_data, batch_timeseries_data
 
 
 # Keep one Trino connection open for the metadata and time-series queries
@@ -185,15 +236,33 @@ with local_trino_engine(
     eligible_site_ids = pv_circuit_counts.filter(
         pl.col("pv_circuit_count").is_between(1, 3))["site_id"]
 
-    eligible_sites = site_data.filter(
-        pl.col("site_id").is_in(eligible_site_ids.implode()))
+    eligible_sites = (
+        site_data.filter(
+            pl.col("site_id").is_in(eligible_site_ids.implode())
+        )
+        .with_columns(
+            pl.col("state")
+            .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
+            .alias("timezone")
+        )
+    )
 
     total_sites = eligible_sites.height
     print(f"Eligible sites to process: {total_sites}", flush=True)
 
+    conformance_output_dir = SOLAR_ANALYTICS_DEFINITION.output_dir
+    conformance_output_dir.mkdir(parents=True, exist_ok=True)
+    conformance_output_path = (
+        conformance_output_dir / "solA_conformance_trino_summary.csv"
+    )
+    pl.DataFrame(schema=CONFORMANCE_SUMMARY_SCHEMA).write_csv(
+        conformance_output_path
+    )
+
     site_idx = 0
     # Call the generator once for the complete cohort. Each iteration receives
-    # one queried batch containing up to 20 sites from one postcode bucket.
+    # one queried batch containing the configured number of sites from one
+    # postcode bucket and timezone.
     for batch_sites, batch_circuit_data, batch_timeseries_data in (
         _iter_site_timeseries_batches(
             engine,
@@ -382,14 +451,15 @@ with local_trino_engine(
 
             # save in table form back to trino
 
-
-print('writing data to csv')
-conformance_summary = pl.DataFrame(
-    conformance_summary_rows,
-    schema=CONFORMANCE_SUMMARY_SCHEMA,
-)
-conformance_output_dir = SOLAR_ANALYTICS_DEFINITION.output_dir
-conformance_output_dir.mkdir(parents=True, exist_ok=True)
-conformance_summary.write_csv(
-    conformance_output_dir / "solA_conformance_trino_summary.csv"
-)
+        if conformance_summary_rows:
+            print('appending data to csv')
+            conformance_summary = pl.DataFrame(
+                conformance_summary_rows,
+                schema=CONFORMANCE_SUMMARY_SCHEMA,
+            )
+            with conformance_output_path.open("ab") as output_file:
+                conformance_summary.write_csv(
+                    output_file,
+                    include_header=False,
+                )
+            conformance_summary_rows.clear()

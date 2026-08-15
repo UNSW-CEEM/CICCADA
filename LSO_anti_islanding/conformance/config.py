@@ -3,7 +3,7 @@
 from datetime import time
 
 # PHASE_B_METHODS = ("default", "original", "tier_based", "old_sweep", "blended")
-PHASE_B_METHODS = ("default", "original", "tier_based", "old_sweep", "blended")
+PHASE_B_METHODS = ("tier_based",)
 PRIMARY_PHASE_B_METHOD = "tier_based"
 
 VALID_VOLTAGE_MIN = 80.0
