@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import polars as pl
+from sqlalchemy import create_engine
 
 CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
 REPOSITORY_DIR = Path(__file__).resolve().parents[3]
@@ -35,7 +36,6 @@ from core.site_day_preparation import (
 from core.workflow import rated_capacity_of_pv
 from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_DEFINITION
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
-from Data_query.trino_config import trino_iceberg
 
 
 EVM_TRINO_SITE_BATCH_SIZE = 10
@@ -187,8 +187,11 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
                 yield batch_sites, batch_circuit_data, batch_timeseries_data
 
 
-# Reuse the Trino engine already configured on the EC2 instance.
-engine = trino_iceberg
+# Connect directly to the Trino2 service already running for the EC2 instance.
+engine = create_engine(
+    "trino://ubuntu@trino2.ciccada:8080/iceberg/solar_analytics_iceberg",
+    pool_pre_ping=True,
+)
 try:
     # Select the site cohort before looking up its circuits.
     site_data = pl.read_database(query=SITE_QUERY, connection=engine)
@@ -462,4 +465,3 @@ try:
 
 finally:
     engine.dispose()
-
