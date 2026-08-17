@@ -38,6 +38,7 @@ __all__ = [
     "plot_breakdown_rates",
     "plot_joint_conformance",
     "plot_min_interval_sweep",
+    "plot_curtailment_lorenz",
     "plot_postcode_map",
     "postcode_centroids",
     "plot_q_impact_distribution",
@@ -893,3 +894,77 @@ def plot_monthly_coverage(frame, figsize=(10, 3.4)):
     fig.legend(fontsize=7.5, loc="lower right", bbox_to_anchor=(0.98, 0.16))
     fig.tight_layout()
     return _done(fig)
+
+
+def plot_curtailment_lorenz(
+    concentration: pd.DataFrame,
+    title: str = "Concentration of estimated curtailment",
+    label: str | None = None,
+    ax=None,
+):
+    """
+    Lorenz curve of estimated curtailment across affected sites (the report's Figure 37).
+
+    Reads from ``concentration.attrs['shares']`` -- the full descending per-site
+    share vector -- rather than from the quantile table, so the curve is the real
+    distribution and the table's rows are annotations on it rather than the curve
+    itself. Plotting only the four tabulated points would draw a smooth line
+    through a distribution that is anything but.
+
+    The diagonal is perfect equality: every affected site losing the same energy.
+    Distance from it is the finding. The shaded region is the top 20%, which is
+    the slice the published report leads with.
+    """
+    shares = concentration.attrs.get("shares")
+    if shares is None or not len(shares):
+        raise ValueError(
+            "concentration.attrs['shares'] is missing -- pass the frame returned by "
+            "se_curtailment.curtailment_concentration(), not a re-read CSV "
+            "(pandas does not round-trip .attrs)."
+        )
+    shares = np.asarray(shares, dtype=float)
+    n = len(shares)
+    x = np.concatenate([[0.0], np.arange(1, n + 1) / n * 100])
+    y = np.concatenate([[0.0], np.cumsum(shares) * 100])
+
+    fig = None
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6.4, 5.4))
+
+    ax.axvspan(0, 20, color=C_ACCENT, alpha=0.07, zorder=0)
+    ax.plot([0, 100], [0, 100], color=C_GREY, ls="--", lw=1.0,
+            label="perfect equality", zorder=1)
+    ax.plot(x, y, color=C_P, lw=2.2, zorder=3,
+            label=label or f"{n:,} affected sites")
+
+    # NOTE ON ORIENTATION. Sites are ranked DESCENDING (worst first) so the curve
+    # reads directly as the report's "the top X% account for Y%". A textbook Lorenz
+    # curve ranks ascending and bows BELOW the diagonal; this one bows above. The
+    # area is therefore > 0.5 and the usual `1 - 2A` yields a negative Gini -- it
+    # must be `2A - 1` in this orientation. Getting this wrong printed
+    # "Gini = -0.701" for a distribution whose actual Gini is +0.701.
+    _trapz = getattr(np, "trapezoid", None) or np.trapz
+    gini = 2 * _trapz(y / 100, x / 100) - 1
+
+    table = concentration.set_index("top_pct")["pct_of_total"]
+    for q in (1, 5, 10, 20):
+        if q not in table.index:
+            continue
+        share = float(table[q])
+        ax.plot([q], [share], "o", ms=5, color=C_ACCENT, zorder=4)
+        ax.annotate(f"top {q}%: {share:.0f}%", xy=(q, share),
+                    xytext=(6, -11), textcoords="offset points",
+                    fontsize=8, color="#444444")
+
+    ax.set_xlim(0, 100)
+    ax.set_ylim(0, 100)
+    ax.set_xlabel("cumulative % of affected sites (ranked by curtailment)")
+    ax.set_ylabel("cumulative % of total estimated curtailment")
+    ax.set_title(f"{title}\nGini = {gini:.3f}", fontsize=10)
+    ax.grid(color="#ebebeb", lw=0.5)
+    ax.set_axisbelow(True)
+    ax.legend(loc="lower right", fontsize=8, frameon=False)
+
+    if fig is not None:
+        fig.tight_layout()
+    return fig if fig is not None else ax

@@ -222,7 +222,7 @@ def tornado(sweep: pd.DataFrame, metric: str, baseline_label: str = "baseline") 
 
 #: Default sweep for the site-level minimum-interval rule. Starts at 1 (the
 #: original's behaviour, and ours) and runs to 20.
-MIN_INTERVAL_SWEEP = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 50, 100)
+MIN_INTERVAL_SWEEP = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 50)
 
 
 def sweep_min_intervals(site_day: pd.DataFrame, mode: str = "voltwatt",
