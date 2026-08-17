@@ -1,3 +1,5 @@
+# this script is to be run on the EC2 instance
+#  for conformance analysis on solA data already on S3
 import sys
 from pathlib import Path
 
