@@ -36,6 +36,8 @@ __all__ = [
     "plot_conformance_dashboard",
     "plot_site_verdicts",
     "plot_breakdown_rates",
+    "plot_joint_conformance",
+    "plot_min_interval_sweep",
     "plot_postcode_map",
     "postcode_centroids",
     "plot_q_impact_distribution",
@@ -582,6 +584,145 @@ def postcode_centroids(con, shapefile=None) -> pd.DataFrame:
     pts = poa.geometry.representative_point()
     return pd.DataFrame({"postcode": poa.POA_CODE21.astype(str),
                          "lat": pts.y.values, "lon": pts.x.values})
+
+
+
+
+def plot_min_interval_sweep(sweep, label=None, figsize=(11.0, 4.6)):
+    """
+    The minimum-interval rule as a curve: what it does to the headline, and what
+    it costs in sites.
+
+    Two lines because they must be read together. The conformance rate alone
+    looks like a finding; next to the share of sites discarded it is visible as a
+    trade. The grey band marks where more than a third of the tested sites have
+    been removed -- past that the rate describes a different fleet.
+
+    The right panel is the one that settles the argument. It shows what fraction
+    of the DISCARDED sites were conformant. If that stays near 90%, the filter is
+    removing well-behaved sparse sites, so raising the minimum drives the
+    headline DOWN and any fall is an artefact of the rule rather than worse
+    inverters.
+    """
+    d = sweep.copy()
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=figsize, dpi=130)
+
+    ax.plot(d.min_intervals, d.pct_conformant, color=C_P, lw=2.0, marker="o", ms=4,
+            label="% of sites conformant")
+    ax.set_ylabel("% conformant", color=C_P)
+    ax.tick_params(axis="y", colors=C_P)
+    ax.set_xlabel("minimum intervals required")
+
+    axr = ax.twinx()
+    axr.plot(d.min_intervals, d.pct_sites_dropped, color=C_ACCENT, lw=1.6,
+             ls="--", marker="s", ms=3.5, label="% of sites discarded")
+    axr.set_ylabel("% of tested sites discarded", color=C_ACCENT)
+    axr.tick_params(axis="y", colors=C_ACCENT)
+    axr.set_ylim(0, max(60.0, float(d.pct_sites_dropped.max()) * 1.15))
+    axr.axhspan(33, axr.get_ylim()[1], color=C_GREY, alpha=0.10, lw=0)
+    axr.text(d.min_intervals.max(), 34, "  >1/3 of sites gone", fontsize=7,
+             color=C_GREY, va="bottom", ha="right")
+
+    lines = ax.get_lines() + axr.get_lines()
+    ax.legend(lines, [l.get_label() for l in lines], fontsize=7.5, loc="center left",
+              framealpha=0.92)
+    ax.grid(color="#ebebeb", lw=0.5)
+    ax.set_axisbelow(True)
+
+    # If nothing is ever discarded the right panel has no data to draw. Say that
+    # plainly -- a blank axis reads as a rendering fault, when "the rule never
+    # bites on this denominator" is the actual, useful answer.
+    if d.pct_dropped_conformant.notna().any():
+        ax2.plot(d.min_intervals, d.pct_dropped_conformant, color="#1565c0",
+                 lw=2.0, marker="o", ms=4)
+        ax2.axhline(50, color=C_GREY, ls=":", lw=1.0)
+        ax2.text(d.min_intervals.max(), 51, "50% = filter is neutral", fontsize=7,
+                 color=C_GREY, ha="right", va="bottom")
+        ax2.set_ylim(0, 100)
+        ax2.set_ylabel("% of DISCARDED sites that were conformant")
+        ax2.set_title("Which way does the filter push?", fontsize=9.5)
+        ax2.grid(color="#ebebeb", lw=0.5)
+        ax2.set_axisbelow(True)
+    else:
+        ax2.text(0.5, 0.5,
+                 "No site is ever discarded.\n\nEvery site clears the highest "
+                 f"threshold\ntested (min = {int(d.min_intervals.max())}), so this "
+                 "rule\nhas nothing to bite on here.",
+                 transform=ax2.transAxes, ha="center", va="center",
+                 fontsize=9.5, color=C_GREY)
+        ax2.set_title("Which way does the filter push?", fontsize=9.5)
+        ax2.set_xticks([]); ax2.set_yticks([])
+        for side in ax2.spines.values():
+            side.set_color("#dddddd")
+    ax2.set_xlabel("minimum intervals required" if d.pct_dropped_conformant.notna().any() else "")
+
+    base = d.iloc[0]
+    last = d.iloc[-1]
+    fig.suptitle(
+        (label or "Minimum-interval sensitivity")
+        + f"   |   {base.pct_conformant:.1f}% conformant at min={int(base.min_intervals)}"
+        + f"  ->  {last.pct_conformant:.1f}% at min={int(last.min_intervals)}",
+        fontsize=10.5, fontweight="bold", y=1.02)
+    fig.tight_layout()
+    return _done(fig)
+
+
+def plot_joint_conformance(breakdown, by, label=None, figsize=(11.0, 4.8)):
+    """
+    Joint Volt-VAr x Volt-Watt outcome as 100% stacked bars, one bar per group.
+
+    Stacked to 100% deliberately: the question is the MIX within each group, not
+    the group's size, and absolute counts would just redraw the fleet's size
+    distribution. ``n`` is annotated on each bar so a 100%-of-four bar cannot be
+    mistaken for a finding.
+
+    Colour carries the meaning: green passes both, grey-blue and orange pass one,
+    red passes neither. A group whose bar is mostly one of the middle colours has
+    a single-mode problem -- one response is configured and the other is not,
+    which is a different remedy from an inverter failing both.
+    """
+    from solar_edge.lib.se_conformance import JOINT_CLASSES
+
+    colours = {
+        "both conformant": C_P,
+        "Volt-VAr only": "#1565c0",
+        "Volt-Watt only": C_ACCENT,
+        "neither": "#c62828",
+    }
+    cols = [f"pct_{c.replace(' ', '_').replace('-', '_')}" for c in JOINT_CLASSES]
+    d = breakdown.copy()
+    if isinstance(d[by].dtype, pd.CategoricalDtype):
+        d = d.sort_values(by)
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=130)
+    y = np.arange(len(d))
+    left = np.zeros(len(d))
+    for cls, col in zip(JOINT_CLASSES, cols):
+        vals = d[col].astype(float).fillna(0).to_numpy()
+        ax.barh(y, vals, left=left, color=colours[cls], alpha=0.9, height=0.62,
+                label=cls)
+        for yi, (v, l) in enumerate(zip(vals, left)):
+            if v >= 6:
+                ax.text(l + v / 2, yi, f"{v:.0f}%", ha="center", va="center",
+                        fontsize=7.5, color="white", fontweight="bold")
+        left += vals
+
+    for yi, n in enumerate(d.n_sites):
+        ax.text(101, yi, f"n={int(n):,}", va="center", fontsize=7.5, color=C_GREY)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels([str(v) for v in d[by]], fontsize=9)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 100)
+    ax.set_xlabel("% of sites testable on BOTH responses")
+    ax.set_title(label or f"Joint Volt-VAr / Volt-Watt conformance by {by}",
+                 fontsize=10.5, fontweight="bold")
+    ax.legend(fontsize=8, loc="lower center", bbox_to_anchor=(0.5, -0.32),
+              ncol=4, frameon=False)
+    ax.grid(color="#ebebeb", lw=0.5, axis="x")
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+    return _done(fig)
 
 
 def plot_postcode_map(con, frame, value_col="pct_reduced_nonconf", *,

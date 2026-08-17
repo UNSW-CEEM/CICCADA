@@ -51,11 +51,18 @@ import pandas as pd
 
 from solar_edge.config import se_config as C
 from solar_edge.lib import se_params
+# One percentage helper for the whole project: numpy NaN on a zero
+# denominator, never pd.NA (which promotes int columns to object and then
+# breaks .round()).
+from solar_edge.lib.se_conformance import _pct
 
 __all__ = [
     "sweep_conformance",
     "sweep_method_a",
     "tornado",
+    "sweep_min_intervals",
+    "min_interval_exposure_profile",
+    "MIN_INTERVAL_SWEEP",
     "DEFAULT_SWEEPS",
 ]
 
@@ -211,3 +218,109 @@ def tornado(sweep: pd.DataFrame, metric: str, baseline_label: str = "baseline") 
             .sort_values("abs_delta", ascending=False)
             .drop(columns="abs_delta")
             .reset_index(drop=True))
+
+
+#: Default sweep for the site-level minimum-interval rule. Starts at 1 (the
+#: original's behaviour, and ours) and runs to 20.
+MIN_INTERVAL_SWEEP = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 50, 100)
+
+
+def sweep_min_intervals(site_day: pd.DataFrame, mode: str = "voltwatt",
+                        config=None, minimums=MIN_INTERVAL_SWEEP) -> pd.DataFrame:
+    """
+    How much does the site conformance rate depend on the minimum-interval rule?
+
+    A site with one assessable interval can only score 0% or 100%, so the 10%
+    rule has no meaning there -- the verdict is decided by a single reading. This
+    sweeps the threshold and reports what the fleet rate does.
+
+    Neither Hossein's original nor ``bms_sa_review`` applies a minimum: the
+    original has no count filter anywhere for Volt-Watt (the only ``total_count >
+    5`` in that repository is in ``sustained_operation.ipynb``, a different
+    analysis), and the review sets ``min_site_intervals = 1`` while providing
+    ``minimum_interval_sensitivity`` and plotting it. So the defensible position
+    is not a chosen threshold -- it is this curve, reported.
+
+    ``pct_dropped_conformant`` is the column that shows the DIRECTION of the bias.
+    If the sites being removed were mostly conformant, raising the minimum pushes
+    the rate DOWN, and a lower headline is an artefact of the filter rather than
+    worse behaviour. If they were mostly non-conformant, the reverse.
+
+    ``mode`` selects the denominator: ``"voltwatt"`` uses voltage-exposed
+    intervals, ``"voltvar"`` capability-assessable ones.
+    """
+    from solar_edge.lib import se_conformance as cf
+
+    config = (config or se_params.CONFIG).validate()
+    if mode not in ("voltwatt", "voltvar"):
+        raise ValueError(f"mode must be 'voltwatt' or 'voltvar', got {mode!r}")
+
+    if mode == "voltwatt":
+        verdicts = cf.voltwatt_site_verdicts(site_day, config)
+        count_col, denom_label = "exposed", "voltage-exposed intervals (V > 253 V)"
+    else:
+        verdicts = cf.voltvar_site_verdicts(site_day, config)
+        count_col, denom_label = "assessable", "capability-assessable intervals"
+
+    verdicts = verdicts.copy()
+    verdicts["cohort"] = verdicts.is_three_phase.map(
+        {True: "three-phase", False: "single-phase"})
+    # Only sites with something to assess can move under this rule.
+    tested = verdicts[verdicts[count_col].fillna(0) > 0]
+    n_tested = len(tested)
+
+    rows = []
+    for m in minimums:
+        kept = tested[tested[count_col] >= m]
+        dropped = tested[tested[count_col] < m]
+        n_conf = int((kept.verdict == "conformant").sum())
+        rows.append({
+            "min_intervals": m,
+            "denominator": denom_label,
+            "n_sites": len(kept),
+            "n_dropped": len(dropped),
+            "pct_sites_dropped": _pct(len(dropped), n_tested),
+            "pct_conformant": _pct(n_conf, len(kept)),
+            "pct_nonconformant": _pct(len(kept) - n_conf, len(kept)),
+            # Which way does the filter push the headline?
+            "pct_dropped_conformant": _pct(
+                (dropped.verdict == "conformant").sum(), len(dropped)),
+            "median_nonconf_frac": round(float(kept.nonconf_fraction.median()), 4)
+                                   if len(kept) else float("nan"),
+        })
+    return pd.DataFrame(rows)
+
+
+def min_interval_exposure_profile(site_day: pd.DataFrame, mode: str = "voltwatt",
+                                  config=None) -> pd.DataFrame:
+    """
+    How thin is the evidence, site by site? The distribution behind the sweep.
+
+    Also reports how many NON-CONFORMANT verdicts rest on very few intervals,
+    which is the specific worry -- a site called non-conformant on one reading.
+    """
+    from solar_edge.lib import se_conformance as cf
+
+    config = (config or se_params.CONFIG).validate()
+    verdicts = (cf.voltwatt_site_verdicts(site_day, config) if mode == "voltwatt"
+                else cf.voltvar_site_verdicts(site_day, config))
+    count_col = "exposed" if mode == "voltwatt" else "assessable"
+
+    tested = verdicts[verdicts[count_col].fillna(0) > 0]
+    nonconf = tested[tested.verdict == "non-conformant"]
+
+    rows = []
+    for threshold in (1, 2, 3, 5, 10, 20, 50, 100):
+        at_or_below = tested[tested[count_col] <= threshold]
+        nc_below = nonconf[nonconf[count_col] <= threshold]
+        rows.append({
+            "intervals_at_or_below": threshold,
+            "n_sites": len(at_or_below),
+            "pct_of_tested_sites": _pct(len(at_or_below), len(tested)),
+            "n_nonconformant": len(nc_below),
+            "pct_of_all_nonconformant": _pct(len(nc_below), len(nonconf)),
+        })
+    print(f"{len(tested):,} sites with >= 1 {count_col} interval | "
+          f"median {tested[count_col].median():,.0f} | "
+          f"{len(nonconf):,} non-conformant")
+    return pd.DataFrame(rows)

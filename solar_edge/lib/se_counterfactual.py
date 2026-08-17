@@ -50,6 +50,7 @@ __all__ = [
     "build_uncurtailedpv",
     "mape_quality_gate",
     "counterfactual_coverage",
+    "explain_missing_counterfactual",
     "check_ghi_alignment",
     "CLEAR_SKY_MIN_MAX_GHI",
     "CLEAR_SKY_PROFILE_PERCENTILE",
@@ -64,7 +65,12 @@ CLEAR_SKY_PROFILE_PERCENTILE = 0.60
 CLEAR_SKY_MAX_DAY_DISTANCE = 45    # days
 TIME_BIN_MIN = 5                   # time-of-day bin for the model
 MAPE_MAX = 0.50                    # site quality gate
-MIN_TRAIN_POINTS = 5
+#: The original (``build_ghi_model.py``) has NO ``HAVING`` on the model group-by,
+#: but it fits with ``regr_slope``, which returns NULL below two points -- so its
+#: effective minimum is 2 and bins with one row yield NULL coefficients and no
+#: prediction. Two reproduces that exactly. A previous value of 5 here was MINE,
+#: not the original's, and it silently cost counterfactual coverage.
+MIN_TRAIN_POINTS = 2
 
 
 def _require(con: duckdb.DuckDBPyConnection, table: str, hint: str):
@@ -226,7 +232,8 @@ def build_structured(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def fit_ghi_model(
-    con: duckdb.DuckDBPyConnection, train_fraction: float = 0.7, write: bool = True
+    con: duckdb.DuckDBPyConnection, train_fraction: float = 0.8, write: bool = True,
+    min_train_points: int = MIN_TRAIN_POINTS
 ) -> pd.DataFrame:
     """
     Per-site, per-time-of-day regression of normalised power on the clear-sky index.
@@ -251,6 +258,16 @@ def fit_ghi_model(
     curtailed intervals out of the training set, but cannot remove them all --
     which is precisely why the resulting counterfactual is conservative and
     Method B is a LOWER bound.
+
+    Train/val split
+    ---------------
+    On ``(site, actual_day)`` at 80/20, reproducing ``build_split_days.py``.
+    Hashed rather than ``random()`` so a rerun gives the same model.
+
+    ``min_train_points`` defaults to 2, which is what ``regr_slope`` in the
+    original effectively enforces. Raising it trades coverage for stability, and
+    since a missing prediction is scored as ZERO curtailment rather than unknown,
+    a higher value biases Method B further DOWN.
     """
     _require(con, "se_structured", "Run build_structured() first.")
     out = C.store_path("se_ghi_model")
@@ -268,10 +285,20 @@ def fit_ghi_model(
               AND V_mean <= {C.as4777()['VW']['V1']}
               AND (P_kw_norm >= 1
                    OR sqrt(P_kw_norm * P_kw_norm + Q_kvar_norm * Q_kvar_norm) < 1.001)
-              -- deterministic train split: hash, not random(), so a rerun
-              -- reproduces the same model. The legacy ORDER BY random() split was
-              -- flagged as non-reproducible.
-              AND (hash(site_alias || CAST(tod_bin AS VARCHAR)) % 100) < {int(train_fraction * 100)}
+              -- Train/val split on (site, DAY), matching build_split_days.py:
+              -- "assigns each site-day to train (80%) or val (20%), randomly
+              -- WITHIN each site". Hashed rather than random() so a rerun
+              -- reproduces the same model.
+              --
+              -- This MUST be keyed on the day, not on (site, tod_bin). Hashing
+              -- (site, tod_bin) is constant within a bin, so a bin lands entirely
+              -- in train or entirely in val -- and ~20-30% of bins get NO training
+              -- rows at all, hence no model and no prediction for that time of day
+              -- for the whole record. Measured on this fleet: 9,547 of 31,706 bins
+              -- (30%) were silently unmodelled. That was the dominant cause of the
+              -- patchy counterfactual, not the training filters.
+              AND (hash(site_alias || CAST(actual_day AS VARCHAR)) % 100)
+                  < {int(train_fraction * 100)}
         ),
         centred AS (
             -- a = 1 - b  =>  (y - 1) = b * (x - 1). Slope through the origin on
@@ -284,7 +311,7 @@ def fit_ghi_model(
                count(*)                                AS n
         FROM centred
         GROUP BY site_alias, tod_bin
-        HAVING count(*) >= {MIN_TRAIN_POINTS}
+        HAVING count(*) >= {min_train_points}
     """
     frame = con.execute(sql).df()
     if write:
@@ -474,6 +501,128 @@ def check_ghi_alignment(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     profile.attrs["correlation"] = corr
     profile.attrs["peak_hour_gap"] = gap
     return profile
+
+
+
+def explain_missing_counterfactual(con: duckdb.DuckDBPyConnection, site_alias: str,
+                                   day: str, config=None) -> pd.DataFrame:
+    """
+    For every interval on a day with no ``uncurtailed_P``, say WHICH step lost it.
+
+    A row must survive five things to get a counterfactual, and they fail for
+    completely different reasons::
+
+        1. reach se_structured        needs BOM GHI for (postcode, 5-min slot)
+        2. GHI_cs > 0                 clear-sky reference exists at that time of day
+        3. P_kw_norm_cs > 0           power reference exists at that time of day
+        4. a model for (site, tod_bin)   the bin had enough training rows
+        5. the site passed the MAPE gate
+
+    Steps 4 and 5 are properties of the SITE and the TIME OF DAY -- if they are
+    the cause, the same clock time is missing on *every* day of the record. Step 1
+    is a property of that DAY -- a gap in the satellite feed. The two look
+    identical on a single day plot and have completely different implications, so
+    ``bin_covered_other_days`` is reported: how many other days this same
+    time-of-day bin does have a counterfactual.
+
+        bin_covered_other_days == 0   -> structural. Model/gate. Missing all year.
+        bin_covered_other_days  > 0   -> transient. BOM gap on this day only.
+
+    A telltale for step 1: BOM is 10-minute data duplicated to 5-minute slots
+    (``t`` and ``t+5``), so ONE missing satellite record removes exactly TWO
+    ADJACENT 5-minute slots. Two consecutive gaps in the middle of an otherwise
+    covered block is that signature, not a training-data problem.
+    """
+    config = (config or se_params.CONFIG).validate()
+    _require(con, "se_structured", "Run build_structured() first.")
+    has_model = C.store_path("se_ghi_model").exists()
+    has_cf = C.store_path("se_uncurtailedpv").exists()
+    if not (has_model and has_cf):
+        raise FileNotFoundError("Run fit_ghi_model() and build_uncurtailedpv() first.")
+
+    gate = mape_quality_gate(con)
+    passed = bool(gate.loc[gate.site_alias == site_alias, "passes_gate"].any())
+
+    frame = con.execute(
+        f"""
+        WITH day_rows AS (
+            SELECT i.ts_aest,
+                   date_trunc('minute', i.ts_aest)
+                     - INTERVAL '1' MINUTE * (minute(i.ts_aest) % {TIME_BIN_MIN})
+                                                        AS slot_aest,
+                   CAST(date_trunc('minute', i.ts_aest)
+                        - INTERVAL '1' MINUTE
+                          * (minute(i.ts_aest) % {TIME_BIN_MIN}) AS TIME) AS tod_bin
+            FROM se_interval i
+            WHERE i.site_alias = '{site_alias}'
+              AND CAST(i.ts_aest AS DATE) = DATE '{day}'
+        ),
+        joined AS (
+            SELECT d.ts_aest, d.slot_aest, d.tod_bin,
+                   (st.ts_aest IS NOT NULL)      AS in_structured,
+                   st.GHI, st.GHI_cs, st.P_kw_norm_cs,
+                   (m.site_alias IS NOT NULL)    AS model_exists,
+                   m.n                           AS model_train_points,
+                   (u.ts_aest IS NOT NULL)       AS has_counterfactual
+            FROM day_rows d
+            LEFT JOIN se_structured st
+                   ON st.site_alias = '{site_alias}' AND st.ts_aest = d.ts_aest
+            LEFT JOIN se_ghi_model m
+                   ON m.site_alias = '{site_alias}' AND m.tod_bin = d.tod_bin
+            LEFT JOIN se_uncurtailedpv u
+                   ON u.site_alias = '{site_alias}' AND u.ts_aest = d.ts_aest
+        ),
+        bin_history AS (
+            SELECT CAST(date_trunc('minute', ts_aest)
+                        - INTERVAL '1' MINUTE
+                          * (minute(ts_aest) % {TIME_BIN_MIN}) AS TIME) AS tod_bin,
+                   count(DISTINCT CAST(ts_aest AS DATE)) AS bin_covered_other_days
+            FROM se_uncurtailedpv
+            WHERE site_alias = '{site_alias}'
+              AND CAST(ts_aest AS DATE) <> DATE '{day}'
+            GROUP BY 1
+        )
+        SELECT j.ts_aest, j.tod_bin,
+               j.in_structured, round(j.GHI, 1) AS GHI,
+               round(j.GHI_cs, 1) AS GHI_cs, round(j.P_kw_norm_cs, 4) AS P_kw_norm_cs,
+               j.model_exists, j.model_train_points,
+               coalesce(h.bin_covered_other_days, 0) AS bin_covered_other_days
+        FROM joined j
+        LEFT JOIN bin_history h ON h.tod_bin = j.tod_bin
+        WHERE NOT j.has_counterfactual
+        ORDER BY j.ts_aest
+        """
+    ).df()
+
+    if frame.empty:
+        print(f"{site_alias} on {day}: every interval has a counterfactual.")
+        return frame
+
+    def _reason(r):
+        if not passed:
+            return "5. site failed the MAPE gate (no counterfactual anywhere)"
+        if not r.in_structured:
+            return "1. no BOM irradiance for this postcode/slot"
+        if pd.isna(r.GHI_cs) or r.GHI_cs <= 0:
+            return "2. GHI_cs <= 0 (no clear-sky irradiance reference)"
+        if pd.isna(r.P_kw_norm_cs) or r.P_kw_norm_cs <= 0:
+            return "3. P_kw_norm_cs <= 0 (no clear-sky power reference)"
+        if not r.model_exists:
+            return "4. no model for this time-of-day bin (too few training rows)"
+        return "unknown - all five checks passed; investigate"
+
+    frame["reason"] = frame.apply(_reason, axis=1)
+    frame["verdict"] = frame.bin_covered_other_days.map(
+        lambda n: "transient (this day only)" if n > 0 else "structural (missing all year)")
+
+    print(f"{site_alias} on {day}: {len(frame)} interval(s) without a counterfactual\n")
+    for reason, group in frame.groupby("reason"):
+        print(f"  {reason}  x{len(group)}")
+        transient = int((group.bin_covered_other_days > 0).sum())
+        if transient:
+            print(f"      {transient} of these bins ARE covered on other days "
+                  f"-> a gap in this day's data, not a model limitation")
+    return frame
 
 
 def counterfactual_coverage(con: duckdb.DuckDBPyConnection, config=None) -> pd.DataFrame:

@@ -42,6 +42,7 @@ correctly. Worth checking against the published Volt-Watt basic rates.
 from __future__ import annotations
 
 import duckdb
+import numpy as np
 import pandas as pd
 
 from solar_edge.config import se_config as C
@@ -68,6 +69,11 @@ __all__ = [
     "DENOMINATOR_CONVENTIONS",
     "denominator_comparison",
     "denominator_note",
+    "joint_site_verdicts",
+    "joint_conformance_summary",
+    "joint_breakdown",
+    "joint_independence",
+    "JOINT_CLASSES",
     "MEASURES",
     "voltvar_site_verdicts",
     "voltvar_impact_distribution",
@@ -1341,7 +1347,7 @@ def denominator_note(comparison: pd.DataFrame) -> None:
     row = comparison[comparison.cohort == "all sites"].iloc[0]
 
     if row.pct_excluded < 0.05:
-        print(f"{row['mode']} — the denominator question does NOT bite here.\n")
+        print(f"{row['mode']}\n")
         print(f"  Every one of the {row.n_sites_in_table:,} sites has at least "
               f"{1:,} interval in the")
         print("  denominator, so 'assessed only' and 'whole cohort' are the same "
@@ -1362,6 +1368,184 @@ def denominator_note(comparison: pd.DataFrame) -> None:
     print("  Neither counts a never-tested site as conformant. Doing so would give")
     print(f"  {row.pct_conformant_all + row.pct_excluded:.1f}%, which would mostly "
           "measure the absence of exposure.")
+
+
+
+#: The joint Volt-VAr x Volt-Watt outcome, over sites testable on BOTH.
+JOINT_CLASSES = ("both conformant", "Volt-VAr only", "Volt-Watt only", "neither")
+
+#: Sites that fall outside the both-testable population. Kept separate and never
+#: merged into the four above: "not tested" is not a conformance result.
+JOINT_UNTESTED = ("Volt-Watt not tested", "Volt-VAr not assessable", "neither tested")
+
+
+def joint_site_verdicts(con, vvar_site_day: pd.DataFrame,
+                        vwatt_site_day: pd.DataFrame, config=None) -> pd.DataFrame:
+    """
+    One row per site carrying BOTH verdicts, plus the joint class.
+
+    The populations are not the same, and that governs the whole analysis. Every
+    site in this fleet has capability-assessable Volt-VAr intervals, but only
+    about 29% ever exceed 253 V, so a plain 2x2 of the two verdicts would be
+    dominated by sites that were never asked the Volt-Watt question. "Conforms to
+    Volt-VAr only" would then mostly mean "never tested on Volt-Watt", which is
+    not a finding about inverters.
+
+    So ``joint_class`` is defined only over sites testable on BOTH; everything
+    else is labelled with one of ``JOINT_UNTESTED`` and excluded from the four-way
+    comparison rather than quietly counted as conforming.
+
+    Returns ``site_alias``, both verdicts, ``joint_class``, ``both_testable``, and
+    the breakdown dimensions (cohort, state, capacity_band, postcode, s_99).
+    """
+    config = (config or se_params.CONFIG).validate()
+
+    vvar = voltvar_site_verdicts(vvar_site_day, config)[
+        ["site_alias", "verdict", "assessable", "nonconf_fraction"]
+    ].rename(columns={"verdict": "vvar_verdict",
+                      "assessable": "vvar_assessable",
+                      "nonconf_fraction": "vvar_nonconf_frac"})
+    vwatt = voltwatt_site_verdicts(vwatt_site_day, config)[
+        ["site_alias", "verdict", "exposed", "nonconf_fraction"]
+    ].rename(columns={"verdict": "vwatt_verdict",
+                      "exposed": "vwatt_exposed",
+                      "nonconf_fraction": "vwatt_nonconf_frac"})
+
+    meta = con.execute(
+        """
+        SELECT s.site_alias, s.state, s.postcode, s.is_three_phase, c.s_99
+        FROM se_site s LEFT JOIN se_site_capacity c USING (site_alias)
+        """
+    ).df()
+
+    joint = (meta.merge(vvar, on="site_alias", how="inner")
+                 .merge(vwatt, on="site_alias", how="left"))
+    joint["vwatt_verdict"] = joint.vwatt_verdict.fillna("not exposed")
+    joint["vwatt_exposed"] = joint.vwatt_exposed.fillna(0)
+
+    joint["cohort"] = joint.is_three_phase.map(
+        {True: "three-phase", False: "single-phase"})
+    joint["capacity_band"] = pd.Categorical(
+        pd.cut(joint.s_99, bins=CAPACITY_BANDS, labels=CAPACITY_LABELS, right=False),
+        categories=CAPACITY_LABELS, ordered=True)
+
+    vvar_ok = joint.vvar_verdict == "conformant"
+    vvar_tested = joint.vvar_verdict.isin(["conformant", "non-conformant"])
+    vwatt_ok = joint.vwatt_verdict == "conformant"
+    vwatt_tested = joint.vwatt_verdict.isin(["conformant", "non-conformant"])
+
+    joint["both_testable"] = vvar_tested & vwatt_tested
+    joint["joint_class"] = np.select(
+        [
+            joint.both_testable & vvar_ok & vwatt_ok,
+            joint.both_testable & vvar_ok & ~vwatt_ok,
+            joint.both_testable & ~vvar_ok & vwatt_ok,
+            joint.both_testable & ~vvar_ok & ~vwatt_ok,
+            vvar_tested & ~vwatt_tested,
+            ~vvar_tested & vwatt_tested,
+        ],
+        list(JOINT_CLASSES) + ["Volt-Watt not tested", "Volt-VAr not assessable"],
+        default="neither tested",
+    )
+    return joint
+
+
+def joint_conformance_summary(joint: pd.DataFrame) -> pd.DataFrame:
+    """Counts and shares for the four joint classes, over the testable population."""
+    testable = joint[joint.both_testable]
+    n = len(testable)
+    rows = [{
+        "joint_class": cls,
+        "n_sites": int((testable.joint_class == cls).sum()),
+        "pct_of_testable": _pct((testable.joint_class == cls).sum(), n),
+    } for cls in JOINT_CLASSES]
+
+    out = pd.DataFrame(rows)
+    excluded = joint[~joint.both_testable].joint_class.value_counts()
+    print(f"Both-testable population: {n:,} of {len(joint):,} sites")
+    for label, count in excluded.items():
+        print(f"  excluded — {label}: {count:,}")
+    print("\n  'Only one' is only meaningful inside the testable population. A site")
+    print("  that never saw 253 V has no Volt-Watt result to compare, and counting")
+    print("  it as conforming would measure exposure rather than behaviour.")
+    return out
+
+
+def joint_breakdown(joint: pd.DataFrame, by: str = "cohort") -> pd.DataFrame:
+    """Joint-class shares within each level of a breakdown dimension."""
+    testable = joint[joint.both_testable]
+    counts = (testable.groupby([by, "joint_class"], observed=True)
+                      .size().unstack(fill_value=0)
+                      .reindex(columns=list(JOINT_CLASSES), fill_value=0))
+    pct = (100 * counts.div(counts.sum(axis=1).replace(0, np.nan), axis=0)).round(1)
+    pct.columns = [f"pct_{c.replace(' ', '_').replace('-', '_')}" for c in pct.columns]
+    out = pct.reset_index()
+    out.insert(1, "n_sites", counts.sum(axis=1).values)
+    return out
+
+
+def joint_independence(joint: pd.DataFrame, n_permutations: int = 4999,
+                       seed: int = 0) -> dict:
+    """
+    Are the two failures independent, or does one predict the other?
+
+    This is the question the cross-tab is really for. If Volt-VAr and Volt-Watt
+    failures co-occur more than chance, the likely story is a per-inverter one --
+    a commissioning or firmware state that disables both responses together. If
+    they are independent, they are two separate settings that happen to be wrong
+    in different populations, and the fixes differ.
+
+    Reported as an odds ratio with a permutation p-value (shuffling one verdict
+    against the other), which needs no distributional assumption and copes with
+    the small cell counts this 2x2 usually has.
+
+    OR > 1 -> failing one makes failing the other MORE likely.
+    OR ~ 1 -> independent.
+    """
+    t = joint[joint.both_testable]
+    vvar_fail = (t.vvar_verdict == "non-conformant").to_numpy()
+    vwatt_fail = (t.vwatt_verdict == "non-conformant").to_numpy()
+
+    a = int((vvar_fail & vwatt_fail).sum())        # both fail
+    b = int((vvar_fail & ~vwatt_fail).sum())
+    c = int((~vvar_fail & vwatt_fail).sum())
+    d = int((~vvar_fail & ~vwatt_fail).sum())
+
+    def _or(x, y):
+        aa = float((x & y).sum()); bb = float((x & ~y).sum())
+        cc = float((~x & y).sum()); dd = float((~x & ~y).sum())
+        # Haldane-Anscombe correction so a zero cell does not make this infinite
+        return ((aa + 0.5) * (dd + 0.5)) / ((bb + 0.5) * (cc + 0.5))
+
+    observed = _or(vvar_fail, vwatt_fail)
+    rng = np.random.default_rng(seed)
+    null = np.array([_or(vvar_fail, rng.permutation(vwatt_fail))
+                     for _ in range(n_permutations)])
+    p = (1 + int((null >= observed).sum())) / (1 + len(null))
+
+    smallest = min(a, b, c, d)
+    reading = ("failures co-occur more than chance" if p < 0.05 and observed > 1
+               else "failures co-occur LESS than chance" if p > 0.95
+               else "no evidence against independence")
+
+    result = {
+        "n_testable": len(t),
+        "both_fail": a, "vvar_fail_only": b, "vwatt_fail_only": c, "neither_fails": d,
+        "smallest_cell": smallest,
+        "odds_ratio": round(observed, 3),
+        "null_median_or": round(float(np.median(null)), 3),
+        "p_value": round(p, 4),
+        "reading": reading,
+    }
+    if smallest < 10:
+        # An odds ratio resting on a handful of sites is arithmetic, not evidence.
+        # The Haldane correction keeps it finite, which makes it look more solid
+        # than it is -- say so rather than let the number travel on its own.
+        result["reading"] = (
+            f"UNRELIABLE — smallest cell is {smallest}. {reading}, but an odds "
+            "ratio on this few sites is not evidence; treat as descriptive only."
+        )
+    return result
 
 
 def conformance_funnel(vvar_site_day: pd.DataFrame, vwatt_site_day: pd.DataFrame) -> pd.DataFrame:

@@ -56,7 +56,11 @@ from solar_edge.lib import se_contract as contract
 from solar_edge.lib import se_params
 
 C.bootstrap_sys_path()
-from bms_sa_review.shared.as4777_curves import vvar_required_q_sql  # noqa: E402
+from bms_sa_review.shared.as4777_curves import (  # noqa: E402
+    tol_kw_sql,
+    vvar_required_q_sql,
+    vw_max_p_sql,
+)
 
 __all__ = [
     "method_a_site_year",
@@ -68,6 +72,9 @@ __all__ = [
     "evidence_tiers",
     "eligible_context",
     "method_comparison",
+    "voltwatt_curtailment_site_year",
+    "voltwatt_curtailment_summary",
+    "voltwatt_curtailment_note",
 ]
 
 _A = C.as4777()
@@ -571,3 +578,192 @@ def method_comparison(
                     f"{confusion.attrs.get('precision', float('nan')):.3f}",
         })
     return pd.DataFrame(rows)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# VOLT-WATT CURTAILMENT
+# ═══════════════════════════════════════════════════════════════════════════
+
+def voltwatt_curtailment_site_year(
+    con: duckdb.DuckDBPyConnection, config=None, params=None
+) -> pd.DataFrame:
+    """
+    Energy not generated because Volt-Watt reduced the permitted maximum.
+
+    Port of ``curtailment_voltwattghi`` (``curtailment_voltwattghi.ipynb``).
+    Conceptually simpler than the Volt-VAr methods: Volt-Watt curtailment is
+    directly observable once you know what the site could have produced, because
+    the standard states the ceiling explicitly. There is no Method A/B/C split --
+    there is one calculation, and it needs the counterfactual.
+
+    Per exposed interval (V > 253 V), with ``ceiling = vw_max_p(V, S) + 4%``:
+
+    ==========================  ====================================================
+    ``curtailed_kW``            ``uncurtailed_P - P_kW``   (Hossein's definition)
+                                counted only when ``uncurtailed_P > ceiling``
+                                AND ``P_kW < ceiling`` -- i.e. power was available
+                                above the ceiling and the site stayed below it.
+    ``mandated_kW``             ``uncurtailed_P - ceiling``
+                                the part the standard REQUIRED to be shed.
+    ``over_reduction_kW``       ``ceiling - P_kW``
+                                the part shed BEYOND the requirement.
+    ==========================  ====================================================
+
+    ``curtailed_kW = mandated_kW + over_reduction_kW`` by construction, and the
+    split matters: mandated energy is the designed cost of the standard, while a
+    large over-reduction means the inverter backed off further than asked --
+    a settings or control-loop question, not a compliance one. Reporting only the
+    total conflates a working standard with a badly tuned inverter.
+
+    The counterfactual is floored at measured P
+    (``uncurtailed_P = greatest(prediction, P_kW)``), so ``curtailed_kW >= 0``
+    always and the estimate can never claim a site produced less than observed.
+
+    **This is a LOWER bound, and the reason is coverage, not conservatism in the
+    formula.** Intervals with no ``uncurtailed_P`` contribute zero curtailment
+    rather than an unknown, so every gap in the counterfactual pushes the total
+    down. ``counterfactual_covered_count`` and ``exposed_count`` are returned
+    together for exactly this reason -- read the ratio before quoting the energy.
+    """
+    config = (config or se_params.CONFIG).validate()
+    params = (params or se_params.PARAMS).validate()
+
+    if not C.store_path("se_uncurtailedpv").exists():
+        raise FileNotFoundError(
+            "se_uncurtailedpv not found -- Volt-Watt curtailment needs the D12 "
+            "counterfactual.\n"
+            f"  expected: {C.store_path('se_uncurtailedpv')}\n"
+            "  Build it with notebook 04 section 5.\n"
+            "  Unlike Volt-VAr, there is no counterfactual-free variant: without\n"
+            "  it you cannot tell curtailment from a cloud."
+        )
+    from solar_edge.lib import se_store
+
+    se_store.register_store_views(con)
+
+    rating = contract.capacity_column(config.rating_basis)
+    v = contract.voltage_sql(config.voltage_aggregation, "i")
+    v_scored = "round(V, 6)"
+    max_p = vw_max_p_sql(v_scored, "rating_kva")
+    tol = tol_kw_sql("rating_kva", config.tolerance_fraction)
+    exposed = f"{v_scored} > {_A['VW']['V1']}"
+
+    return con.execute(
+        f"""
+        WITH base AS (
+            SELECT i.site_alias, i.ts_aest, i.P_kW,
+                   {v}        AS V,
+                   {rating}   AS rating_kva,
+                   s.is_three_phase, s.state,
+                   u.uncurtailed_P
+            FROM se_interval i
+            {contract.cohort_join_sql('i')}
+            LEFT JOIN se_uncurtailedpv u
+                   ON u.site_alias = i.site_alias AND u.ts_aest = i.ts_aest
+            WHERE {contract.cohort_where_sql(config)}
+              AND i.P_kW IS NOT NULL AND {v} IS NOT NULL
+        ),
+        ceil AS (
+            SELECT *, ({max_p}) + {tol} AS ceiling_kW FROM base WHERE {exposed}
+        ),
+        scored AS (
+            SELECT *,
+                   -- The response-opportunity gate: available power above the
+                   -- ceiling AND the site sitting below it. Without the first
+                   -- clause a cloudy interval would read as curtailment.
+                   (uncurtailed_P > ceiling_kW AND P_kW < ceiling_kW) AS is_curtailed,
+                   CASE WHEN uncurtailed_P > ceiling_kW AND P_kW < ceiling_kW
+                        THEN uncurtailed_P - P_kW ELSE 0 END       AS curtailed_kW,
+                   CASE WHEN uncurtailed_P > ceiling_kW AND P_kW < ceiling_kW
+                        THEN uncurtailed_P - ceiling_kW ELSE 0 END AS mandated_kW,
+                   CASE WHEN uncurtailed_P > ceiling_kW AND P_kW < ceiling_kW
+                        THEN ceiling_kW - P_kW ELSE 0 END          AS over_reduction_kW
+            FROM ceil
+        )
+        SELECT site_alias,
+               any_value(is_three_phase)                  AS is_three_phase,
+               any_value(state)                           AS state,
+               any_value(rating_kva)                      AS rating_kva,
+               count(*)                                   AS exposed_count,
+               count(uncurtailed_P)                       AS counterfactual_covered_count,
+               count(*) FILTER (WHERE uncurtailed_P > ceiling_kW)
+                                                          AS response_opportunity_count,
+               count(*) FILTER (WHERE is_curtailed)       AS curtailed_count,
+               sum(curtailed_kW)                          AS curtailed_kw_sum,
+               sum(mandated_kW)                           AS mandated_kw_sum,
+               sum(over_reduction_kW)                     AS over_reduction_kw_sum,
+               sum(P_kW)                                  AS measured_kw_sum,
+               sum(coalesce(uncurtailed_P, P_kW))         AS potential_kw_sum
+        FROM scored
+        GROUP BY site_alias
+        """
+    ).df()
+
+
+def voltwatt_curtailment_summary(site_year: pd.DataFrame, config=None,
+                                 by_cohort: bool = True) -> pd.DataFrame:
+    """
+    Fleet Volt-Watt curtailment energy, with its coverage attached.
+
+    ``pct_exposed_covered`` is the first number to read. Curtailment is only
+    detectable where a counterfactual exists; the rest of the exposed intervals
+    contribute zero, so the energy total scales with coverage and comparing two
+    fleets (or two runs) without it is meaningless.
+
+    ``pct_over_reduction`` splits the total: how much of the shed energy the
+    standard actually required versus how much the inverters gave up beyond it.
+    """
+    import numpy as np
+
+    config = (config or se_params.CONFIG).validate()
+    h = C.INTERVAL_H
+    keys = ["is_three_phase"] if by_cohort else []
+
+    rows = []
+    for key, g in (site_year.groupby(keys) if keys else [((), site_year)]):
+        exposed = float(g.exposed_count.sum())
+        covered = float(g.counterfactual_covered_count.sum())
+        curtailed_kwh = float(g.curtailed_kw_sum.sum()) * h
+        mandated_kwh = float(g.mandated_kw_sum.sum()) * h
+        over_kwh = float(g.over_reduction_kw_sum.sum()) * h
+        potential_kwh = float(g.potential_kw_sum.sum()) * h
+        rows.append({
+            "cohort": ("three-phase" if key[0] else "single-phase") if keys else "all sites",
+            "n_sites": g.site_alias.nunique(),
+            "sites_with_curtailment": int((g.curtailed_count > 0).sum()),
+            "exposed_intervals": int(exposed),
+            "counterfactual_covered": int(covered),
+            "pct_exposed_covered": round(100 * covered / exposed, 2) if exposed else np.nan,
+            "response_opportunity_intervals": int(g.response_opportunity_count.sum()),
+            "curtailed_intervals": int(g.curtailed_count.sum()),
+            "curtailed_kWh": round(curtailed_kwh, 2),
+            "mandated_kWh": round(mandated_kwh, 2),
+            "over_reduction_kWh": round(over_kwh, 2),
+            "pct_over_reduction": round(100 * over_kwh / curtailed_kwh, 2)
+                                  if curtailed_kwh else np.nan,
+            "pct_of_exposed_potential": round(100 * curtailed_kwh / potential_kwh, 3)
+                                        if potential_kwh else np.nan,
+        })
+    return pd.DataFrame(rows)
+
+
+def voltwatt_curtailment_note(summary: pd.DataFrame) -> None:
+    """Print the reading of a Volt-Watt curtailment summary, caveats included."""
+    row = summary.iloc[-1] if len(summary) == 1 else summary.sum(numeric_only=True)
+    covered = summary.counterfactual_covered.sum()
+    exposed = summary.exposed_intervals.sum()
+    curtailed = summary.curtailed_kWh.sum()
+    mandated = summary.mandated_kWh.sum()
+    over = summary.over_reduction_kWh.sum()
+
+    print("Volt-Watt curtailment\n" + "=" * 60)
+    print(f"  {curtailed:,.1f} kWh not generated while Volt-Watt was active")
+    if curtailed:
+        print(f"    {mandated:,.1f} kWh ({100 * mandated / curtailed:.1f}%) "
+              "required by the standard")
+        print(f"    {over:,.1f} kWh ({100 * over / curtailed:.1f}%) "
+              "shed BEYOND the requirement")
+    print(f"\n  Coverage: {covered:,} of {exposed:,} exposed intervals "
+          f"({100 * covered / exposed:.1f}%) have a counterfactual.")
+    print("  Uncovered intervals contribute ZERO, so this is a LOWER bound and it")
+    print("  scales with coverage. Quote the two together or not at all.")
