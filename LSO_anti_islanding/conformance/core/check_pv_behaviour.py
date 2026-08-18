@@ -3,6 +3,7 @@
 from typing import Any
 
 import polars as pl
+from config import MAX_DISCONNECT_EDGE_GAP_SECONDS
 
 
 class CheckPVBehaviour:
@@ -189,6 +190,11 @@ class CheckPVBehaviour:
                     (~pl.col("is_disc").shift(1))
                     & pl.col("is_disc")
                     & (pl.col("site_power_drop") >= p_step_strict)
+                    & (pl.col("dt_next_s").shift(1) > 0)
+                    & (
+                        pl.col("dt_next_s").shift(1)
+                        <= MAX_DISCONNECT_EDGE_GAP_SECONDS
+                    )
                 )
                 .fill_null(False)
                 .alias("disconnect_edge"),
