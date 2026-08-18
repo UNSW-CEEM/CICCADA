@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import polars as pl
-from config import PHASE_B_METHODS, PRIMARY_PHASE_B_METHOD
+from config import PRIMARY_PHASE_B_METHOD
 from reporting.plotting import (
     plot_site_threshold_distribution,
     plot_site_threshold_distribution_extremes,
@@ -12,184 +12,59 @@ from reporting.plotting import (
 PRIMARY_SITE_THRESHOLDS_NAME = f"site_thresholds_{PRIMARY_PHASE_B_METHOD}.csv"
 PRIMARY_PHASE_B_SUMMARY_NAME = f"phase_b_site_summary_{PRIMARY_PHASE_B_METHOD}.csv"
 PRIMARY_PHASE_B_DETAIL_NAME = f"phase_b_timestamp_detail_{PRIMARY_PHASE_B_METHOD}.csv"
-FIVE_METHOD_RESULTS_SUMMARY_NAME = "five_method_results_summary.xlsx"
-FIVE_METHOD_RESULTS_SUMMARY_SHEET_NAME = "summary"
-FIVE_METHOD_RESULTS_SUMMARY_METHOD_LABELS = {
-    "default": "default",
-    "original": "original_raw",
-    "tier_based": "confidence_tier",
-    "old_sweep": "old_sweep",
-    "blended": "blended",
-}
-FIVE_METHOD_RESULTS_SUMMARY_COLUMNS = [
-    "#",
-    "Method",
-    "Assessed",
-    "Conformant",
-    "Non-conformant",
-    "Unassessed",
-    "Conformance % of assessed",
+
+ACTIVE_THRESHOLD_COLUMNS = [
+    "site_id",
+    "delta_los_site",
+    "delta_ov1_site",
+    "los_anchor_site",
+    "ov1_anchor_site",
+    "ov1_work_site",
+    "ov1_floor_site",
+    "ov1_test_site",
+    "delta_gap_v",
+    "los_threshold_basis",
+    "los_winning_window_count",
+    "los_winning_window_median_v",
+    "los_overall_range_v",
+    "ov1_threshold_basis",
+    "ov1_winning_window_count",
+    "ov1_winning_window_median_v",
+    "ov1_overall_range_v",
 ]
 
 
-def summarize_multi_method_site_outputs(phase_b_summary_by_method_df):
-    if phase_b_summary_by_method_df is None or phase_b_summary_by_method_df.is_empty():
-        return {"site_comparison": pl.DataFrame()}
+def _active_threshold_output(frame):
+    columns = [column for column in ACTIVE_THRESHOLD_COLUMNS if column in frame.columns]
+    if "method_key" in frame.columns:
+        columns.append("method_key")
+    return frame.select(columns)
 
-    comparison = phase_b_summary_by_method_df.select("site_id").unique().sort("site_id")
-    pivot_specs = [
-        "overall_pass",
-        "los_pass",
-        "ov1_pass",
-        "los_eligible",
-        "ov1_eligible",
-        "los_compliance_pct",
-        "ov1_compliance_pct",
-        "los_threshold_used",
-        "pass_basis",
+
+def _active_phase_b_summary_output(frame):
+    obsolete = [
+        column
+        for column in ("threshold_sensitive", "pass_basis")
+        if column in frame.columns
     ]
-    for value_col in pivot_specs:
-        pivot = phase_b_summary_by_method_df.select(
-            [
-                "site_id",
-                "method_key",
-                value_col,
-            ]
-        ).pivot(
-            values=value_col,
-            index="site_id",
-            on="method_key",
-            aggregate_function="first",
-        )
-        comparison = comparison.join(
-            pivot.rename(
-                {
-                    col: f"{value_col}__{col}"
-                    for col in pivot.columns
-                    if col != "site_id"
-                }
-            ),
-            on="site_id",
-            how="left",
-        )
-
-    overall_cols = sorted(
-        c for c in comparison.columns if c.startswith("overall_pass__")
-    )
-    comparison = comparison.with_columns(
-        [
-            pl.struct(overall_cols)
-            .map_elements(
-                lambda row: len(set(row.values())) > 1,
-                return_dtype=pl.Boolean,
-            )
-            .alias("any_disagreement"),
-            pl.struct(overall_cols)
-            .map_elements(
-                lambda row: len({v for v in row.values() if v is not None}) > 1,
-                return_dtype=pl.Boolean,
-            )
-            .alias("assessed_outcome_disagreement"),
-            pl.struct(overall_cols)
-            .map_elements(
-                lambda row: any(v is not None for v in row.values()),
-                return_dtype=pl.Boolean,
-            )
-            .alias("any_method_assessed"),
-            pl.struct(overall_cols)
-            .map_elements(
-                lambda row: all(v is None for v in row.values()),
-                return_dtype=pl.Boolean,
-            )
-            .alias("all_methods_unassessed"),
-        ]
-    )
-    return {"site_comparison": comparison}
-
-
-def build_five_method_results_summary(phase_b_summary_by_method_df):
-    summary = pl.DataFrame(
-        {
-            "#": list(range(1, len(PHASE_B_METHODS) + 1)),
-            "method_key": list(PHASE_B_METHODS),
-            "Method": [
-                FIVE_METHOD_RESULTS_SUMMARY_METHOD_LABELS[method_key]
-                for method_key in PHASE_B_METHODS
-            ],
-        }
-    )
-    if phase_b_summary_by_method_df is None or phase_b_summary_by_method_df.is_empty():
-        return summary.with_columns(
-            [
-                pl.lit(0, dtype=pl.Int64).alias("Assessed"),
-                pl.lit(0, dtype=pl.Int64).alias("Conformant"),
-                pl.lit(0, dtype=pl.Int64).alias("Non-conformant"),
-                pl.lit(0, dtype=pl.Int64).alias("Unassessed"),
-                pl.lit(None, dtype=pl.Float64).alias("Conformance % of assessed"),
-            ]
-        ).select(FIVE_METHOD_RESULTS_SUMMARY_COLUMNS)
-
-    counts = phase_b_summary_by_method_df.group_by("method_key").agg(
-        [
-            pl.len().alias("_total_rows"),
-            pl.col("overall_pass").is_not_null().sum().alias("Assessed"),
-            pl.col("overall_pass").eq(True).sum().alias("Conformant"),
-            pl.col("overall_pass").eq(False).sum().alias("Non-conformant"),
-        ]
-    )
-    return (
-        summary.join(counts, on="method_key", how="left")
-        .with_columns(
-            [
-                pl.col("_total_rows").fill_null(0).cast(pl.Int64),
-                pl.col("Assessed").fill_null(0).cast(pl.Int64),
-                pl.col("Conformant").fill_null(0).cast(pl.Int64),
-                pl.col("Non-conformant").fill_null(0).cast(pl.Int64),
-            ]
-        )
-        .with_columns(
-            [
-                (pl.col("_total_rows") - pl.col("Assessed")).alias("Unassessed"),
-                pl.when(pl.col("Assessed") > 0)
-                .then((pl.col("Conformant") / pl.col("Assessed") * 100).round(2))
-                .otherwise(pl.lit(None, dtype=pl.Float64))
-                .alias("Conformance % of assessed"),
-            ]
-        )
-        .drop(["method_key", "_total_rows"])
-        .select(FIVE_METHOD_RESULTS_SUMMARY_COLUMNS)
-    )
-
-
-def write_five_method_results_summary(summary_table, output_path):
-    output_path = Path(output_path)
-    try:
-        summary_table.write_excel(
-            workbook=output_path,
-            worksheet=FIVE_METHOD_RESULTS_SUMMARY_SHEET_NAME,
-            column_formats={"Conformance % of assessed": "0.00"},
-            table_style=None,
-            autofit=True,
-            freeze_panes=(1, 0),
-            float_precision=2,
-        )
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "Writing five_method_results_summary.xlsx requires "
-            "'xlsxwriter' to be installed."
-        ) from exc
-    return output_path
+    return frame.drop(obsolete)
 
 
 def build_output_tables(results, excluded_day_schema=None):
     tables = {
-        "site_thresholds": results["site_thresholds"],
-        "site_thresholds_by_method": results["site_thresholds_by_method"],
+        "site_thresholds": _active_threshold_output(results["site_thresholds"]),
+        "site_thresholds_by_method": _active_threshold_output(
+            results["site_thresholds_by_method"]
+        ),
         "phase_a_trip_attribution": results["phase_a_trip_attribution"],
         "phase_a_brackets": results["phase_a_brackets"],
-        "phase_b_site_summary": results["phase_b_site_summary"],
+        "phase_b_site_summary": _active_phase_b_summary_output(
+            results["phase_b_site_summary"]
+        ),
         "phase_b_timestamp_detail": results["phase_b_timestamp_detail"],
-        "phase_b_site_summary_by_method": results["phase_b_site_summary_by_method"],
+        "phase_b_site_summary_by_method": _active_phase_b_summary_output(
+            results["phase_b_site_summary_by_method"]
+        ),
         "phase_b_timestamp_detail_by_method": results[
             "phase_b_timestamp_detail_by_method"
         ],
@@ -254,12 +129,6 @@ def build_output_tables(results, excluded_day_schema=None):
             )
         )
 
-    tables["five_method_site_comparison"] = summarize_multi_method_site_outputs(
-        tables["phase_b_site_summary_by_method"]
-    )["site_comparison"]
-    tables["five_method_results_summary"] = build_five_method_results_summary(
-        tables["phase_b_site_summary_by_method"]
-    )
     return tables
 
 
@@ -291,16 +160,10 @@ def write_outputs(results, output_dir, excluded_day_schema=None):
         "assessed_sites_overall": "assessed_sites_overall.csv",
         "los_site_threshold_stats": "los_site_threshold_stats.csv",
         "ov1_site_threshold_stats": "ov1_site_threshold_stats.csv",
-        "five_method_site_comparison": "five_method_site_comparison.csv",
     }
     for table_name, filename in conditional_files.items():
         if not tables[table_name].is_empty():
             tables[table_name].write_csv(output_dir / filename)
-
-    write_five_method_results_summary(
-        tables["five_method_results_summary"],
-        output_dir / FIVE_METHOD_RESULTS_SUMMARY_NAME,
-    )
 
     los_stats = tables["los_site_threshold_stats"]
     ov1_stats = tables["ov1_site_threshold_stats"]

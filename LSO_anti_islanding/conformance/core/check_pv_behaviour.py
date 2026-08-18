@@ -88,7 +88,6 @@ class CheckPVBehaviour:
 
         p_disconnect = self.powerMeasError * PRated
         p_step_strict = 0.10 * PRated
-        p_step_fallback = 0.05 * PRated
 
         logic_current = []
         logic_next = []
@@ -203,27 +202,6 @@ class CheckPVBehaviour:
             ]
         )
 
-        df = df.with_columns(
-            [
-                (
-                    (~pl.col("is_disc").shift(1))
-                    & pl.col("is_disc")
-                    & (pl.col("site_power_drop") >= p_step_fallback)
-                    & (~pl.col("disconnect_edge"))
-                )
-                .fill_null(False)
-                .alias("disconnect_edge_fallback"),
-                (
-                    pl.col("is_disc").shift(1)
-                    & (~pl.col("is_disc"))
-                    & (pl.col("site_power_rise") >= p_step_fallback)
-                    & (~pl.col("reconnect_edge"))
-                )
-                .fill_null(False)
-                .alias("reconnect_edge_fallback"),
-            ]
-        )
-
         self._site_day_signals_cache[cache_key] = df
         return self._site_day_signals_cache[cache_key]
 
@@ -253,7 +231,7 @@ class CheckPVBehaviour:
         timestamp_dtype = df.schema["local_tstamp"]
 
         disc_rows = (
-            df.filter(pl.col("disconnect_edge") | pl.col("disconnect_edge_fallback"))
+            df.filter(pl.col("disconnect_edge"))
             .select(
                 [
                     "site_id",
@@ -262,19 +240,15 @@ class CheckPVBehaviour:
                     "vinst_max",
                     "site_power_drop",
                     "disconnect_edge",
-                    "disconnect_edge_fallback",
                 ]
             )
             .with_columns(
-                pl.when(pl.col("disconnect_edge"))
-                .then(pl.lit("strict_10pct"))
-                .otherwise(pl.lit("fallback_5pct"))
-                .alias("edge_source")
+                pl.lit("strict_10pct").alias("edge_source")
             )
             .sort("local_tstamp")
         )
         rec_rows = (
-            df.filter(pl.col("reconnect_edge") | pl.col("reconnect_edge_fallback"))
+            df.filter(pl.col("reconnect_edge"))
             .select(
                 [
                     "site_id",
@@ -282,14 +256,10 @@ class CheckPVBehaviour:
                     "v10m_avg",
                     "vinst_max",
                     "reconnect_edge",
-                    "reconnect_edge_fallback",
                 ]
             )
             .with_columns(
-                pl.when(pl.col("reconnect_edge"))
-                .then(pl.lit("strict_10pct"))
-                .otherwise(pl.lit("fallback_5pct"))
-                .alias("edge_source")
+                pl.lit("strict_10pct").alias("edge_source")
             )
             .sort("local_tstamp")
         )

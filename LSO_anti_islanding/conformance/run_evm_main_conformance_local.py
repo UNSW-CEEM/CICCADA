@@ -3,13 +3,11 @@
 from functools import partial
 
 from config import (
-    GENERATE_METHOD_COMPARISON_PLOTS,
     GENERATE_SITE_PLOTS_DEFAULT,
     PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS,
 )
 from core.pipeline import run_conformance
 from core.workflow import prepare_site
-from reporting.generate_method_plots import generate_method_plots
 from reporting.outputs import write_outputs
 from sapn2022_workflow.adapter import SAPN2022_DEFINITION
 from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_DEFINITION
@@ -56,13 +54,6 @@ def main(dataset):
         definition.output_dir,
         excluded_day_schema=definition.excluded_day_schema,
     )
-    if GENERATE_METHOD_COMPARISON_PLOTS:
-        generate_method_plots(
-            output_dir=definition.output_dir,
-            prepare_site=prepare_dataset_site,
-            coverage_threshold=definition.coverage_threshold,
-        )
-
     print("Saved outputs to", definition.output_dir)
     skipped = results["skipped_sites"]
     print(
