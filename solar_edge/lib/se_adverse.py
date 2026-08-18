@@ -105,9 +105,15 @@ def classify_adverse_sites(
     """
     config = (config or se_params.CONFIG).validate()
     q = contract.q_expr(config, "i")
+    # Route through config.voltage_aggregation like every other query in the
+    # pipeline (default "mean") rather than hardcoding max-of-phases -- this
+    # feeds adverse_class/polarity_suspect, which in turn gates the
+    # exclude_polarity_suspect filter used by Methods A/B/C, so a max-vs-mean
+    # bias here changes which sites those methods exclude.
+    v = contract.voltage_sql(config.voltage_aggregation, "i")
     tol = config.tolerance_fraction
     required = (
-        f"-{_A['VVAR']['Q4']} * c.s_99 * (i.V_max - {_A['VVAR']['V3']}) / "
+        f"-{_A['VVAR']['Q4']} * c.s_99 * ({v} - {_A['VVAR']['V3']}) / "
         f"({_A['VVAR']['V4']} - {_A['VVAR']['V3']})"
     )
 
@@ -125,7 +131,7 @@ def classify_adverse_sites(
             JOIN se_site s USING (site_alias)
             JOIN se_site_capacity c USING (site_alias)
             WHERE i.P_kW > {min_p_kw}
-              AND i.V_max BETWEEN {v_lo} AND {v_hi}
+              AND {v} BETWEEN {v_lo} AND {v_hi}
               AND c.s_99 > 0 AND i.Q_kvar IS NOT NULL
         ),
         per_site AS (

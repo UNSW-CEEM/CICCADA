@@ -228,6 +228,7 @@ def sign_flip_sensitivity(
 
 def fleet_orientation_fit(
     con: duckdb.DuckDBPyConnection,
+    config=None,
     v_lo: float = 241.0,
     v_hi: float = 253.0,
     min_p_kw: float = 0.5,
@@ -261,8 +262,15 @@ def fleet_orientation_fit(
     that fit in neither should be excluded from the argument entirely -- including
     them would dilute a clear signal with noise.
     """
+    config = (config or se_params.CONFIG).validate()
+    # Route through config.voltage_aggregation (default "mean") like the other
+    # functions in this file (site_response_classification, deadband_shape,
+    # sign_examples) instead of hardcoding max-of-phases -- this determination
+    # feeds directly into the fleet's REACTIVE_POWER_SIGN convention, so a
+    # max-vs-mean bias here could itself skew the orientation-fit verdict.
+    v = contract.voltage_sql(config.voltage_aggregation, "i")
     tol = _A["TOL_FRAC"]
-    required = f"-{_A['VVAR']['Q4']} * c.s_99 * (i.V_max - {_A['VVAR']['V3']}) / " \
+    required = f"-{_A['VVAR']['Q4']} * c.s_99 * ({v} - {_A['VVAR']['V3']}) / " \
                f"({_A['VVAR']['V4']} - {_A['VVAR']['V3']})"
 
     return con.execute(
@@ -277,7 +285,7 @@ def fleet_orientation_fit(
             JOIN se_site s USING (site_alias)
             JOIN se_site_capacity c USING (site_alias)
             WHERE i.P_kW > {min_p_kw}
-              AND i.V_max BETWEEN {v_lo} AND {v_hi}
+              AND {v} BETWEEN {v_lo} AND {v_hi}
               AND c.s_99 > 0 AND i.Q_kvar IS NOT NULL
         ),
         per_site AS (
@@ -315,6 +323,7 @@ def fleet_orientation_fit(
 
 def fleet_sign_diagnosis(
     con: duckdb.DuckDBPyConnection,
+    config=None,
     v_lo: float = 248.0,
     v_hi: float = 256.0,
     min_intervals: int = 500,
@@ -368,7 +377,11 @@ def fleet_sign_diagnosis(
 
     Resolving it needs SolarEdge documentation or one site with known ground truth.
     """
-    required = "-0.60 * c.s_99 * (i.V_max - 240.0) / 18.0"
+    config = (config or se_params.CONFIG).validate()
+    # Same fix as fleet_orientation_fit above: honour config.voltage_aggregation
+    # instead of hardcoding max-of-phases.
+    v = contract.voltage_sql(config.voltage_aggregation, "i")
+    required = f"-0.60 * c.s_99 * ({v} - 240.0) / 18.0"
     return con.execute(
         f"""
         WITH per_interval AS (
@@ -378,7 +391,7 @@ def fleet_sign_diagnosis(
             JOIN se_site s USING (site_alias)
             JOIN se_site_capacity c USING (site_alias)
             WHERE i.P_kW > 0.5
-              AND i.V_max BETWEEN {v_lo} AND {v_hi}
+              AND {v} BETWEEN {v_lo} AND {v_hi}
               AND c.s_99 > 0
         ),
         per_site AS (

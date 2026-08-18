@@ -150,12 +150,32 @@ def _eligible_cte(config, params, exclude_polarity_suspect: bool, con=None) -> s
     """
 
 
-def _register_polarity(con, adverse: pd.DataFrame | None):
-    """Register the polarity triage so the eligibility CTE can exclude on it."""
-    if adverse is None:
+def _register_polarity(con, adverse: pd.DataFrame | None, exclude_polarity_suspect: bool):
+    """
+    Register the polarity triage so the eligibility CTE can exclude on it.
+
+    ``exclude_polarity_suspect=True`` with ``adverse=None`` used to be silently
+    accepted and register an EMPTY polarity view -- the eligibility filter
+    (``coalesce(pol.adverse_class, 'x') <> 'polarity_suspect'``) then always
+    evaluated true against the empty join, so the documented default mitigation
+    for the sign caveat above excluded nothing, with no error or warning. Since
+    every current call site in this codebase already threads ``adverse``
+    through correctly, this couldn't fire in the shipped notebooks -- but a
+    future caller that doesn't would get a silently-wrong "default" instead of
+    a clear failure, so it now raises instead.
+    """
+    if not exclude_polarity_suspect:
         con.execute(
             "CREATE OR REPLACE TEMP VIEW _polarity AS "
             "SELECT NULL::VARCHAR AS site_alias, NULL::VARCHAR AS adverse_class WHERE 1=0"
+        )
+    elif adverse is None:
+        raise ValueError(
+            "exclude_polarity_suspect=True (the default) but adverse=None -- "
+            "the polarity-suspect exclusion cannot run without a classification "
+            "to exclude on. Pass adverse=se_adverse.classify_adverse_sites(con, "
+            "config), or explicitly set exclude_polarity_suspect=False if you "
+            "intend to include polarity-suspect sites."
         )
     else:
         con.register("_polarity_src", adverse[["site_alias", "adverse_class"]])
@@ -191,7 +211,7 @@ def method_a_site_year(
     """
     config = (config or se_params.CONFIG).validate()
     params = (params or se_params.PARAMS).validate()
-    _register_polarity(con, adverse if exclude_polarity_suspect else None)
+    _register_polarity(con, adverse, exclude_polarity_suspect)
     tol = params_tol(config)
 
     return con.execute(
@@ -272,7 +292,7 @@ def eligible_context(
     """
     config = (config or se_params.CONFIG).validate()
     params = (params or se_params.PARAMS).validate()
-    _register_polarity(con, adverse if exclude_polarity_suspect else None)
+    _register_polarity(con, adverse, exclude_polarity_suspect)
 
     return con.execute(
         f"""
@@ -324,7 +344,7 @@ def method_b_site_year(
             "  Method A (method_a_site_year) runs without it."
         )
 
-    _register_polarity(con, adverse if exclude_polarity_suspect else None)
+    _register_polarity(con, adverse, exclude_polarity_suspect)
     tol = params_tol(config)
     q_required = vvar_required_q_sql("V", "rating_capacity")
     gate = "symptom = 1 AND" if params.require_apparent_limit_symptom else ""
@@ -354,7 +374,12 @@ def method_b_site_year(
             SELECT *,
                    CASE WHEN Q_kvar < 0 THEN 1 ELSE 0 END AS tier1_absorbing,
                    symptom                                AS tier2_symptom,
-                   CASE WHEN Q_kvar < 0 AND uncurtailed_P > pmax_measured_q_kw
+                   -- Tier 3 must also require the tier-2 symptom gate (symptom = 1),
+                   -- not just Q_kvar < 0, or it is not a subset of tier 2 and the
+                   -- "each tier strictly narrower than the last" claim below (and
+                   -- evidence_tiers' pct_of_tier1 column) is false -- it was
+                   -- observed to rise between tier 2 and tier 3 without this.
+                   CASE WHEN symptom = 1 AND Q_kvar < 0 AND uncurtailed_P > pmax_measured_q_kw
                         THEN 1 ELSE 0 END                 AS tier3_cf_above_headroom,
                    CASE WHEN {gate} Q_kvar < 0 AND uncurtailed_P > pmax_measured_q_kw
                         THEN greatest(0, uncurtailed_P - greatest(P_kW, pmax_measured_q_kw))
@@ -837,7 +862,7 @@ def method_c_confusion(
     """
     config = (config or se_params.CONFIG).validate()
     params = (params or se_params.PARAMS).validate()
-    _register_polarity(con, adverse if exclude_polarity_suspect else None)
+    _register_polarity(con, adverse, exclude_polarity_suspect)
     tol = params_tol(config)
 
     frame = con.execute(
@@ -941,7 +966,17 @@ def method_comparison(
             "energy_kWh": None, "note": "NOT RUNNABLE -- needs the D12 GHI counterfactual",
         })
     if confusion is not None:
-        counts = confusion.attrs.get("counts", {})
+        counts = confusion.attrs.get("counts")
+        if not counts:
+            raise ValueError(
+                "confusion.attrs['counts'] is missing -- pass the frame returned by "
+                "se_curtailment.method_c_confusion() directly, not a re-read CSV "
+                "or any other frame that has been through an operation pandas "
+                "does not carry .attrs across (to_csv/read_csv, .merge(), ...). "
+                "Silently defaulting to {} here previously made "
+                "'intervals_flagged' read as a plausible-looking 0 instead of "
+                "surfacing the missing metadata."
+            )
         rows.append({
             "method": "C -- derating-flag corroboration",
             "bound": "label, not an estimate",
@@ -1123,6 +1158,7 @@ def voltwatt_curtailment_summary(site_year: pd.DataFrame, config=None,
 
 def voltwatt_fleet_report(
     site_frame: pd.DataFrame, config=None, cohort_sites: int | None = None,
+    fleet_generation: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     The Volt-Watt analogue of :func:`fleet_curtailment_report`.
@@ -1139,6 +1175,14 @@ def voltwatt_fleet_report(
     * **The total splits.** ``mandated`` is the designed cost of the standard;
       ``over_reduction`` is what inverters shed beyond what was asked. Reporting
       only the sum conflates a working standard with a badly tuned inverter.
+
+    ``fleet_generation``, if passed (the frame from :func:`fleet_potential_generation`,
+    the SAME call already made once for the Volt-VAr report -- no need to run it
+    twice), adds the second, ALL-fleet denominator so this report can be read
+    side by side with :func:`fleet_curtailment_report`: "of everything the fleet
+    made, what did Volt-Watt cost?" rather than only "of the generation exposed
+    to Volt-Watt, how much was lost?". See that function's docstring for why both
+    denominators are legitimate and why they differ by orders of magnitude.
     """
     config = (config or se_params.CONFIG).validate()
     h = config.interval_h
@@ -1189,6 +1233,27 @@ def voltwatt_fleet_report(
          "sum of uncurtailed_P over exposed intervals"),
         ("curtailment as % of exposed potential", pct(curtailed_kwh, potential_kwh), ""),
     ]
+
+    # Second denominator: all cohort generation, not just the exposed (V > 253 V)
+    # band -- the same fleet_generation frame fleet_curtailment_report() uses, so
+    # the two "ALL fleet" blocks are directly comparable rather than computed two
+    # different ways.
+    if fleet_generation is not None and len(fleet_generation):
+        g = fleet_generation.iloc[0]
+        rows += [
+            ("ALL fleet measured generation (MWh)", g.measured_MWh,
+             f"{g.n_sites:,} sites, every interval"),
+            ("ALL fleet potential generation (MWh)", g.potential_MWh,
+             f"counterfactual on {g.pct_intervals_covered}% of intervals, "
+             f"measured elsewhere"),
+            ("curtailment as % of ALL measured generation",
+             pct(curtailed_kwh, g.measured_MWh * 1000),
+             "model-free denominator -- recommended"),
+            ("curtailment as % of ALL potential generation",
+             pct(curtailed_kwh, g.potential_MWh * 1000),
+             "denominator understated where coverage is thin"),
+        ]
+
     frame = pd.DataFrame(rows, columns=["statistic", "value", "note"])
     frame["value"] = pd.Series(
         [int(v) if isinstance(v, float) and v.is_integer() else v

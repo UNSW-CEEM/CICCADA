@@ -374,12 +374,18 @@ def build_uncurtailedpv(
     Apply the model to every eligible interval -> ``se_uncurtailedpv``.
 
         P_norm_est    = P_norm_cs * (a + b * GHI/GHI_cs)
-        uncurtailed_P = greatest(P_norm_est, P_measured_norm) * capacity
+        uncurtailed_P = greatest(least(P_norm_est, capacity_limit), P_measured_norm) * capacity
 
     The FLOOR at observed power matters: the counterfactual must never claim the
     site would have produced *less* than it actually did. It is applied before
-    any capacity cap, matching the original ordering, and both the floored and
-    capped flags are written so either can be audited.
+    the capacity cap so a genuinely-high measurement is preserved even if the cap
+    would otherwise clip it, matching the reference ordering
+    (``bms_sa_review/data_calc_write/stage1_ghi_pipeline/build_all_uncurtailedpv.py``,
+    ``final_counterfactual = greatest(least(uncurtailed_P_floored, capacity_limit),
+    P_kw)``). ``capacity_limit`` is ``normalization_capacity`` (the s_99 basis --
+    this delivery has no nameplate, see ``se_params`` for why that basis is used
+    fleet-wide). Both the floored and capped flags are written so either can be
+    audited.
 
     Only sites passing the MAPE gate get a counterfactual. Everything else is
     absent, not zero.
@@ -408,12 +414,18 @@ def build_uncurtailedpv(
                s.P_kw_norm_cs * (m.a + m.b * (s.GHI / nullif(s.GHI_cs, 0)))
                    * s.normalization_capacity                   AS model_prediction_raw,
                greatest(
-                   s.P_kw_norm_cs * (m.a + m.b * (s.GHI / nullif(s.GHI_cs, 0)))
-                       * s.normalization_capacity,
+                   least(
+                       s.P_kw_norm_cs * (m.a + m.b * (s.GHI / nullif(s.GHI_cs, 0)))
+                           * s.normalization_capacity,
+                       s.normalization_capacity
+                   ),
                    s.P_kW
                )                                                AS uncurtailed_P,
                (s.P_kw_norm_cs * (m.a + m.b * (s.GHI / nullif(s.GHI_cs, 0)))
                     * s.normalization_capacity < s.P_kW)        AS floor_applied,
+               (s.P_kw_norm_cs * (m.a + m.b * (s.GHI / nullif(s.GHI_cs, 0)))
+                    * s.normalization_capacity > s.normalization_capacity)
+                                                                 AS capped,
                s.normalization_capacity                         AS capacity_limit,
                strftime(s.ts_aest, '%Y-%m')                     AS {C.PARTITION_KEY}
         FROM se_structured s

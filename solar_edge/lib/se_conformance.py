@@ -285,6 +285,14 @@ def voltvar_site_day(
                count(*)                                     AS all_intervals_count,
                sum(exposed)                                 AS exposed_count,
                sum(capability_assessable)                   AS total_count,
+               -- capability_assessable is NOT gated on exposed (Q buckets score
+               -- against the full assessable population, by design -- see
+               -- total_count's other uses). This column is the AND of the two,
+               -- for the one place that actually needs a nested funnel/rate:
+               -- "of the exposed population, how much was assessable" must not
+               -- divide by a total_count that includes non-exposed intervals.
+               sum(capability_assessable) FILTER (WHERE exposed = 1)
+                                                             AS assessable_exposed_count,
                {sums},
                {counts},
                {pu_sums},
@@ -607,6 +615,12 @@ def voltvar_summary(site_day: pd.DataFrame, by_cohort: bool = True) -> pd.DataFr
         assessable = int(group.total_count.sum())
         all_int = int(group.all_intervals_count.sum())
         exposed = int(group.exposed_count.sum())
+        # capability_assessable is scored over the whole cohort, not just the
+        # exposed (V > 240) population -- exposed and assessable are independent
+        # filters, not nested. "of exposed" needs the AND of the two, never
+        # `assessable` (all-cohort) divided by `exposed`, which is not a valid
+        # fraction (was observed to exceed 100%).
+        assessable_exposed = int(group.assessable_exposed_count.sum())
 
         def pct(n, denom):
             return round(100 * n / denom, 3) if denom else float("nan")
@@ -618,7 +632,8 @@ def voltvar_summary(site_day: pd.DataFrame, by_cohort: bool = True) -> pd.DataFr
             "exposed_intervals": exposed,
             "pct_exposed_of_all": pct(exposed, all_int),
             "capability_assessable_intervals": assessable,
-            "pct_assessable_of_exposed": pct(assessable, exposed),
+            "assessable_and_exposed_intervals": assessable_exposed,
+            "pct_assessable_of_exposed": pct(assessable_exposed, exposed),
         }
         # Counts AND percentages side by side. The percentage denominator is the
         # capability-assessable population, NOT all intervals -- below 0.2 S the
@@ -1566,8 +1581,13 @@ def conformance_funnel(vvar_site_day: pd.DataFrame, vwatt_site_day: pd.DataFrame
          "n_intervals": int(vvar_site_day.exposed_count.sum()),
          "n_sites": vvar_site_day.loc[vvar_site_day.exposed_count > 0, "site_alias"].nunique()},
         {"mode": "Volt-VAr", "stage": "3. capability-assessable (P >= 0.2 S)",
-         "n_intervals": int(vvar_site_day.total_count.sum()),
-         "n_sites": vvar_site_day.loc[vvar_site_day.total_count > 0, "site_alias"].nunique()},
+         # Must be assessable AND exposed -- capability_assessable alone is not
+         # nested inside "exposed" (a site can be assessable at low voltage too),
+         # so this stage has to be the AND of stages 2 and 3, not a raw
+         # total_count, or the funnel can rise instead of narrowing.
+         "n_intervals": int(vvar_site_day.assessable_exposed_count.sum()),
+         "n_sites": vvar_site_day.loc[vvar_site_day.assessable_exposed_count > 0,
+                                       "site_alias"].nunique()},
         {"mode": "Volt-Watt", "stage": "1. all cohort intervals",
          "n_intervals": int(vwatt_site_day.all_intervals_count.sum()),
          "n_sites": vwatt_site_day.site_alias.nunique()},
