@@ -17,15 +17,17 @@ def run_conformance(
     *,
     methods=PHASE_B_METHODS,
     primary_method=PRIMARY_PHASE_B_METHOD,
+    include_by_method_outputs=False,
     generate_site_plots=False,
     plot_no_eligible_timestamp_days=False,
     site_plot_dir=None,
 ):
-    """Run Phase A once and Phase B for every method across one dataset.
+    """Run Phase A once and Phase B across one dataset.
 
     ``candidate_site_ids`` contains the sites represented in the cleaned data.
     ``prepare_site`` is called with one site ID at a time and must return either
-    its prepared day data or a skip reason.
+    its prepared day data or a skip reason. By default only ``primary_method``
+    is run; set ``include_by_method_outputs`` to run and retain every method.
     """
     threshold_rows = []
     threshold_rows_by_method = []
@@ -42,6 +44,7 @@ def run_conformance(
         "no_pv_site_net": [],
         "no_day_data": [],
         "no_eligible_days": [],
+        "missing_rated_capacity": [],
     }
 
     for index, site_number in enumerate(candidate_site_ids, start=1):
@@ -61,7 +64,8 @@ def run_conformance(
             bracket_rows.append(phase_a["brackets"])
 
         primary_phase_b = None
-        for method_key in methods:
+        methods_to_run = methods if include_by_method_outputs else (primary_method,)
+        for method_key in methods_to_run:
             method_phase_b = run_phase_b_for_site(
                 site_number,
                 day_behaviours,
@@ -70,22 +74,23 @@ def run_conformance(
                 confidence_info=phase_a["confidence_info"],
                 phase_b_method=method_key,
             )
-            threshold_rows_by_method.append(
-                method_phase_b["threshold_row"].with_columns(
-                    pl.lit(method_key).alias("method_key")
-                )
-            )
-            phase_b_summary_rows_by_method.append(
-                method_phase_b["summary_row"].with_columns(
-                    pl.lit(method_key).alias("method_key")
-                )
-            )
-            if not method_phase_b["detail"].is_empty():
-                phase_b_detail_rows_by_method.append(
-                    method_phase_b["detail"].with_columns(
+            if include_by_method_outputs:
+                threshold_rows_by_method.append(
+                    method_phase_b["threshold_row"].with_columns(
                         pl.lit(method_key).alias("method_key")
                     )
                 )
+                phase_b_summary_rows_by_method.append(
+                    method_phase_b["summary_row"].with_columns(
+                        pl.lit(method_key).alias("method_key")
+                    )
+                )
+                if not method_phase_b["detail"].is_empty():
+                    phase_b_detail_rows_by_method.append(
+                        method_phase_b["detail"].with_columns(
+                            pl.lit(method_key).alias("method_key")
+                        )
+                    )
             if method_key == primary_method:
                 primary_phase_b = method_phase_b
 

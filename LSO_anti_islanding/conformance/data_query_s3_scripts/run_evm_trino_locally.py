@@ -33,8 +33,7 @@ from core.site_day_preparation import (
     map_circuit_data_to_site,
     trim_site_day_analysis_window,
 )
-from core.workflow import rated_capacity_of_pv
-from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_DEFINITION
+from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_CONFORMANCE_CONFIG
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
 from trino_connection_local_to_s3 import local_trino_engine, read_query_via_parquet
 
@@ -254,7 +253,7 @@ with local_trino_engine(
     total_sites = eligible_sites.height
     print(f"Eligible sites to process: {total_sites}", flush=True)
 
-    conformance_output_dir = SOLAR_ANALYTICS_DEFINITION.output_dir
+    conformance_output_dir = SOLAR_ANALYTICS_CONFORMANCE_CONFIG.output_dir
     conformance_output_dir.mkdir(parents=True, exist_ok=True)
     conformance_output_path = (
         conformance_output_dir / "solA_conformance_trino_summary.csv"
@@ -337,7 +336,11 @@ with local_trino_engine(
             day_behaviours = []
             # Reuse the Solar Analytics day provider used by prepare_site; it derives
             # the configured extraction window for every local date in this site.
-            for day, start_day, end_day in SOLAR_ANALYTICS_DEFINITION.day_provider(
+            for (
+                day,
+                start_day,
+                end_day,
+            ) in SOLAR_ANALYTICS_CONFORMANCE_CONFIG.day_provider(
                 site_timeseries_data
             ): # day is the day, start_day, end_day: are start/end time of day for data extraction
 
@@ -373,8 +376,12 @@ with local_trino_engine(
 
                 # Reuse the Solar Analytics eligibility policy used by prepare_site.
                 # does not retain the eligibility reason/statistics for excluded days.
-                eligibility = SOLAR_ANALYTICS_DEFINITION.eligibility_function(
-                    analysis_day_long, analysis_day_df,)
+                eligibility = (
+                    SOLAR_ANALYTICS_CONFORMANCE_CONFIG.eligibility_function(
+                        analysis_day_long,
+                        analysis_day_df,
+                    )
+                )
 
                 if not eligibility["eligible"]:
                     continue
@@ -394,9 +401,8 @@ with local_trino_engine(
             if not day_behaviours:
                 continue
 
-            # Reuse the shared rated-capacity policy with the same site metadata and
-            # eligible-day behaviours supplied by prepare_site.
-            p_rated = rated_capacity_of_pv(
+            # Use the SolA-specific rated-capacity policy configured by its adapter.
+            p_rated = SOLAR_ANALYTICS_CONFORMANCE_CONFIG.capacity_estimator(
                 site_data,
                 site["site_id"],
                 day_behaviours=day_behaviours,

@@ -47,5 +47,5 @@ GENERATE_SITE_PLOTS_DEFAULT = True
 PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS = False
 
 # Optionally generate comparison plots after the by-method CSVs are written.
-GENERATE_METHOD_COMPARISON_PLOTS = True
-METHOD_COMPARISON_METHODS = ("tier_based", "blended")
+GENERATE_METHOD_COMPARISON_PLOTS = False
+METHOD_COMPARISON_METHODS = ("tier_based", "default")

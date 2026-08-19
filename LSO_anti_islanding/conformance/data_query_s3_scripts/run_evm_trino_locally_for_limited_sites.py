@@ -27,7 +27,7 @@ from core.data_cleaning import (
 from core.pipeline import run_conformance
 from core.workflow import build_workflow_inputs, prepare_site
 from reporting.plotting import plot_site_threshold_distribution
-from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_DEFINITION
+from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_CONFORMANCE_CONFIG
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
 from trino_connection_local_to_s3 import local_trino_engine, read_query_via_parquet
 
@@ -61,7 +61,9 @@ CONFORMANCE_SUMMARY_SCHEMA = {
     "threshold_confidence_tier": pl.Utf8,
 }
 
-LIMITED_OUTPUT_DIR = SOLAR_ANALYTICS_DEFINITION.output_dir / "trino_limited"
+LIMITED_OUTPUT_DIR = (
+    SOLAR_ANALYTICS_CONFORMANCE_CONFIG.output_dir / "trino_limited"
+)
 LIMITED_SITE_PLOT_DIR = LIMITED_OUTPUT_DIR / "overall_site_plots"
 LIMITED_THRESHOLD_PLOT_DIR = LIMITED_OUTPUT_DIR / "threshold_distribution_plots"
 LIMITED_SUMMARY_PATH = (
@@ -419,7 +421,7 @@ with local_trino_engine(
             prepare_trino_site = partial(
                 prepare_site,
                 inputs=site_workflow_inputs,
-                definition=SOLAR_ANALYTICS_DEFINITION,
+                workflow_config=SOLAR_ANALYTICS_CONFORMANCE_CONFIG,
             )
             site_result = run_conformance(
                 candidate_site_ids=site_workflow_inputs["candidate_site_ids"],

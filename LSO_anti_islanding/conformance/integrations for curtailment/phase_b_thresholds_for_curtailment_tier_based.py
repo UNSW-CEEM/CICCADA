@@ -1,18 +1,16 @@
-"""Build tier-based curtailment extracts from the saved Phase B thresholds.
+"""Build tier-based curtailment extracts from the saved conformance summary.
 
 This script produces two reporting tables:
 
 - a timestamp-level flag table showing when a site sits above either its final
-  LOS threshold or its fixed OV1 working threshold (used for high reso curtaliment)
+  LOS or OV1 threshold (used for high reso curtaliment)
 - a 5-minute bucket summary of the same signals for downstream curtailment work
   (used for 5m reso curtialment)
 
 Inputs come from three places:
 
-- ``phase_b_site_summary_tier_based.csv`` for the assessed site list and the final
-  ``los_threshold_used`` chosen by the Phase B LOS override ladder
-- ``site_thresholds_tier_based.csv`` for ``ov1_work_site`` because the Phase B summary does
-  not repeat the fixed OV1 threshold value
+- ``site_conformance_summary.csv`` for the assessed tier-based site list and
+  final LOS/OV1 thresholds
 - the cleaned metrology parquet plus ``circuit_details.csv`` so site-level
   power and voltage can be rebuilt from the underlying circuit data
 
@@ -29,9 +27,7 @@ Important difference from ``phase_b_timestamp_detail_tier_based.csv``:
 from __future__ import annotations
 
 import sys
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import polars as pl
 
@@ -39,7 +35,7 @@ CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from config import SITE_DAY_END, SITE_DAY_EXTRACTION_START
+from config import PRIMARY_PHASE_B_METHOD
 from core.check_pv_behaviour import CheckPVBehaviour
 from core.site_day_preparation import (
     extract_site_day,
@@ -49,7 +45,9 @@ from core.site_day_preparation import (
 from core.site_day_preparation import (
     map_circuit_data_to_site as mapCircuitDataToSite,
 )
+from reporting.outputs import SITE_CONFORMANCE_SUMMARY_NAME
 from sapn2022_workflow.adapter import (
+    SAPN2022_CONFORMANCE_CONFIG,
     load_cleaned_site_data as loadCleanedSiteData,
 )
 from sapn2022_workflow.sapn_paths import (
@@ -57,26 +55,26 @@ from sapn2022_workflow.sapn_paths import (
     CLEANED_SITE_DATA_PATH,
 )
 
-PHASE_B_SUMMARY_PATH = Path(
-    "updated results/site_compliance/phase_b_site_summary_tier_based.csv"
-)
-SITE_THRESHOLDS_PATH = Path(
-    "updated results/site_compliance/site_thresholds_tier_based.csv"
+SITE_CONFORMANCE_SUMMARY_PATH = (
+    SAPN2022_CONFORMANCE_CONFIG.output_dir / SITE_CONFORMANCE_SUMMARY_NAME
 )
 CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH  # this is the cleaned circuit data parquet
-OUTPUT_DIR = Path("updated results/phase b info for curtailment/tier based")
+OUTPUT_DIR = (
+    CONFORMANCE_DIR
+    / "updated results"
+    / "phase b info for curtailment"
+    / "tier based"
+)
 TIMESTAMP_OUTPUT_PATH = OUTPUT_DIR / "tier_based_timestamp_flags.csv"
 BUCKET_OUTPUT_PATH = OUTPUT_DIR / "tier_based_5min_buckets.csv"
-DAYS_TO_CHECK = (13, 14, 15, 16, 17, 19)
-LOCAL_TZ = ZoneInfo("Australia/Adelaide")
-TAU = 0.3
 
 
 def _require_file(path: Path) -> None:
     """Fail early when a required input file is missing."""
     if not path.exists():
         raise FileNotFoundError(
-            f"Missing required input: {path}. Run main.py first to generate the Phase B summary and thresholds."
+            f"Missing required input: {path}. Run conformance first to generate "
+            "the site summary."
         )
 
 
@@ -120,41 +118,47 @@ def _empty_bucket_frame() -> pl.DataFrame:
 
 def _load_assessed_sites() -> pl.DataFrame:
     """Load assessed sites plus the thresholds needed to rebuild curtailment flags."""
-    _require_file(PHASE_B_SUMMARY_PATH)
-    _require_file(SITE_THRESHOLDS_PATH)
+    _require_file(SITE_CONFORMANCE_SUMMARY_PATH)
 
-    summary_df = pl.read_csv(PHASE_B_SUMMARY_PATH, null_values=[""])
-    thresholds_df = pl.read_csv(SITE_THRESHOLDS_PATH, null_values=[""])
-
-    assessed_summary = summary_df.filter(pl.col("overall_pass").is_not_null())
-    assessed_sites = (
-        assessed_summary.select(["site_id", "los_threshold_used"])
-        .join(
-            # We need both files: the Phase B summary tells us which sites were
-            # assessed and which LOS threshold finally passed, while the site
-            # thresholds table holds the fixed OV1 working threshold.
-            thresholds_df.select(["site_id", "ov1_work_site"]),
-            on="site_id",
-            how="left",
+    summary_df = pl.read_csv(SITE_CONFORMANCE_SUMMARY_PATH, null_values=[""])
+    required_columns = {
+        "site_id",
+        "method_key",
+        "overall_pass",
+        "los_threshold_used",
+        "ov1_threshold_used",
+    }
+    missing_columns = required_columns.difference(summary_df.columns)
+    if missing_columns:
+        raise ValueError(
+            "Conformance site summary is missing required columns: "
+            f"{sorted(missing_columns)}"
         )
+
+    assessed_sites = (
+        summary_df.filter(
+            (pl.col("method_key") == PRIMARY_PHASE_B_METHOD)
+            & pl.col("overall_pass").is_not_null()
+        )
+        .select(["site_id", "los_threshold_used", "ov1_threshold_used"])
         .with_columns(
             [
                 pl.col("site_id").cast(pl.Int64),
                 pl.col("los_threshold_used").cast(pl.Float64),
-                pl.col("ov1_work_site").cast(pl.Float64),
+                pl.col("ov1_threshold_used").cast(pl.Float64),
             ]
         )
         .sort("site_id")
     )
 
-    if assessed_sites.height != assessed_summary.height:
+    if assessed_sites["site_id"].n_unique() != assessed_sites.height:
         raise ValueError(
-            "Tier-based assessed site rows do not line up with threshold rows. "
-            "Re-run main.py so the summary and thresholds match."
+            "Conformance site summary contains duplicate assessed tier-based sites."
         )
 
     missing_thresholds = assessed_sites.filter(
-        pl.col("los_threshold_used").is_null() | pl.col("ov1_work_site").is_null()
+        pl.col("los_threshold_used").is_null()
+        | pl.col("ov1_threshold_used").is_null()
     )
     if not missing_thresholds.is_empty():
         bad_sites = missing_thresholds["site_id"].to_list()
@@ -178,29 +182,6 @@ def _prepare_inputs() -> tuple[pl.DataFrame, pl.LazyFrame]:
     all_data = loadCleanedSiteData(CLEANED_DATA_PATH)
 
     return circuit_details, all_data
-
-
-def _window_for_day(day: int) -> tuple[datetime, datetime]:
-    """Return the local 05:50-18:00 extraction window for one November day."""
-    start_day = datetime(
-        2022,
-        11,
-        day,
-        SITE_DAY_EXTRACTION_START.hour,
-        SITE_DAY_EXTRACTION_START.minute,
-        SITE_DAY_EXTRACTION_START.second,
-        tzinfo=LOCAL_TZ,
-    )
-    end_day = datetime(
-        2022,
-        11,
-        day,
-        SITE_DAY_END.hour,
-        SITE_DAY_END.minute,
-        SITE_DAY_END.second,
-        tzinfo=LOCAL_TZ,
-    )
-    return start_day, end_day
 
 
 def _signal_columns(site_day_df: pl.DataFrame) -> tuple[list[str], list[str]]:
@@ -279,7 +260,7 @@ def _add_responsibility_flags(
     site_day_df: pl.DataFrame,
     *,
     los_threshold_used: float,
-    ov1_work_threshold: float,
+    ov1_threshold_used: float,
 ) -> pl.DataFrame:
     """Flag timestamps that sit above the site's final LOS or OV1 thresholds."""
     with_keep_flags = site_day_df.with_columns(
@@ -290,7 +271,7 @@ def _add_responsibility_flags(
             (pl.col("_has_power") & pl.col("v10m_avg").is_not_null()).alias(
                 "_keep_row"
             ),
-            (pl.col("vinst_max") >= (ov1_work_threshold - TAU))
+            (pl.col("vinst_max") >= ov1_threshold_used)
             .fill_null(False)
             .alias("_ov1_kicks_in"),
         ]
@@ -314,16 +295,24 @@ def _add_responsibility_flags(
 
 def _select_timestamp_output(site_day_df: pl.DataFrame) -> pl.DataFrame:
     """Select the timestamp-level columns written to the curtailment CSV."""
+    timestamp_dtype = site_day_df.schema["local_tstamp"]
+    if isinstance(timestamp_dtype, pl.Datetime) and timestamp_dtype.time_zone:
+        local_timestamp = pl.col("local_tstamp").dt.convert_time_zone(
+            "Australia/Adelaide"
+        )
+    else:
+        local_timestamp = pl.col("local_tstamp").dt.replace_time_zone(
+            "Australia/Adelaide"
+        )
+
     return (
         site_day_df.filter(pl.col("_keep_row"))
         .select(
             [
                 pl.col("site_id").cast(pl.Int64),
-                pl.col("local_tstamp").cast(
-                    pl.Datetime(time_zone="Australia/Adelaide")
-                ),
+                local_timestamp.alias("local_tstamp"),
                 pl.col("utc_tstamp").cast(pl.Utf8),
-                pl.col("local_tstamp").dt.day().cast(pl.Int64).alias("event_day"),
+                local_timestamp.dt.day().cast(pl.Int64).alias("event_day"),
                 pl.col("site_power_kw").cast(pl.Float64),
                 pl.col("v10m_avg").cast(pl.Float64),
                 pl.col("vinst_max").cast(pl.Float64),
@@ -340,7 +329,7 @@ def _build_day_flag_frame(
     wide: pl.DataFrame,
     *,
     los_threshold_used: float,
-    ov1_work_threshold: float,
+    ov1_threshold_used: float,
 ) -> pl.DataFrame:
     """Rebuild the timestamp-level tier-based curtailment flags for one site-day."""
     behaviour = CheckPVBehaviour(wide, volCol="voltage_valid")
@@ -364,7 +353,7 @@ def _build_day_flag_frame(
     site_day_df = _add_responsibility_flags(
         site_day_df,
         los_threshold_used=los_threshold_used,
-        ov1_work_threshold=ov1_work_threshold,
+        ov1_threshold_used=ov1_threshold_used,
     )
     return _select_timestamp_output(site_day_df)
 
@@ -434,13 +423,13 @@ def main() -> None:
     for idx, site_row in enumerate(assessed_sites.iter_rows(named=True), start=1):
         site_id = int(site_row["site_id"])
         los_threshold_used = float(site_row["los_threshold_used"])
-        # ``ov1_work_site`` is the fixed site-level OV1 threshold used by Phase B.
-        ov1_work_threshold = float(site_row["ov1_work_site"])
+        ov1_threshold_used = float(site_row["ov1_threshold_used"])
         site_data = select_site_pv_data(all_data, circuit_details, site_id)
 
         site_day_frames: list[pl.DataFrame] = []
-        for day in DAYS_TO_CHECK:
-            start_day, end_day = _window_for_day(day)
+        for _, start_day, end_day in SAPN2022_CONFORMANCE_CONFIG.day_provider(
+            site_data
+        ):
             site_day_long = extract_site_day(
                 site_data,
                 start_day,
@@ -456,7 +445,7 @@ def main() -> None:
             day_frame = _build_day_flag_frame(
                 wide,
                 los_threshold_used=los_threshold_used,
-                ov1_work_threshold=ov1_work_threshold,
+                ov1_threshold_used=ov1_threshold_used,
             )
             if not day_frame.is_empty():
                 site_day_frames.append(day_frame)

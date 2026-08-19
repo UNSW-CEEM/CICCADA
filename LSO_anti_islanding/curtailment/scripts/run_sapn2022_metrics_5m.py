@@ -6,9 +6,9 @@ from pathlib import Path
 
 import polars as pl
 import sapn2022_metrics_5m_data_checks as data_checks
-from path_config import require_local_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFORMANCE_ROOT = PROJECT_ROOT.parent / "conformance"
 ADELAIDE_TZ = "Australia/Adelaide"
 BUCKET_WINDOW_START = time(6, 0, 0)
 BUCKET_WINDOW_END = time(18, 0, 0)
@@ -16,14 +16,8 @@ BUCKET_WINDOW_END = time(18, 0, 0)
 DEFAULT_ALL_UNCURTAILED = (
     PROJECT_ROOT / "outputs" / "prediction" / "all_uncurtailedPV_5m.parquet"
 )
-# The external tier-bucket export lives outside this repo, so the local SAPN
-# root is defined in the ignored `local_paths.py` file instead of here.
-SAPN_ROOT = require_local_path(
-    "SAPN_ROOT",
-    "root folder containing `updated results/phase b info for curtailment/tier based/`.",
-)
 DEFAULT_ELIGIBLE_BUCKETS5M = (
-    SAPN_ROOT
+    CONFORMANCE_ROOT
     / "updated results"
     / "phase b info for curtailment"
     / "tier based"
