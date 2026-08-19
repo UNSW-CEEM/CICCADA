@@ -50,6 +50,9 @@ __all__ = [
     "build_uncurtailedpv",
     "mape_quality_gate",
     "counterfactual_coverage",
+    "postcode_area_per_site",
+    "counterfactual_coverage_fine",
+    "POSTCODE_AREA_BIN_EDGES",
     "explain_missing_counterfactual",
     "check_ghi_alignment",
     "CLEAR_SKY_MIN_MAX_GHI",
@@ -669,3 +672,77 @@ def counterfactual_coverage(con: duckdb.DuckDBPyConnection, config=None) -> pd.D
         GROUP BY 1 ORDER BY 1
         """
     ).df()
+
+
+def postcode_area_per_site(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
+    """
+    One row per site: its postcode area (km2) and whether it got a counterfactual.
+
+    This is the per-site frame ``counterfactual_coverage`` and
+    ``counterfactual_coverage_fine`` both aggregate from -- exposed directly so
+    a notebook can plot the underlying distribution (e.g. a histogram of
+    ``postcode_area_km2``) rather than only a binned summary.
+    """
+    _require(con, "se_uncurtailedpv", "Run build_uncurtailedpv() first.")
+    return con.execute(
+        """
+        SELECT st.site_alias,
+               any_value(st.postcode_area_km2) AS postcode_area_km2,
+               count(u.ts_utc)                 AS n_counterfactual,
+               count(u.ts_utc) > 0              AS has_counterfactual
+        FROM se_site st
+        LEFT JOIN se_uncurtailedpv u USING (site_alias)
+        GROUP BY st.site_alias
+        """
+    ).df()
+
+
+#: Finer postcode-area bins than ``counterfactual_coverage``'s four buckets.
+#: A single fair-weather cumulus cloud has a base on the order of ~1 km2, so a
+#: postcode two orders of magnitude larger can still contain wildly
+#: heterogeneous cloud cover across its BOM nodes. The averaging bias this
+#: module's docstring warns about ("expect the MAPE gate to reject large-area
+#: postcodes preferentially") is largely a story about postcodes near or below
+#: single-cloud scale -- and the original "< 25 km2" bucket does not
+#: distinguish a 2 km2 postcode from one 12x larger. These edges resolve that.
+POSTCODE_AREA_BIN_EDGES = (1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000)
+
+
+def counterfactual_coverage_fine(
+    con: duckdb.DuckDBPyConnection, config=None,
+    bin_edges: tuple = POSTCODE_AREA_BIN_EDGES,
+) -> pd.DataFrame:
+    """
+    ``counterfactual_coverage``, with postcode-area bins fine enough to
+    separate postcodes near single-cloud scale (~1 km2) from postcodes an
+    order of magnitude larger that the original "< 25 km2" bucket bundled
+    them with.
+
+    Reads the same per-site frame ``counterfactual_coverage`` does
+    (``postcode_area_per_site``); this differs only in the bin edges, passed
+    in km2 and sorted ascending. The bottom and top bins are open-ended
+    (``< first edge``, ``>= last edge``).
+    """
+    per_site = postcode_area_per_site(con)
+    edges = sorted(bin_edges)
+    labels = (
+        [f"< {edges[0]:g}"]
+        + [f"{lo:g}-{hi:g}" for lo, hi in zip(edges[:-1], edges[1:])]
+        + [f">= {edges[-1]:g}"]
+    )
+    bins = [-float("inf"), *edges, float("inf")]
+    per_site = per_site.dropna(subset=["postcode_area_km2"]).copy()
+    per_site["postcode_size"] = pd.cut(
+        per_site.postcode_area_km2, bins=bins, labels=labels, right=False,
+    )
+    out = (
+        per_site.groupby("postcode_size", observed=True)
+        .agg(n_sites=("site_alias", "count"),
+             n_with_counterfactual=("has_counterfactual", "sum"),
+             median_area_km2=("postcode_area_km2", "median"))
+        .reset_index()
+    )
+    out["pct_covered"] = (100 * out.n_with_counterfactual / out.n_sites).round(2)
+    out["median_area_km2"] = out.median_area_km2.round(2)
+    return out[["postcode_size", "median_area_km2", "n_sites",
+               "n_with_counterfactual", "pct_covered"]]
