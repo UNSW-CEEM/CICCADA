@@ -1,194 +1,12 @@
 """Site-level Phase B profile selection and compliance aggregation."""
 
-from typing import Any
-
 import polars as pl
 from core.threshold_methods import (
-    _blended_threshold_profile,
-    _build_threshold_profile,
     _default_threshold_profile,
     _profile_with_selection_metadata,
     _raw_threshold_profile,
     _thresholds_row_from_threshold_dict,
 )
-
-
-def _phase_b_selection_score(summary_row: dict[str, Any]):
-    overall_pass = summary_row["overall_pass"]
-    overall_rank = 2 if overall_pass is True else 1 if overall_pass is None else 0
-    assessed_pcts = [
-        float(v)
-        for v in [summary_row["los_compliance_pct"], summary_row["ov1_compliance_pct"]]
-        if v is not None
-    ]
-    min_pct = min(assessed_pcts) if assessed_pcts else 0.0
-    mean_pct = sum(assessed_pcts) / len(assessed_pcts) if assessed_pcts else 0.0
-    return overall_rank, min_pct, mean_pct
-
-
-def _evaluate_phase_b_profile_for_selection(
-    site_id,
-    day_behaviours,
-    PRated,
-    profile,
-    *,
-    tau=0.3,
-):
-    phase_b = _run_phase_b_with_thresholds(
-        site_id,
-        day_behaviours,
-        PRated,
-        los_threshold=profile["los_anchor_site"],
-        los_threshold_p25=profile["los_anchor_p25_site"],
-        los_threshold_p10=profile["los_anchor_p10_site"],
-        los_threshold_min=profile["los_anchor_min_site"],
-        ov1_work_threshold=profile["ov1_work_site"],
-        tau=tau,
-    )
-    summary = phase_b["summary_row"].to_dicts()[0]
-    score = _phase_b_selection_score(summary)
-    return phase_b, summary, score
-
-
-def _select_confidence_threshold_profile_for_phase_b(
-    site_id,
-    day_behaviours,
-    PRated,
-    raw_thresholds,
-    confidence_info,
-    *,
-    high_profile_name="learned",
-    tau=0.3,
-    ov1_floor_offset=0.5,
-):
-    default_profile = _default_threshold_profile(
-        tau=tau,
-        ov1_floor_offset=ov1_floor_offset,
-    )
-    learned_profile = _raw_threshold_profile(
-        raw_thresholds,
-        tau=tau,
-        ov1_floor_offset=ov1_floor_offset,
-    )
-    blended_profile = _blended_threshold_profile(
-        raw_thresholds,
-        tau=tau,
-        ov1_floor_offset=ov1_floor_offset,
-    )
-
-    tier = confidence_info["threshold_confidence_tier"]
-    if tier == "high":
-        high_profiles = {
-            "learned": learned_profile,
-            "blended": blended_profile,
-        }
-        return _profile_with_selection_metadata(
-            high_profiles[high_profile_name],
-            f"high_{high_profile_name}",
-        )
-
-    if tier == "low":
-        return _profile_with_selection_metadata(default_profile, "low_default")
-
-    candidates = [
-        ("default", default_profile),
-        ("blended", blended_profile),
-        ("learned", learned_profile),
-    ]
-    best_name = None
-    best_profile = None
-    best_score = None
-
-    for name, profile in candidates:
-        _, _, score = _evaluate_phase_b_profile_for_selection(
-            site_id,
-            day_behaviours,
-            PRated,
-            profile,
-            tau=tau,
-        )
-        if best_score is None or score > best_score:
-            best_name = name
-            best_profile = profile
-            best_score = score
-
-    return _profile_with_selection_metadata(
-        best_profile,
-        f"medium_{best_name}",
-        best_score,
-    )
-
-
-def _select_legacy_sweep_threshold_profile_for_phase_b(
-    site_id,
-    day_behaviours,
-    PRated,
-    *,
-    tau=0.3,
-    ov1_floor_offset=0.5,
-):
-    default_profile = _default_threshold_profile(
-        tau=tau,
-        ov1_floor_offset=ov1_floor_offset,
-    )
-    sweep_thresholds = [
-        257.0,
-        256.0,
-        255.7,
-        254.7,
-        253.7,
-        253.4,
-        251.8,
-        251.1,
-        259.0,
-        260.0,
-        260.3,
-    ]
-
-    _, summary, best_score = _evaluate_phase_b_profile_for_selection(
-        site_id,
-        day_behaviours,
-        PRated,
-        default_profile,
-        tau=tau,
-    )
-    if summary["overall_pass"] is True:
-        return _profile_with_selection_metadata(
-            default_profile, "sweep_default", best_score
-        )
-
-    best_profile = default_profile
-    best_basis = "sweep_default"
-    for los_threshold in sweep_thresholds:
-        candidate_profile = _build_threshold_profile(
-            los_anchor=los_threshold,
-            los_anchor_p25=los_threshold,
-            los_anchor_p10=los_threshold,
-            los_anchor_min=los_threshold,
-            ov1_anchor=265.0,
-            ov1_basis="default",
-            tau=tau,
-            ov1_floor_offset=ov1_floor_offset,
-        )
-        _, summary, score = _evaluate_phase_b_profile_for_selection(
-            site_id,
-            day_behaviours,
-            PRated,
-            candidate_profile,
-            tau=tau,
-        )
-        if summary["overall_pass"] is True:
-            return _profile_with_selection_metadata(
-                candidate_profile,
-                f"sweep_{str(los_threshold).replace('.', 'p')}V",
-                score,
-            )
-        if score > best_score:
-            best_score = score
-            best_profile = candidate_profile
-            best_basis = f"sweep_{str(los_threshold).replace('.', 'p')}V"
-
-    return _profile_with_selection_metadata(best_profile, best_basis, best_score)
 
 
 def _select_phase_b_threshold_profile_for_method(
@@ -207,44 +25,17 @@ def _select_phase_b_threshold_profile_for_method(
             _default_threshold_profile(tau=tau, ov1_floor_offset=ov1_floor_offset),
             "default",
         )
-    if phase_b_method == "original":
+    if phase_b_method == "tier_based":
         return _profile_with_selection_metadata(
             _raw_threshold_profile(
                 raw_thresholds, tau=tau, ov1_floor_offset=ov1_floor_offset
             ),
-            "original",
+            "tier_based",
         )
-    if phase_b_method == "tier_based":
-        return _select_confidence_threshold_profile_for_phase_b(
-            site_id,
-            day_behaviours,
-            PRated,
-            raw_thresholds,
-            confidence_info,
-            high_profile_name="learned",
-            tau=tau,
-            ov1_floor_offset=ov1_floor_offset,
-        )
-    if phase_b_method == "old_sweep":
-        return _select_legacy_sweep_threshold_profile_for_phase_b(
-            site_id,
-            day_behaviours,
-            PRated,
-            tau=tau,
-            ov1_floor_offset=ov1_floor_offset,
-        )
-    if phase_b_method == "blended":
-        return _select_confidence_threshold_profile_for_phase_b(
-            site_id,
-            day_behaviours,
-            PRated,
-            raw_thresholds,
-            confidence_info,
-            high_profile_name="blended",
-            tau=tau,
-            ov1_floor_offset=ov1_floor_offset,
-        )
-    raise KeyError(f"Unknown Phase B method: {phase_b_method}")
+    raise KeyError(
+        f"Unknown active Phase B method: {phase_b_method}. "
+        "Supported methods are 'tier_based' and 'default'."
+    )
 
 
 def _run_phase_b_with_thresholds(
@@ -316,73 +107,9 @@ def _run_phase_b_with_thresholds(
         }
 
     median_result = aggregate_for_los_threshold(los_threshold)
-    p25_result = None
-    p10_result = None
-    min_result = None
-    if (
-        median_result["los_pass"] is False
-        and los_threshold_p25 is not None
-        and los_threshold_p25 != los_threshold
-    ):
-        p25_result = aggregate_for_los_threshold(los_threshold_p25)
-
-    if (
-        median_result["los_pass"] is False
-        and (p25_result is None or p25_result["los_pass"] is False)
-        and los_threshold_p10 is not None
-        and los_threshold_p10 not in [los_threshold, los_threshold_p25]
-    ):
-        p10_result = aggregate_for_los_threshold(los_threshold_p10)
-
-    if (
-        median_result["los_pass"] is False
-        and (p25_result is None or p25_result["los_pass"] is False)
-        and (p10_result is None or p10_result["los_pass"] is False)
-        and los_threshold_min is not None
-        and los_threshold_min
-        not in [los_threshold, los_threshold_p25, los_threshold_p10]
-    ):
-        min_result = aggregate_for_los_threshold(los_threshold_min)
-
-    use_p25_override = (
-        p25_result is not None
-        and median_result["los_pass"] is False
-        and p25_result["los_pass"] is True
-    )
-    use_p10_override = (
-        p10_result is not None
-        and median_result["los_pass"] is False
-        and (p25_result is None or p25_result["los_pass"] is not True)
-        and p10_result["los_pass"] is True
-    )
-    use_min_override = (
-        min_result is not None
-        and median_result["los_pass"] is False
-        and (p25_result is None or p25_result["los_pass"] is not True)
-        and (p10_result is None or p10_result["los_pass"] is not True)
-        and min_result["los_pass"] is True
-    )
-
-    if use_min_override:
-        chosen_result = min_result
-    elif use_p10_override:
-        chosen_result = p10_result
-    elif use_p25_override:
-        chosen_result = p25_result
-    else:
-        chosen_result = median_result
-    threshold_sensitive = use_p25_override or use_p10_override or use_min_override
-    pass_basis = (
-        "unassessed"
-        if chosen_result["overall_pass"] is None
-        else "min_override"
-        if use_min_override
-        else "p10_override"
-        if use_p10_override
-        else "p25_override"
-        if use_p25_override
-        else "median"
-    )
+    chosen_result = median_result
+    threshold_sensitive = False
+    pass_basis = "unassessed" if chosen_result["overall_pass"] is None else "median"
 
     summary_row = pl.DataFrame(
         [
@@ -458,6 +185,45 @@ def run_phase_b_for_site(
         selected_thresholds,
         raw_thresholds,
         confidence_info,
+    )
+    use_evidence_basis = phase_b_method == "tier_based"
+    threshold_row = threshold_row.with_columns(
+        [
+            pl.lit(
+                raw_thresholds["los_threshold_basis"]
+                if use_evidence_basis
+                else "default"
+            ).alias("los_threshold_basis"),
+            pl.lit(
+                raw_thresholds["los_winning_window_count"],
+                dtype=pl.Int64,
+            ).alias("los_winning_window_count"),
+            pl.lit(
+                raw_thresholds["los_winning_window_median_v"],
+                dtype=pl.Float64,
+            ).alias("los_winning_window_median_v"),
+            pl.lit(
+                raw_thresholds["los_overall_range_v"],
+                dtype=pl.Float64,
+            ).alias("los_overall_range_v"),
+            pl.lit(
+                raw_thresholds["ov1_threshold_basis"]
+                if use_evidence_basis
+                else "default"
+            ).alias("ov1_threshold_basis"),
+            pl.lit(
+                raw_thresholds["ov1_winning_window_count"],
+                dtype=pl.Int64,
+            ).alias("ov1_winning_window_count"),
+            pl.lit(
+                raw_thresholds["ov1_winning_window_median_v"],
+                dtype=pl.Float64,
+            ).alias("ov1_winning_window_median_v"),
+            pl.lit(
+                raw_thresholds["ov1_overall_range_v"],
+                dtype=pl.Float64,
+            ).alias("ov1_overall_range_v"),
+        ]
     )
     phase_b = _run_phase_b_with_thresholds(
         site_id,

@@ -10,9 +10,12 @@ from config import (
     SAPN2022_DAY_END,
     SAPN2022_DAY_START,
     SAPN2022_EVENT_DAYS,
+    SAPN2022_REQUIRED_SITE_METADATA_ROWS,
 )
-from core.workflow import DatasetDefinition, build_workflow_inputs
+from core.workflow import DatasetConformanceConfig, build_workflow_inputs
+from sapn2022_workflow.rated_capacity import generate_rated_capacity
 from sapn2022_workflow.sapn_paths import (
+    CAPACITY_DERIVED_PATH,
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
     CONFORMANCE_OUTPUT_DIR,
@@ -42,8 +45,18 @@ def _capacity_w_to_kw(capacity_w):
         return None
 
 
-def load_sapn2022_inputs():
-    site_details = pl.read_csv(SITE_DETAILS_PATH)
+def _load_sapn2022_site_details(site_details_path=SITE_DETAILS_PATH):
+    """Load SAPN sites having exactly one source metadata row."""
+    return (
+        pl.read_csv(site_details_path)
+        .with_columns(pl.len().over("site_id").alias("_site_metadata_rows"))
+        .filter(pl.col("_site_metadata_rows") == SAPN2022_REQUIRED_SITE_METADATA_ROWS)
+        .drop("_site_metadata_rows")
+    )
+
+
+def load_sapn2022_inputs(update_ac_capacity=False):
+    site_details = _load_sapn2022_site_details()
     site_details = site_details.with_columns(
         pl.Series(
             "capacity_kw",
@@ -53,7 +66,26 @@ def load_sapn2022_inputs():
     )
     circuit_details = pl.read_csv(CIRCUIT_DETAILS_PATH)
     all_data = load_cleaned_site_data()
-    return build_workflow_inputs(site_details, circuit_details, all_data)
+    inputs = build_workflow_inputs(site_details, circuit_details, all_data)
+
+    if update_ac_capacity or not CAPACITY_DERIVED_PATH.exists():
+        generate_rated_capacity(
+            site_details,
+            inputs,
+            SAPN2022_CONFORMANCE_CONFIG,
+            CAPACITY_DERIVED_PATH,
+        )
+
+    capacity_derived = pl.read_csv(CAPACITY_DERIVED_PATH).select(
+        "site_id",
+        "metadata_ac_capacity_kw",
+        "calculated_ac_capacity_kw",
+        "chosen_ac_capacity_kw",
+    )
+    inputs["site_details"] = site_details.join(
+        capacity_derived, on="site_id", how="left"
+    ).with_columns(pl.col("chosen_ac_capacity_kw").alias("capacity_kw"))
+    return inputs
 
 
 def _sapn2022_days(site_data):
@@ -96,11 +128,12 @@ def _summarize_sapn2022_day(site_day_long, prepared_day_df):
     )
 
 
-SAPN2022_DEFINITION = DatasetDefinition(
+SAPN2022_CONFORMANCE_CONFIG = DatasetConformanceConfig(
     name="sapn2022",
     load_inputs=load_sapn2022_inputs,
     day_provider=_sapn2022_days,
     eligibility_function=_summarize_sapn2022_day,
+    capacity_estimator=None,
     output_dir=CONFORMANCE_OUTPUT_DIR,
     coverage_threshold=SAPN2022_DAY_COVERAGE_THRESHOLD,
     exclusion_fields=(

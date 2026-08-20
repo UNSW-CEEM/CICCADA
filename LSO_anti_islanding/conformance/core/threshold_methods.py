@@ -3,12 +3,6 @@
 import polars as pl
 
 
-def _blend_threshold(default_value, learned_value, weight=0.5):
-    if learned_value is None:
-        return default_value
-    return float(default_value) + weight * (float(learned_value) - float(default_value))
-
-
 def _default_threshold_profile(*, tau=0.3, ov1_floor_offset=0.5):
     return _build_threshold_profile(
         los_anchor=258.0,
@@ -67,31 +61,6 @@ def _raw_threshold_profile(raw_thresholds, *, tau=0.3, ov1_floor_offset=0.5):
         los_anchor_min=raw_thresholds["los_anchor_min_site"],
         ov1_anchor=raw_thresholds["ov1_anchor_site"],
         ov1_basis=raw_thresholds["ov1_basis"],
-        tau=tau,
-        ov1_floor_offset=ov1_floor_offset,
-    )
-
-
-def _blended_threshold_profile(
-    raw_thresholds, *, tau=0.3, ov1_floor_offset=0.5, weight=0.5
-):
-    return _build_threshold_profile(
-        los_anchor=_blend_threshold(
-            258.0, raw_thresholds["los_anchor_site"], weight=weight
-        ),
-        los_anchor_p25=_blend_threshold(
-            258.0, raw_thresholds["los_anchor_p25_site"], weight=weight
-        ),
-        los_anchor_p10=_blend_threshold(
-            258.0, raw_thresholds["los_anchor_p10_site"], weight=weight
-        ),
-        los_anchor_min=_blend_threshold(
-            258.0, raw_thresholds["los_anchor_min_site"], weight=weight
-        ),
-        ov1_anchor=_blend_threshold(
-            265.0, raw_thresholds["ov1_anchor_site"], weight=weight
-        ),
-        ov1_basis="blended",
         tau=tau,
         ov1_floor_offset=ov1_floor_offset,
     )

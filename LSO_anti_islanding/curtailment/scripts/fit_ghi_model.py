@@ -61,7 +61,9 @@ def training_rows(structured_data):
     return (
         structured_data.filter(pl.col("dataset_role") == "train")
         .filter(pl.col("P_kw_norm_cs") > 0.2)
-        .filter(pl.col("GHI") > 50)
+        .filter(
+            pl.col("GHI") > 50
+        )  # confirm if this is meant to be clear sky day. It should be
         .filter(pl.col("P_kw_norm") > 0.05)
         .filter(pl.col("P_kw_norm") <= pl.col("P_kw_norm_cs"))
         .filter(pl.col("V") <= 253)

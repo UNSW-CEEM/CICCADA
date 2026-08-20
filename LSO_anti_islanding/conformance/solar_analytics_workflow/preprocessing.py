@@ -62,17 +62,20 @@ def build_cleaned_site_data(
     site_metadata_path=SITE_METADATA_PATH,
     cleaned_path=CLEANED_DATA_PATH,
     *,
+    circuit_column="circuit_id",  # Circuit ID column in the raw Parquet files.
+    timestamp_column="t_stamp",  # UTC timestamp column in the raw Parquet files.
     deduplicate=True,
     num_buckets=128,
 ):
-    """Build Solar Analytics metrology one circuit bucket at a time."""
+    """Build cleaned metrology one circuit bucket at a time"""
+
     data_dir = Path(data_dir)
     circuit_metadata_path = Path(circuit_metadata_path)
     site_metadata_path = Path(site_metadata_path)
     cleaned_path = Path(cleaned_path)
 
     if not data_dir.exists():
-        raise FileNotFoundError(f"Missing Solar Analytics folder at {data_dir}.")
+        raise FileNotFoundError(f"Missing data folder at {data_dir}.")
     if not circuit_metadata_path.exists():
         raise FileNotFoundError(f"Missing circuit metadata at {circuit_metadata_path}.")
     if not site_metadata_path.exists():
@@ -98,24 +101,21 @@ def build_cleaned_site_data(
         .lazy()
     )
 
-    raw_data = (
-        pl.scan_parquet([str(path) for path in raw_parquet_paths])
-        .rename(
-            {
-                "circuit_id": "c_id",
-                "t_stamp": "utc_tstamp",
-            }
-        )
-        .filter(pl.col("utc_tstamp").is_not_null())
-        .select(
-            [
-                pl.col("c_id").cast(pl.Int64),
-                pl.col("utc_tstamp"),
-                pl.col("power").cast(pl.Float64, strict=False),
-                pl.col("voltage").cast(pl.Float64, strict=False),
-            ]
-        )
+    raw_data = pl.concat(
+        [
+            pl.scan_parquet(path).select(
+                [
+                    pl.col(circuit_column).cast(pl.Int64).alias("c_id"),
+                    pl.col(timestamp_column).alias("utc_tstamp"),
+                    pl.col("power").cast(pl.Float64, strict=False),
+                    pl.col("voltage").cast(pl.Float64, strict=False),
+                ]
+            )
+            for path in raw_parquet_paths
+        ],
+        how="vertical",
     )
+    raw_data = raw_data.filter(pl.col("utc_tstamp").is_not_null())
 
     cleaned_path.parent.mkdir(parents=True, exist_ok=True)
     parquet_writer = None
@@ -142,7 +142,6 @@ def build_cleaned_site_data(
         all_data = addPolarityToPower(all_data, circuit_details)
         # commenting this as it appliies to ac_load_net too which is incorrect
         # but clipping of pv below 0 still happens in checkpvbehaviour
-        # and _robust_observed_peak_kw
         # after polarity is applied here
         # all_data = clipNegativePower(all_data)
 
@@ -184,8 +183,8 @@ def build_cleaned_site_data(
         del cleaned_bucket
 
     if parquet_writer is None:
-        raise RuntimeError("Solar Analytics preprocessing produced no cleaned rows.")
+        raise RuntimeError("Preprocessing produced no cleaned rows.")
 
     parquet_writer.close()
-    print(f"Saved cleaned Solar Analytics data to {cleaned_path}.", flush=True)
+    print(f"Saved cleaned data to {cleaned_path}.", flush=True)
     return cleaned_path

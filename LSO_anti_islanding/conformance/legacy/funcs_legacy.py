@@ -133,10 +133,6 @@ def loadCleanedSiteData(cleanedLocalPath=CLEANED_SITE_DATA_PATH):
     return pl.scan_parquet(cleaned_parquet_path)
 
 
-def _round_up_to_half_kw(value_kw):
-    return math.ceil(value_kw * 2.0) / 2.0
-
-
 def _metadata_capacity_kw(siteDetails, siteNumber):
     site_row = siteDetails.filter(pl.col("site_id") == siteNumber).select("ac_cap_w")
     if site_row.is_empty():
@@ -210,23 +206,18 @@ def ratedCapacityOfPV(
     siteDetails,
     siteNumber,
     day_behaviours=None,
-    metadata_tolerance=1.10,
-    fallback_kw=5.0,
 ):
     metadata_kw = _metadata_capacity_kw(siteDetails, siteNumber)
     robust_peak_kw, _ = _robust_observed_peak_kw(day_behaviours)
+    observed_kw = (
+        None if robust_peak_kw is None else math.ceil(robust_peak_kw * 10.0) / 10.0
+    )
 
-    if metadata_kw is not None:
-        if robust_peak_kw is None or robust_peak_kw <= (
-            metadata_kw * metadata_tolerance
-        ):
-            return metadata_kw
-        return _round_up_to_half_kw(robust_peak_kw)
-
-    if robust_peak_kw is not None:
-        return _round_up_to_half_kw(robust_peak_kw)
-
-    return fallback_kw
+    if metadata_kw is None:
+        return observed_kw
+    if observed_kw is None:
+        return metadata_kw
+    return max(metadata_kw, observed_kw)
 
 
 def getPVDataFromCircuit(circuitNumber, df, start=None, end=None):

@@ -63,6 +63,7 @@ SAPN_ROOT = require_local_path(
     "SAPN_ROOT",
     "root folder containing `Nov2022/`, `All Results/`, and `updated results/`.",
 )
+# EVM here referred to as training data for SAPN2022 event
 EVM_ROOT = require_local_path(
     "EVM_ROOT",
     "root folder containing `site_metadata.csv`, `circuit_metadata.csv`, and the EVM training parquet directory.",
@@ -255,7 +256,9 @@ def nearest_clear_sky_candidates(site_metrology, bom10min):
 
 
 def segmented_site_metrology(site_metrology):
-    """Split canonical 5-minute train days into continuous segments."""
+    """Split canonical 5-minute train days into continuous segments.
+    clarify this one!
+    """
     return (
         as_lazy(site_metrology)
         .sort(["site_id", "actual_day", "t_stamp"])
