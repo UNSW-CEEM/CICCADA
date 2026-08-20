@@ -31,7 +31,6 @@ from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_CONFORMANCE_CONFIG
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
 from trino_connection_local_to_s3 import local_trino_engine, read_query_via_parquet
 
-
 CLEANED_DATA_SCHEMA = {
     "c_id": pl.Int64,
     "site_id": pl.Int64,
@@ -61,14 +60,10 @@ CONFORMANCE_SUMMARY_SCHEMA = {
     "threshold_confidence_tier": pl.Utf8,
 }
 
-LIMITED_OUTPUT_DIR = (
-    SOLAR_ANALYTICS_CONFORMANCE_CONFIG.output_dir / "trino_limited"
-)
+LIMITED_OUTPUT_DIR = SOLAR_ANALYTICS_CONFORMANCE_CONFIG.output_dir / "trino_limited"
 LIMITED_SITE_PLOT_DIR = LIMITED_OUTPUT_DIR / "overall_site_plots"
 LIMITED_THRESHOLD_PLOT_DIR = LIMITED_OUTPUT_DIR / "threshold_distribution_plots"
-LIMITED_SUMMARY_PATH = (
-    LIMITED_OUTPUT_DIR / "solA_conformance_trino_limited_summary.csv"
-)
+LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "solA_conformance_trino_limited_summary.csv"
 
 
 def _conformance_summary_row(site_result):
@@ -103,9 +98,7 @@ def _conformance_summary_row(site_result):
         "ov1_threshold_used": thresholds["ov1_test_site"],
         "pass_basis": summary["pass_basis"],
         "threshold_selection_basis": thresholds["threshold_selection_basis"],
-        "threshold_confidence_tier": thresholds[
-            "threshold_confidence_tier"
-        ],
+        "threshold_confidence_tier": thresholds["threshold_confidence_tier"],
     }
 
 
@@ -113,17 +106,18 @@ def _threshold_stats(phase_a_records, mechanism, voltage_column):
     """Return per-site Phase A threshold statistics for one mechanism."""
     return (
         phase_a_records.filter(
-            (pl.col("mech") == mechanism)
-            & pl.col(voltage_column).is_not_null()
+            (pl.col("mech") == mechanism) & pl.col(voltage_column).is_not_null()
         )
         .group_by("site_id")
-        .agg([
-            pl.col(voltage_column).min().alias("min_v"),
-            pl.col(voltage_column).median().alias("median_v"),
-            pl.col(voltage_column).max().alias("max_v"),
-            pl.col(voltage_column).std().alias("std_v"),
-            pl.len().alias("n_events"),
-        ])
+        .agg(
+            [
+                pl.col(voltage_column).min().alias("min_v"),
+                pl.col(voltage_column).median().alias("median_v"),
+                pl.col(voltage_column).max().alias("max_v"),
+                pl.col(voltage_column).std().alias("std_v"),
+                pl.len().alias("n_events"),
+            ]
+        )
     )
 
 
@@ -189,9 +183,7 @@ def _iter_site_timeseries_batches(engine, selected_sites, circuit_data):
         )
 
         for batch_timezone in batch_timezones:
-            batch_sites = bucket_sites.filter(
-                pl.col("timezone") == batch_timezone
-            )
+            batch_sites = bucket_sites.filter(pl.col("timezone") == batch_timezone)
             batch_site_ids = batch_sites.get_column("site_id")
             batch_circuit_data = circuit_data.filter(
                 pl.col("site_id").is_in(batch_site_ids.implode())
@@ -203,9 +195,7 @@ def _iter_site_timeseries_batches(engine, selected_sites, circuit_data):
                 maintain_order=True
             )
 
-            circuit_ids = ", ".join(
-                batch_circuit_ids.cast(pl.String).to_list()
-            )
+            circuit_ids = ", ".join(batch_circuit_ids.cast(pl.String).to_list())
             postcodes = ", ".join(
                 batch_postcodes.cast(pl.Int64).cast(pl.String).to_list()
             )
@@ -242,10 +232,12 @@ def _iter_site_timeseries_batches(engine, selected_sites, circuit_data):
             batch_timeseries_data = read_query_via_parquet(
                 trino_engine=engine,
                 query=batch_query,
-            ).rename({
-                "circuit_id": "c_id",
-                "t_stamp": "utc_tstamp",
-            })
+            ).rename(
+                {
+                    "circuit_id": "c_id",
+                    "t_stamp": "utc_tstamp",
+                }
+            )
 
             yield batch_sites, batch_circuit_data, batch_timeseries_data
 
@@ -255,41 +247,39 @@ def _clean_site_timeseries_data(site_timeseries_data, site_circuit_data, site):
     cleaned_data = (
         site_timeseries_data.lazy()
         .filter(pl.col("utc_tstamp").is_not_null())
-        .with_columns([
-            pl.col("c_id").cast(pl.Int64),
-            pl.col("power").cast(pl.Float64, strict=False),
-            pl.col("voltage").cast(pl.Float64, strict=False),
-        ])
+        .with_columns(
+            [
+                pl.col("c_id").cast(pl.Int64),
+                pl.col("power").cast(pl.Float64, strict=False),
+                pl.col("voltage").cast(pl.Float64, strict=False),
+            ]
+        )
     )
 
     cleaned_data = convertWToKw(cleaned_data)
     cleaned_data = deduplicateMeasurements(cleaned_data)
-    cleaned_data = (
-        cleaned_data.join(
-            site_circuit_data.select(["c_id", "con_type"])
-            .unique()
-            .lazy(),
-            on="c_id",
-            how="inner",
-        )
-        .with_columns([
+    cleaned_data = cleaned_data.join(
+        site_circuit_data.select(["c_id", "con_type"]).unique().lazy(),
+        on="c_id",
+        how="inner",
+    ).with_columns(
+        [
             pl.lit(site["site_id"]).cast(pl.Int64).alias("site_id"),
             pl.lit(site["state"]).cast(pl.Utf8).alias("state"),
             pl.lit(site["timezone"]).cast(pl.Utf8).alias("timezone"),
-        ])
+        ]
     )
 
     cleaned_data = addLocalTStamp(cleaned_data)
     cleaned_data = addValidVoltage(cleaned_data)
     cleaned_data = addPolarityToPower(cleaned_data, site_circuit_data)
 
-    return (
-        cleaned_data.select([
+    return cleaned_data.select(
+        [
             pl.col(column).cast(dtype).alias(column)
             for column, dtype in CLEANED_DATA_SCHEMA.items()
-        ])
-        .collect(engine="streaming")
-    )
+        ]
+    ).collect(engine="streaming")
 
 
 # Select ten sites with one grouped metadata row and one to three PV circuits.
@@ -326,17 +316,19 @@ with local_trino_engine(
     schema="solar_analytics_iceberg",
 ) as engine:
     site_data = pl.read_database(query=SITE_QUERY, connection=engine)
-    site_data = site_data.with_columns([
-        pl.col("site_id").cast(pl.Int64),
-        pl.col("state").cast(pl.Utf8),
-        pl.col("ac_capacity_kw")
-        .cast(pl.Float64, strict=False)
-        .alias("capacity_kw"),
-        pl.col("state")
-        .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
-        .cast(pl.Utf8)
-        .alias("timezone"),
-    ])
+    site_data = site_data.with_columns(
+        [
+            pl.col("site_id").cast(pl.Int64),
+            pl.col("state").cast(pl.Utf8),
+            pl.col("ac_capacity_kw")
+            .cast(pl.Float64, strict=False)
+            .alias("capacity_kw"),
+            pl.col("state")
+            .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
+            .cast(pl.Utf8)
+            .alias("timezone"),
+        ]
+    )
 
     # Retrieve PV circuits only for the selected ten sites.
     site_ids = ", ".join(site_data["site_id"].cast(pl.String).to_list())
@@ -355,26 +347,32 @@ with local_trino_engine(
             query=circuit_query,
             connection=engine,
         )
-        .rename({
-            "circuit_id": "c_id",
-            "circuit_polarity": "polarity",
-            "circuit_type": "con_type",
-        })
-        .with_columns([
-            pl.col("site_id").cast(pl.Int64),
-            pl.col("c_id").cast(pl.Int64),
-            pl.col("con_type").cast(pl.Utf8),
-            pl.col("polarity").cast(pl.Float64, strict=False),
-        ])
+        .rename(
+            {
+                "circuit_id": "c_id",
+                "circuit_polarity": "polarity",
+                "circuit_type": "con_type",
+            }
+        )
+        .with_columns(
+            [
+                pl.col("site_id").cast(pl.Int64),
+                pl.col("c_id").cast(pl.Int64),
+                pl.col("con_type").cast(pl.Utf8),
+                pl.col("polarity").cast(pl.Float64, strict=False),
+            ]
+        )
     )
 
     processed_sites = 0
-    for batch_sites, batch_circuit_data, batch_timeseries_data in (
-        _iter_site_timeseries_batches(
-            engine,
-            site_data,
-            circuit_data,
-        )
+    for (
+        batch_sites,
+        batch_circuit_data,
+        batch_timeseries_data,
+    ) in _iter_site_timeseries_batches(
+        engine,
+        site_data,
+        circuit_data,
     ):
         for site in batch_sites.iter_rows(named=True):
             site_circuit_data = batch_circuit_data.filter(
@@ -429,9 +427,7 @@ with local_trino_engine(
                 methods=PHASE_B_METHODS,
                 primary_method=PRIMARY_PHASE_B_METHOD,
                 generate_site_plots=GENERATE_SITE_PLOTS_DEFAULT,
-                plot_no_eligible_timestamp_days=(
-                    PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS
-                ),
+                plot_no_eligible_timestamp_days=(PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS),
                 site_plot_dir=LIMITED_SITE_PLOT_DIR,
             )
 

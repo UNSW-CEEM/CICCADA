@@ -37,7 +37,6 @@ from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_CONFORMANCE_CONFIG
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
 from trino_connection_local_to_s3 import local_trino_engine, read_query_via_parquet
 
-
 EVM_TRINO_SITE_BATCH_SIZE = None
 
 # these are the columns for conformance results that will be pushed to trino
@@ -79,9 +78,8 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
     # the existing processing loop.
 
     # Preserve the order in which Iceberg postcode buckets first appear.
-    postcode_buckets = (
-        eligible_sites.get_column("postcode_bucket")
-        .unique(maintain_order=True)
+    postcode_buckets = eligible_sites.get_column("postcode_bucket").unique(
+        maintain_order=True
     )
 
     for postcode_bucket in postcode_buckets:
@@ -92,14 +90,11 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
         # A postcode hash bucket can contain sites from multiple Australian
         # timezones. Keep each query timezone-homogeneous so its UTC-to-local
         # analysis-window predicate is correct for every site in the batch.
-        batch_timezones = (
-            bucket_sites.get_column("timezone")
-            .unique(maintain_order=True)
+        batch_timezones = bucket_sites.get_column("timezone").unique(
+            maintain_order=True
         )
         for batch_timezone in batch_timezones:
-            timezone_sites = bucket_sites.filter(
-                pl.col("timezone") == batch_timezone
-            )
+            timezone_sites = bucket_sites.filter(pl.col("timezone") == batch_timezone)
 
             # Query the complete postcode-bucket/timezone group by default.
             # Setting EVM_TRINO_SITE_BATCH_SIZE to a positive integer retains
@@ -133,18 +128,14 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
                 batch_circuit_data = circuit_data.filter(
                     pl.col("site_id").is_in(batch_site_ids.implode())
                 )
-                batch_circuit_ids = (
-                    batch_circuit_data.get_column("c_id")
-                    .unique(maintain_order=True)
+                batch_circuit_ids = batch_circuit_data.get_column("c_id").unique(
+                    maintain_order=True
                 )
-                batch_postcodes = (
-                    batch_sites.get_column("postcode")
-                    .unique(maintain_order=True)
+                batch_postcodes = batch_sites.get_column("postcode").unique(
+                    maintain_order=True
                 )
 
-                circuit_ids = ", ".join(
-                    batch_circuit_ids.cast(pl.String).to_list()
-                )
+                circuit_ids = ", ".join(batch_circuit_ids.cast(pl.String).to_list())
                 postcodes = ", ".join(
                     batch_postcodes.cast(pl.Int64).cast(pl.String).to_list()
                 )
@@ -181,10 +172,12 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
                 batch_timeseries_data = read_query_via_parquet(
                     trino_engine=engine,
                     query=batch_query,
-                ).rename({
-                    "circuit_id": "c_id",
-                    "t_stamp": "utc_tstamp",
-                })
+                ).rename(
+                    {
+                        "circuit_id": "c_id",
+                        "t_stamp": "utc_tstamp",
+                    }
+                )
 
                 # Yield the complete batch and pause this generator with the
                 # current batch_start retained. After the caller processes every
@@ -200,9 +193,7 @@ with local_trino_engine(
     # Select the site cohort before looking up its circuits.
     site_data = pl.read_database(query=SITE_QUERY, connection=engine)
     site_data = site_data.with_columns(
-        pl.col("ac_capacity_kw")
-        .cast(pl.Float64, strict=False)
-        .alias("capacity_kw")
+        pl.col("ac_capacity_kw").cast(pl.Float64, strict=False).alias("capacity_kw")
     )
 
     # Match the selected site cohort to its PV circuits within Trino.
@@ -225,10 +216,12 @@ with local_trino_engine(
     circuit_data = pl.read_database(
         query=circuit_query,
         connection=engine,
-    ).rename({
-        "circuit_id": "c_id",
-        "circuit_polarity": "polarity",
-    })
+    ).rename(
+        {
+            "circuit_id": "c_id",
+            "circuit_polarity": "polarity",
+        }
+    )
 
     # Count distinct PV circuits per site. Sites with one to three circuits are
     # eligible; sites with no PV circuit or more than three are excluded.
@@ -237,17 +230,15 @@ with local_trino_engine(
     )
 
     eligible_site_ids = pv_circuit_counts.filter(
-        pl.col("pv_circuit_count").is_between(1, 3))["site_id"]
+        pl.col("pv_circuit_count").is_between(1, 3)
+    )["site_id"]
 
-    eligible_sites = (
-        site_data.filter(
-            pl.col("site_id").is_in(eligible_site_ids.implode())
-        )
-        .with_columns(
-            pl.col("state")
-            .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
-            .alias("timezone")
-        )
+    eligible_sites = site_data.filter(
+        pl.col("site_id").is_in(eligible_site_ids.implode())
+    ).with_columns(
+        pl.col("state")
+        .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
+        .alias("timezone")
     )
 
     total_sites = eligible_sites.height
@@ -258,29 +249,27 @@ with local_trino_engine(
     conformance_output_path = (
         conformance_output_dir / "solA_conformance_trino_summary.csv"
     )
-    pl.DataFrame(schema=CONFORMANCE_SUMMARY_SCHEMA).write_csv(
-        conformance_output_path
-    )
+    pl.DataFrame(schema=CONFORMANCE_SUMMARY_SCHEMA).write_csv(conformance_output_path)
 
     site_idx = 0
     # Call the generator once for the complete cohort. Each iteration receives
     # one queried batch containing the configured number of sites from one
     # postcode bucket and timezone.
-    for batch_sites, batch_circuit_data, batch_timeseries_data in (
-        _iter_site_timeseries_batches(
-            engine,
-            eligible_sites,
-            circuit_data,
-        )
+    for (
+        batch_sites,
+        batch_circuit_data,
+        batch_timeseries_data,
+    ) in _iter_site_timeseries_batches(
+        engine,
+        eligible_sites,
+        circuit_data,
     ):
         # Split the downloaded batch back into individual sites using the
         # site-to-circuit mapping.
         for site in batch_sites.iter_rows(named=True):
             site_idx += 1
             site_circuit_ids = (
-                batch_circuit_data.filter(
-                    pl.col("site_id") == site["site_id"]
-                )
+                batch_circuit_data.filter(pl.col("site_id") == site["site_id"])
                 .get_column("c_id")
                 .unique(maintain_order=True)
             )
@@ -296,8 +285,8 @@ with local_trino_engine(
             if site_timeseries_data.is_empty():
                 continue
 
-            site_timeseries_data = (site_timeseries_data.lazy()
-                .filter(pl.col("utc_tstamp").is_not_null())
+            site_timeseries_data = site_timeseries_data.lazy().filter(
+                pl.col("utc_tstamp").is_not_null()
             )
 
             # pre processing
@@ -313,9 +302,12 @@ with local_trino_engine(
             # add lcoal timestamp and pre process
             site_timeseries_data = addLocalTStamp(site_timeseries_data)
             site_timeseries_data = addValidVoltage(site_timeseries_data)
-            site_timeseries_data = addPolarityToPower(site_timeseries_data,circuit_data,)
-            site_timeseries_data = (
-                site_timeseries_data.select([
+            site_timeseries_data = addPolarityToPower(
+                site_timeseries_data,
+                circuit_data,
+            )
+            site_timeseries_data = site_timeseries_data.select(
+                [
                     "c_id",
                     "timezone",
                     "utc_tstamp",
@@ -323,9 +315,8 @@ with local_trino_engine(
                     "power",
                     "voltage",
                     "voltage_valid",
-                ])
-                .collect(engine="streaming")
-            )
+                ]
+            ).collect(engine="streaming")
 
             # Reproduce site-day preparation performed by core.workflow.collect_site_days
             # shared functions & solar analytics policies are called in the same order as
@@ -342,8 +333,7 @@ with local_trino_engine(
                 end_day,
             ) in SOLAR_ANALYTICS_CONFORMANCE_CONFIG.day_provider(
                 site_timeseries_data
-            ): # day is the day, start_day, end_day: are start/end time of day for data extraction
-
+            ):  # day is the day, start_day, end_day: are start/end time of day for data extraction
                 # Reuse the shared inclusive site-day extraction
                 # Extract all circuit measurements for this site and day in long format.
                 site_day_long = extract_site_day(
@@ -376,11 +366,9 @@ with local_trino_engine(
 
                 # Reuse the Solar Analytics eligibility policy used by prepare_site.
                 # does not retain the eligibility reason/statistics for excluded days.
-                eligibility = (
-                    SOLAR_ANALYTICS_CONFORMANCE_CONFIG.eligibility_function(
-                        analysis_day_long,
-                        analysis_day_df,
-                    )
+                eligibility = SOLAR_ANALYTICS_CONFORMANCE_CONFIG.eligibility_function(
+                    analysis_day_long,
+                    analysis_day_df,
                 )
 
                 if not eligibility["eligible"]:
@@ -388,13 +376,15 @@ with local_trino_engine(
 
                 # This dictionary shape and CheckPVBehaviour construction match the
                 # objects produced by core.workflow.collect_site_days.
-                day_behaviours.append({
-                    "day": day,
-                    "behaviour": CheckPVBehaviour(
-                        analysis_day_df,
-                        volCol="voltage_valid",
-                    ),
-                })
+                day_behaviours.append(
+                    {
+                        "day": day,
+                        "behaviour": CheckPVBehaviour(
+                            analysis_day_df,
+                            volCol="voltage_valid",
+                        ),
+                    }
+                )
 
             # Match prepare_site's no-eligible-days guard, although this inline path
             # skips silently instead of recording a named skip reason.
@@ -411,7 +401,7 @@ with local_trino_engine(
             # it learns raw thresholds and confidence information for Phase B.
             phase_a_result = run_phase_a_for_site(
                 site["site_id"],
-                day_behaviours, # this has the CheckPVBehaviour obj
+                day_behaviours,  # this has the CheckPVBehaviour obj
                 p_rated,
             )
             # Reuse the configured Phase B method list and pass the same Phase A
@@ -420,7 +410,7 @@ with local_trino_engine(
             for phase_b_method in PHASE_B_METHODS:
                 phase_b_result = run_phase_b_for_site(
                     site["site_id"],
-                    day_behaviours, # this has the CheckPVBehaviour obj
+                    day_behaviours,  # this has the CheckPVBehaviour obj
                     p_rated,
                     raw_thresholds=phase_a_result["raw_thresholds"],
                     confidence_info=phase_a_result["confidence_info"],
@@ -436,25 +426,27 @@ with local_trino_engine(
                     assessment_status = "conformant"
                 else:
                     assessment_status = "non-conformant"
-                conformance_summary_rows.append({
-                    "site_id": phase_b_summary["site_id"],
-                    "method_key": phase_b_method,
-                    "assessment_status": assessment_status,
-                    "overall_pass": overall_pass,
-                    "los_pass": phase_b_summary["los_pass"],
-                    "los_compliance_pct": phase_b_summary["los_compliance_pct"],
-                    "los_threshold_used": phase_b_summary["los_threshold_used"],
-                    "ov1_pass": phase_b_summary["ov1_pass"],
-                    "ov1_compliance_pct": phase_b_summary["ov1_compliance_pct"],
-                    "ov1_threshold_used": phase_b_thresholds["ov1_test_site"],
-                    "pass_basis": phase_b_summary["pass_basis"],
-                    "threshold_selection_basis": phase_b_thresholds[
-                        "threshold_selection_basis"
-                    ],
-                    "threshold_confidence_tier": phase_b_thresholds[
-                        "threshold_confidence_tier"
-                    ],
-                })
+                conformance_summary_rows.append(
+                    {
+                        "site_id": phase_b_summary["site_id"],
+                        "method_key": phase_b_method,
+                        "assessment_status": assessment_status,
+                        "overall_pass": overall_pass,
+                        "los_pass": phase_b_summary["los_pass"],
+                        "los_compliance_pct": phase_b_summary["los_compliance_pct"],
+                        "los_threshold_used": phase_b_summary["los_threshold_used"],
+                        "ov1_pass": phase_b_summary["ov1_pass"],
+                        "ov1_compliance_pct": phase_b_summary["ov1_compliance_pct"],
+                        "ov1_threshold_used": phase_b_thresholds["ov1_test_site"],
+                        "pass_basis": phase_b_summary["pass_basis"],
+                        "threshold_selection_basis": phase_b_thresholds[
+                            "threshold_selection_basis"
+                        ],
+                        "threshold_confidence_tier": phase_b_thresholds[
+                            "threshold_confidence_tier"
+                        ],
+                    }
+                )
                 # print("yo")
 
             # investigate
@@ -462,7 +454,7 @@ with local_trino_engine(
             # save in table form back to trino
 
         if conformance_summary_rows:
-            print('appending data to csv')
+            print("appending data to csv")
             conformance_summary = pl.DataFrame(
                 conformance_summary_rows,
                 schema=CONFORMANCE_SUMMARY_SCHEMA,

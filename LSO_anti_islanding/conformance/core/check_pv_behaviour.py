@@ -191,10 +191,7 @@ class CheckPVBehaviour:
                     & pl.col("is_disc")
                     & (pl.col("site_power_drop") >= p_step_strict)
                     & (pl.col("dt_next_s").shift(1) > 0)
-                    & (
-                        pl.col("dt_next_s").shift(1)
-                        <= MAX_DISCONNECT_EDGE_GAP_SECONDS
-                    )
+                    & (pl.col("dt_next_s").shift(1) <= MAX_DISCONNECT_EDGE_GAP_SECONDS)
                 )
                 .fill_null(False)
                 .alias("disconnect_edge"),
@@ -248,9 +245,7 @@ class CheckPVBehaviour:
                     "disconnect_edge",
                 ]
             )
-            .with_columns(
-                pl.lit("strict_10pct").alias("edge_source")
-            )
+            .with_columns(pl.lit("strict_10pct").alias("edge_source"))
             .sort("local_tstamp")
         )
         rec_rows = (
@@ -264,9 +259,7 @@ class CheckPVBehaviour:
                     "reconnect_edge",
                 ]
             )
-            .with_columns(
-                pl.lit("strict_10pct").alias("edge_source")
-            )
+            .with_columns(pl.lit("strict_10pct").alias("edge_source"))
             .sort("local_tstamp")
         )
 

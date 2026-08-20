@@ -50,10 +50,7 @@ def _load_sapn2022_site_details(site_details_path=SITE_DETAILS_PATH):
     return (
         pl.read_csv(site_details_path)
         .with_columns(pl.len().over("site_id").alias("_site_metadata_rows"))
-        .filter(
-            pl.col("_site_metadata_rows")
-            == SAPN2022_REQUIRED_SITE_METADATA_ROWS
-        )
+        .filter(pl.col("_site_metadata_rows") == SAPN2022_REQUIRED_SITE_METADATA_ROWS)
         .drop("_site_metadata_rows")
     )
 
@@ -85,10 +82,9 @@ def load_sapn2022_inputs(update_ac_capacity=False):
         "calculated_ac_capacity_kw",
         "chosen_ac_capacity_kw",
     )
-    inputs["site_details"] = (
-        site_details.join(capacity_derived, on="site_id", how="left")
-        .with_columns(pl.col("chosen_ac_capacity_kw").alias("capacity_kw"))
-    )
+    inputs["site_details"] = site_details.join(
+        capacity_derived, on="site_id", how="left"
+    ).with_columns(pl.col("chosen_ac_capacity_kw").alias("capacity_kw"))
     return inputs
 
 

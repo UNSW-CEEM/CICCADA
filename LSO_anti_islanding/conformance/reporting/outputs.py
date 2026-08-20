@@ -11,9 +11,7 @@ from reporting.plotting import (
 
 SITE_CONFORMANCE_SUMMARY_NAME = "site_conformance_summary.csv"
 CONFORMANCE_EXCLUSIONS_NAME = "conformance_exclusions.csv"
-PRIMARY_PHASE_B_DETAIL_NAME = (
-    f"phase_b_timestamp_detail_{PRIMARY_PHASE_B_METHOD}.csv"
-)
+PRIMARY_PHASE_B_DETAIL_NAME = f"phase_b_timestamp_detail_{PRIMARY_PHASE_B_METHOD}.csv"
 
 SITE_CONFORMANCE_SUMMARY_SCHEMA = {
     "site_id": pl.Int64,
@@ -61,10 +59,7 @@ def _require_unique_site_ids(frame, table_name):
     if frame.is_empty():
         return
     duplicate_sites = (
-        frame.group_by("site_id")
-        .len()
-        .filter(pl.col("len") > 1)
-        .select("site_id")
+        frame.group_by("site_id").len().filter(pl.col("len") > 1).select("site_id")
     )
     if not duplicate_sites.is_empty():
         sample = duplicate_sites.head(10)["site_id"].to_list()
@@ -146,15 +141,11 @@ def _conformance_exclusions(results, excluded_day_schema):
     day_schema = dict(excluded_day_schema or DEFAULT_EXCLUDED_DAY_SCHEMA)
     ordered_columns = ["site_id", "exclusion_scope", "day", "reason"]
     ordered_columns.extend(
-        column
-        for column in day_schema
-        if column not in {"site_id", "day", "reason"}
+        column for column in day_schema if column not in {"site_id", "day", "reason"}
     )
     exclusion_schema = {
         column: (
-            pl.Utf8
-            if column == "exclusion_scope"
-            else day_schema.get(column, pl.Utf8)
+            pl.Utf8 if column == "exclusion_scope" else day_schema.get(column, pl.Utf8)
         )
         for column in ordered_columns
     }
@@ -171,8 +162,7 @@ def _conformance_exclusions(results, excluded_day_schema):
             for site_id in site_ids
         )
     rows.extend(
-        {**row, "exclusion_scope": "site_day"}
-        for row in results["excluded_day_rows"]
+        {**row, "exclusion_scope": "site_day"} for row in results["excluded_day_rows"]
     )
 
     normalised_rows = [
@@ -241,9 +231,7 @@ def write_outputs(
     tables["site_conformance_summary"].write_csv(
         output_dir / SITE_CONFORMANCE_SUMMARY_NAME
     )
-    tables["conformance_exclusions"].write_csv(
-        output_dir / CONFORMANCE_EXCLUSIONS_NAME
-    )
+    tables["conformance_exclusions"].write_csv(output_dir / CONFORMANCE_EXCLUSIONS_NAME)
     if include_timestamp_detail_output:
         tables["phase_b_timestamp_detail"].write_csv(
             output_dir / PRIMARY_PHASE_B_DETAIL_NAME

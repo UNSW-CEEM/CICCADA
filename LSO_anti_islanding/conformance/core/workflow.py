@@ -149,10 +149,7 @@ def collect_site_days(site_number, inputs, workflow_config):
             "reason": eligibility["reason"],
         }
         excluded_row.update(
-            {
-                field: eligibility[field]
-                for field in workflow_config.exclusion_fields
-            }
+            {field: eligibility[field] for field in workflow_config.exclusion_fields}
         )
         excluded_row["coverage_threshold_pct"] = (
             workflow_config.coverage_threshold * 100.0
@@ -191,14 +188,12 @@ def prepare_site(site_number, inputs, workflow_config):
 
     # The shared p_rated name contains P_rated for SAPN and S_rated for SolA.
     if workflow_config.capacity_estimator is None:
-        site_capacity = inputs["site_details"].filter(
-            pl.col("site_id") == site_number
-        ).select("capacity_kw")
-        p_rated = (
-            None
-            if site_capacity.is_empty()
-            else site_capacity["capacity_kw"][0]
+        site_capacity = (
+            inputs["site_details"]
+            .filter(pl.col("site_id") == site_number)
+            .select("capacity_kw")
         )
+        p_rated = None if site_capacity.is_empty() else site_capacity["capacity_kw"][0]
     else:
         p_rated = workflow_config.capacity_estimator(
             inputs["site_details"],

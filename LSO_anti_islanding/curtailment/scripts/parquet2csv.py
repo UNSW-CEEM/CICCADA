@@ -19,7 +19,7 @@ fileName = "structured_data_5m"
 
 # 5m resolution for fit_ghi_model.py
 folderName = "model"
-fileName   = "pv_ghi_norm_model_5m"
+fileName = "pv_ghi_norm_model_5m"
 
 # # # all uncurtailed power - write_all_uncurtailedPV.py
 # # folderName = "local_scored"

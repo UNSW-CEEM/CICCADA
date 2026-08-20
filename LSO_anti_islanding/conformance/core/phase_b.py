@@ -109,11 +109,7 @@ def _run_phase_b_with_thresholds(
     median_result = aggregate_for_los_threshold(los_threshold)
     chosen_result = median_result
     threshold_sensitive = False
-    pass_basis = (
-        "unassessed"
-        if chosen_result["overall_pass"] is None
-        else "median"
-    )
+    pass_basis = "unassessed" if chosen_result["overall_pass"] is None else "median"
 
     summary_row = pl.DataFrame(
         [

@@ -51,8 +51,7 @@ def _mechanism_threshold_evidence(records, mechanism, voltage_column, default):
     else:
         values = (
             records.filter(
-                (pl.col("mech") == mechanism)
-                & pl.col(voltage_column).is_not_null()
+                (pl.col("mech") == mechanism) & pl.col(voltage_column).is_not_null()
             )
             .get_column(voltage_column)
             .to_list()
@@ -62,9 +61,7 @@ def _mechanism_threshold_evidence(records, mechanism, voltage_column, default):
     voltage_range = _range_or_none(values)
     window = _dominant_voltage_window(values)
     learned = (
-        window["count"] >= 3
-        and voltage_range is not None
-        and voltage_range <= 2.0
+        window["count"] >= 3 and voltage_range is not None and voltage_range <= 2.0
     )
     return {
         "threshold": window["median_v"] if learned else default,

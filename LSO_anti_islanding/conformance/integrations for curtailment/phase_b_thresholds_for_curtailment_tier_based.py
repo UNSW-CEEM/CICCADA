@@ -48,6 +48,8 @@ from core.site_day_preparation import (
 from reporting.outputs import SITE_CONFORMANCE_SUMMARY_NAME
 from sapn2022_workflow.adapter import (
     SAPN2022_CONFORMANCE_CONFIG,
+)
+from sapn2022_workflow.adapter import (
     load_cleaned_site_data as loadCleanedSiteData,
 )
 from sapn2022_workflow.sapn_paths import (
@@ -60,10 +62,7 @@ SITE_CONFORMANCE_SUMMARY_PATH = (
 )
 CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH  # this is the cleaned circuit data parquet
 OUTPUT_DIR = (
-    CONFORMANCE_DIR
-    / "updated results"
-    / "phase b info for curtailment"
-    / "tier based"
+    CONFORMANCE_DIR / "updated results" / "phase b info for curtailment" / "tier based"
 )
 TIMESTAMP_OUTPUT_PATH = OUTPUT_DIR / "tier_based_timestamp_flags.csv"
 BUCKET_OUTPUT_PATH = OUTPUT_DIR / "tier_based_5min_buckets.csv"
@@ -157,8 +156,7 @@ def _load_assessed_sites() -> pl.DataFrame:
         )
 
     missing_thresholds = assessed_sites.filter(
-        pl.col("los_threshold_used").is_null()
-        | pl.col("ov1_threshold_used").is_null()
+        pl.col("los_threshold_used").is_null() | pl.col("ov1_threshold_used").is_null()
     )
     if not missing_thresholds.is_empty():
         bad_sites = missing_thresholds["site_id"].to_list()

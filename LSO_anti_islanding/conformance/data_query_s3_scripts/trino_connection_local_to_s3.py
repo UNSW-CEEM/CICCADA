@@ -1,19 +1,17 @@
 """Local connection to the private CICCADA Trino service."""
 
-from contextlib import contextmanager
 import json
 import os
 import signal
 import socket
 import subprocess
 import time
+from contextlib import contextmanager
 from uuid import uuid4
 
 import polars as pl
-
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
-
 
 AWS_PROFILE = "ciccada"
 AWS_REGION = "ap-southeast-2"
@@ -94,9 +92,7 @@ def local_trino_engine(
                 )
 
             try:
-                with socket.create_connection(
-                    ("127.0.0.1", LOCAL_PORT), timeout=1
-                ):
+                with socket.create_connection(("127.0.0.1", LOCAL_PORT), timeout=1):
                     break
             except OSError:
                 time.sleep(0.5)
@@ -140,7 +136,7 @@ def read_query_via_parquet(
 ) -> pl.DataFrame:
     """Transfer one Trino query result through short-lived Iceberg Parquet.
     transfers compressed columnar data, making large queries substantially faster
-    
+
     The query is written to a uniquely named managed table in the staging
     schema. Polars reads its compressed data files directly from S3, and the
     staging table is always dropped before the fully collected DataFrame is
@@ -157,21 +153,20 @@ def read_query_via_parquet(
     try:
         # Create a temporary table containing the filtered Parquet data.
         with trino_engine.connect() as connection:
-            result = connection.execute(text(f"""
+            result = connection.execute(
+                text(f"""
                 CREATE TABLE {table}
                 WITH (format = 'PARQUET')
                 AS
                 {query}
-            """))
+            """)
+            )
             if result.returns_rows:
                 result.fetchall()
 
         # Retrieve the generated Parquet paths and expected row count.
         files = pl.read_database(
-            query=(
-                "SELECT file_path, record_count "
-                f"FROM {files_table}"
-            ),
+            query=("SELECT file_path, record_count " f"FROM {files_table}"),
             connection=trino_engine,
         )
 
@@ -184,17 +179,14 @@ def read_query_via_parquet(
             )
         else:
             expected_rows = int(files.get_column("record_count").sum())
-            data = (
-                pl.scan_parquet(
-                    files.get_column("file_path").to_list(),
-                    credential_provider=pl.CredentialProviderAWS(
-                        profile_name=AWS_PROFILE,
-                        region_name=AWS_REGION,
-                    ),
-                    cache=False,
-                )
-                .collect(engine="streaming")
-            )
+            data = pl.scan_parquet(
+                files.get_column("file_path").to_list(),
+                credential_provider=pl.CredentialProviderAWS(
+                    profile_name=AWS_PROFILE,
+                    region_name=AWS_REGION,
+                ),
+                cache=False,
+            ).collect(engine="streaming")
 
         # Validate that every staged row was collected.
         if data.height != expected_rows:
@@ -205,9 +197,7 @@ def read_query_via_parquet(
     finally:
         # Always remove this exact temporary table before returning.
         with trino_engine.connect() as connection:
-            result = connection.execute(
-                text(f"DROP TABLE IF EXISTS {table}")
-            )
+            result = connection.execute(text(f"DROP TABLE IF EXISTS {table}"))
             if result.returns_rows:
                 result.fetchall()
 
@@ -220,18 +210,28 @@ def read_query_via_parquet(
 def trino_sql(
     query: str,
     *,
-    catalog: str, schema: str,
+    catalog: str,
+    schema: str,
 ):
-    with local_trino_engine(catalog=catalog,schema=schema,) as engine:
+    with local_trino_engine(
+        catalog=catalog,
+        schema=schema,
+    ) as engine:
         return pl.read_database(query=query, connection=engine)
 
     # example: df = trino_sql(
     # "SELECT * FROM sites LIMIT 10", catalog="hive", schema="solar_analytics",)
 
+
 # hive query
-def hive_sql(query: str, schema = "solar_analytics"):
-    return trino_sql(query, catalog="hive", schema=schema,)
+def hive_sql(query: str, schema="solar_analytics"):
+    return trino_sql(
+        query,
+        catalog="hive",
+        schema=schema,
+    )
+
 
 # iceberg query
-def iceberg_sql(query: str, schema = "solar_analytics_iceberg"):
+def iceberg_sql(query: str, schema="solar_analytics_iceberg"):
     return trino_sql(query, catalog="iceberg", schema=schema)

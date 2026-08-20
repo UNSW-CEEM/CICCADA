@@ -210,9 +210,7 @@ def ratedCapacityOfPV(
     metadata_kw = _metadata_capacity_kw(siteDetails, siteNumber)
     robust_peak_kw, _ = _robust_observed_peak_kw(day_behaviours)
     observed_kw = (
-        None
-        if robust_peak_kw is None
-        else math.ceil(robust_peak_kw * 10.0) / 10.0
+        None if robust_peak_kw is None else math.ceil(robust_peak_kw * 10.0) / 10.0
     )
 
     if metadata_kw is None:

@@ -67,7 +67,7 @@ def build_cleaned_site_data(
     deduplicate=True,
     num_buckets=128,
 ):
-    """ Build cleaned metrology one circuit bucket at a time """
+    """Build cleaned metrology one circuit bucket at a time"""
 
     data_dir = Path(data_dir)
     circuit_metadata_path = Path(circuit_metadata_path)
