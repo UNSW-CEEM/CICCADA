@@ -44,7 +44,7 @@ from solar_analytics_workflow.site_preparation import (
 )
 from solar_analytics_workflow.solar_paths import TRINO_OUTPUT_DIR
 
-EVM_TRINO_SITE_BATCH_SIZE = 10
+EVM_TRINO_SITE_BATCH_SIZE = 10 # num sites queried at once
 
 # these are the columns for conformance results that will be pushed to trino
 # and utilised for grafana plotting
@@ -65,26 +65,17 @@ CONFORMANCE_SUMMARY_SCHEMA = {
 }
 conformance_summary_rows = []
 
-# Select the richer Hive site metadata. Only site-level
-# fields are selected, so DISTINCT collapses repeated inverter rows for a site.
+# Select distinct site-level metadata from the eligible inverter cohort.
 SITE_QUERY = """
 SELECT DISTINCT
-    s.site_id,
-    s.state,
-    s.postcode,
-    system.bucket(CAST(s.postcode AS INTEGER), 16) AS postcode_bucket,
+    m.site_id,
+    m.state,
+    m.postcode,
+    system.bucket(CAST(m.postcode AS INTEGER), 16) AS postcode_bucket,
     m.ac_capacity_kw,
     m.s_99
-FROM hive.solar_analytics.sites AS s
-LEFT JOIN (
-    SELECT
-        site_id,
-        MAX(ac_capacity_kw) AS ac_capacity_kw,
-        MAX(s_99) AS s_99
-    FROM iceberg.solar_analytics_iceberg.meta_up23c
-    GROUP BY site_id
-) AS m
-    ON s.site_id = m.site_id
+FROM iceberg.solar_analytics_iceberg.meta_up23c AS m
+WHERE m.inverter_count = 1
 -- LIMIT 10
 """
 
@@ -205,6 +196,11 @@ engine = create_engine(
 try:
     # Select the site cohort before looking up its circuits.
     site_data = pl.read_database(query=SITE_QUERY, connection=engine)
+    site_data = site_data.unique(
+        subset=["site_id"],
+        keep="first",
+        maintain_order=True,
+    )
     site_data = add_s_rated_capacity(site_data)
 
     # Match the selected site cohort to its PV circuits within Trino.
@@ -216,13 +212,14 @@ try:
             c.site_id,
             c.circuit_id,
             c.circuit_polarity
-        FROM hive.solar_analytics.circuits AS c
+        FROM iceberg.solar_analytics_iceberg.circuits AS c
         INNER JOIN (
             SELECT DISTINCT site_id
-            FROM hive.solar_analytics.sites
+            FROM iceberg.solar_analytics_iceberg.meta_up23c
+            WHERE inverter_count = 1
         ) AS selected_sites
             ON c.site_id = selected_sites.site_id
-        WHERE c.circuit_type = 'pv_site_net'
+        WHERE c.is_pv = TRUE
     """
     circuit_data = pl.read_database(
         query=circuit_query,

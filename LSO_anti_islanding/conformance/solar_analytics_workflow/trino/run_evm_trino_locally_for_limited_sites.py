@@ -51,7 +51,6 @@ from solar_analytics_workflow.trino.trino_connection_local_to_s3 import (
 CLEANED_DATA_SCHEMA = {
     "c_id": pl.Int64,
     "site_id": pl.Int64,
-    "con_type": pl.Utf8,
     "state": pl.Utf8,
     "timezone": pl.Utf8,
     "utc_tstamp": pl.Datetime("us", "UTC"),
@@ -275,11 +274,7 @@ def _clean_site_timeseries_data(site_timeseries_data, site_circuit_data, site):
 
     cleaned_data = convertWToKw(cleaned_data)
     cleaned_data = deduplicateMeasurements(cleaned_data)
-    cleaned_data = cleaned_data.join(
-        site_circuit_data.select(["c_id", "con_type"]).unique().lazy(),
-        on="c_id",
-        how="inner",
-    ).with_columns(
+    cleaned_data = cleaned_data.with_columns(
         [
             pl.lit(site["site_id"]).cast(pl.Int64).alias("site_id"),
             pl.lit(site["state"]).cast(pl.Utf8).alias("state"),
@@ -299,37 +294,17 @@ def _clean_site_timeseries_data(site_timeseries_data, site_circuit_data, site):
     ).collect(engine="streaming")
 
 
-# Select ten sites with one grouped metadata row and one to three PV circuits.
+# Select distinct site-level metadata from the eligible inverter cohort.
 SITE_QUERY = """
-WITH eligible_sites AS (
-    SELECT site_id
-    FROM hive.solar_analytics.circuits
-    WHERE circuit_type = 'pv_site_net'
-    GROUP BY site_id
-    HAVING COUNT(DISTINCT circuit_id) BETWEEN 1 AND 3
-)
-SELECT
-    s.site_id,
-    MAX(s.state) AS state,
-    CAST(MAX(s.postcode) AS INTEGER) AS postcode,
-    system.bucket(CAST(MAX(s.postcode) AS INTEGER), 16) AS postcode_bucket,
-    MAX(m.ac_capacity_kw) AS ac_capacity_kw,
-    MAX(m.s_99) AS s_99
-FROM hive.solar_analytics.sites AS s
-INNER JOIN eligible_sites AS e
-    ON s.site_id = e.site_id
-LEFT JOIN (
-    SELECT
-        site_id,
-        MAX(ac_capacity_kw) AS ac_capacity_kw,
-        MAX(s_99) AS s_99
-    FROM iceberg.solar_analytics_iceberg.meta_up23c
-    GROUP BY site_id
-) AS m
-    ON s.site_id = m.site_id
-GROUP BY s.site_id
-ORDER BY s.site_id
-LIMIT 2000
+SELECT DISTINCT
+    m.site_id,
+    m.state,
+    m.postcode,
+    system.bucket(CAST(m.postcode AS INTEGER), 16) AS postcode_bucket,
+    m.ac_capacity_kw,
+    m.s_99
+FROM iceberg.solar_analytics_iceberg.meta_up23c AS m
+WHERE m.inverter_count = 1
 """
 
 
@@ -343,6 +318,11 @@ with local_trino_engine(
     schema="solar_analytics_iceberg",
 ) as engine:
     site_data = pl.read_database(query=SITE_QUERY, connection=engine)
+    site_data = site_data.unique(
+        subset=["site_id"],
+        keep="first",
+        maintain_order=True,
+    )
     site_data = site_data.with_columns(
         [
             pl.col("site_id").cast(pl.Int64),
@@ -355,17 +335,20 @@ with local_trino_engine(
     )
     site_data = add_s_rated_capacity(site_data)
 
-    # Retrieve PV circuits only for the selected ten sites.
-    site_ids = ", ".join(site_data["site_id"].cast(pl.String).to_list())
-    circuit_query = f"""
-        SELECT DISTINCT
-            site_id,
-            circuit_id,
-            circuit_polarity,
-            circuit_type
-        FROM hive.solar_analytics.circuits
-        WHERE site_id IN ({site_ids})
-            AND circuit_type = 'pv_site_net'
+    # Retrieve PV circuits linked to the single-inverter site cohort.
+    circuit_query = """
+        SELECT
+            c.site_id,
+            c.circuit_id,
+            c.circuit_polarity
+        FROM iceberg.solar_analytics_iceberg.circuits AS c
+        INNER JOIN (
+            SELECT DISTINCT site_id
+            FROM iceberg.solar_analytics_iceberg.meta_up23c
+            WHERE inverter_count = 1
+        ) AS single_inverter_sites
+            ON c.site_id = single_inverter_sites.site_id
+        WHERE c.is_pv = TRUE
     """
     circuit_data = (
         pl.read_database(
@@ -376,17 +359,31 @@ with local_trino_engine(
             {
                 "circuit_id": "c_id",
                 "circuit_polarity": "polarity",
-                "circuit_type": "con_type",
             }
         )
         .with_columns(
             [
                 pl.col("site_id").cast(pl.Int64),
                 pl.col("c_id").cast(pl.Int64),
-                pl.col("con_type").cast(pl.Utf8),
                 pl.col("polarity").cast(pl.Float64, strict=False),
             ]
         )
+    )
+
+    pv_circuit_counts = circuit_data.group_by("site_id").agg(
+        pl.col("c_id").n_unique().alias("pv_circuit_count")
+    )
+    eligible_site_ids = pv_circuit_counts.filter(
+        pl.col("pv_circuit_count").is_between(1, 3)
+    )["site_id"]
+    selected_sites = (
+        site_data.filter(pl.col("site_id").is_in(eligible_site_ids.implode()))
+        .sort("site_id")
+        .head(2000)
+    )
+    selected_site_ids = selected_sites.get_column("site_id")
+    circuit_data = circuit_data.filter(
+        pl.col("site_id").is_in(selected_site_ids.implode())
     )
 
     processed_sites = 0
@@ -397,7 +394,7 @@ with local_trino_engine(
         batch_timeseries_data,
     ) in _iter_site_timeseries_batches(
         engine,
-        site_data,
+        selected_sites,
         circuit_data,
     ):
         for site in batch_sites.iter_rows(named=True):
@@ -568,7 +565,7 @@ print(f"Saved limited conformance summary to {LIMITED_SUMMARY_PATH}")
 
 _generate_threshold_distribution_plots(phase_a_record_frames)
 
-print(f"Selected sites: {site_data.height}")
+print(f"Selected sites: {selected_sites.height}")
 print(f"Selected PV circuits: {circuit_data['c_id'].n_unique()}")
 print(f"Sites processed through conformance: {processed_sites}")
 print(f"Sites completing Phase A and Phase B: {completed_phase_sites}")
