@@ -491,7 +491,7 @@ def plot_voltwatt_day(frame, site_alias: str, day: str, config=None,
     ax = axes[0]
     ax.plot(t, d.V, color=C_V, lw=1.4, label="Measured voltage")
     ax.axhline(V1, color=C_ACCENT, ls="--", lw=1.1,
-               label=f"{V1:.0f} V — Volt-Watt starts")
+               label=f"{V1:.0f} V (Volt-Watt starts)")
     ax.set_ylabel("Voltage (V)", color=C_V)
     ax.tick_params(axis="y", colors=C_V)
     ax.legend(handles=ax.get_legend_handles_labels()[0]
@@ -505,11 +505,11 @@ def plot_voltwatt_day(frame, site_alias: str, day: str, config=None,
     if has_cf:
         ax.fill_between(t, d.P_kW, d.uncurtailed_P, where=curt, interpolate=True,
                         color=C_ACCENT, alpha=0.32, zorder=2,
-                        label="Curtailment — power was available, site held below "
+                        label="Curtailment"
                               "the ceiling")
     ax.fill_between(t, d.P_ceiling_kW, d.P_kW, where=nonconf, interpolate=True,
                     color="#c62828", alpha=0.38, zorder=2,
-                    label="Non-conformant — P above the ceiling")
+                    label="Non-conformant")
     if has_cf:
         ax.plot(t, d.uncurtailed_P, color=C_ACCENT, lw=1.6, ls="--", alpha=0.9,
                 zorder=4, label="Uncurtailed P (GHI counterfactual)")
@@ -518,7 +518,7 @@ def plot_voltwatt_day(frame, site_alias: str, day: str, config=None,
     ax.plot(t, d.P_kW, color=C_P, lw=1.7, zorder=4, label="Measured P")
     ax.set_ylabel("Power (kW)")
     ax.set_xlabel("Time (AEST)")
-    ax.legend(fontsize=7.3, loc="upper left", framealpha=0.92)
+    ax.legend(fontsize=7.3, loc="lower left", framealpha=0.92)
     ax.grid(color="#ebebeb", lw=0.5)
     ax.set_axisbelow(True)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
@@ -527,14 +527,14 @@ def plot_voltwatt_day(frame, site_alias: str, day: str, config=None,
     h = C.INTERVAL_H
     curt_kwh = float(np.where(curt, (d.uncurtailed_P - d.P_kW).fillna(0), 0).sum()) * h
     exc_kwh = float(np.where(nonconf, (d.P_kW - d.P_ceiling_kW).fillna(0), 0).sum()) * h
-    verdict = ("no exposure — nothing was tested" if not exposed.any() else
+    verdict = ("No exposure. Nothing was tested" if not exposed.any() else
                f"{int(nonconf.sum())} non-conformant, {int(curt.sum())} curtailed "
                f"of {int(exposed.sum())} exposed intervals")
     fig.suptitle(
-        f"{site_alias} — Volt-Watt, {day}   |   {verdict}\n"
+        f"{site_alias} | Volt-Watt, {day}   |   {verdict}\n"
         f"{curt_kwh:.2f} kWh curtailed  ·  {exc_kwh:.2f} kWh over the ceiling  ·  "
         f"rating {S:.1f} kVA ({config.rating_basis})"
-        + ("" if has_cf else "   ·   NO counterfactual — curtailment not assessable"),
+        + ("" if has_cf else "   ·   NO counterfactual. Curtailment not assessable"),
         fontsize=10.5, fontweight="bold", y=1.0)
     fig.tight_layout()
     return _done(fig)
@@ -1161,12 +1161,12 @@ def plot_operational(df_day, site_alias, capacity_kva, zoom_date,
     ax_v.set_ylabel("Voltage (V)", fontsize=8.5, color=Cv)
     ax_v.tick_params(axis="y", colors=Cv, labelsize=8)
     ax_v.set_ylim(min(228, V.min() - 2), max(262, V.max() + 2))
-    ax_v.legend(handles=[Patch(color=C_VVAR, alpha=0.30, label=f"V > {vv['V3']:.0f} V — V-VAr required"),
-                         Patch(color=C_VW, alpha=0.30, label=f"V >= {vw['V1']:.0f} V — V-Watt active")],
+    ax_v.legend(handles=[Patch(color=C_VVAR, alpha=0.30, label=f"V > {vv['V3']:.0f} Volt-V-VAr required"),
+                         Patch(color=C_VW, alpha=0.30, label=f"V >= {vw['V1']:.0f} Volt-Watt active")],
                 fontsize=7, loc="upper left", framealpha=0.92)
 
     # --- active power ------------------------------------------------------
-    ax_p.plot(t, P_ceil_pct, color=Cc, lw=1.6, zorder=4, label=f"V-Watt ceiling (+{tol*100:.0f}% tol)")
+    ax_p.plot(t, P_ceil_pct, color=Cc, lw=1.6, zorder=4, label=f"Volt-Watt ceiling (+{tol*100:.0f}% tol)")
     ax_p.plot(t, P_pct, color=Cp, lw=1.3, zorder=5, label="Measured P (% of s_99)")
     ax_p.axhline(100, color=Cp, lw=0.6, ls=":", alpha=0.45)
     ax_p.set_ylabel("Active power\n(% of s_99)", fontsize=8.5, color=Cp)
@@ -1180,7 +1180,7 @@ def plot_operational(df_day, site_alias, capacity_kva, zoom_date,
 
     # --- Volt-Watt non-conformance ----------------------------------------
     ax_pnc.bar(t, P_nc_pct, width=pd.Timedelta(minutes=4.5), color=Cn, alpha=0.80, zorder=4,
-               label="V-Watt NC (pp above ceiling)")
+               label="Volt-Watt NC (pp above ceiling)")
     ax_pnc.axhline(0, color="k", lw=0.5)
     ax_pnc.set_ylabel("V-W NC\n(pp)", fontsize=8.5, color=Cn)
     ax_pnc.tick_params(axis="y", colors=Cn, labelsize=8)
@@ -1202,7 +1202,7 @@ def plot_operational(df_day, site_alias, capacity_kva, zoom_date,
         Patch(color=C_REF, alpha=0.40,
               label=f"Required Q band (+/-{tol*100:.0f}% of s_99)"),
         plt.Line2D([0], [0], color=Cq, lw=1.4,
-                   label=f"Measured Q — {orientation.upper()}"),
+                   label=f"Measured Q - {orientation.upper()}"),
     ], fontsize=7, loc="upper left", framealpha=0.9)
     ax_qkvar = ax_q.twinx()
     ax_qkvar.set_ylim(-_qlim / 100 * S, _qlim / 100 * S)
