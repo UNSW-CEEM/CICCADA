@@ -1,16 +1,16 @@
 """Solar Analytics count-based site-day eligibility policy."""
 
 import polars as pl
-from config import (
-    SOLAR_ANALYTICS_DAY_COVERAGE_THRESHOLD,
-    SOLAR_ANALYTICS_EXPECTED_TIMESTAMPS,
+from solar_analytics_workflow.config import (
+    DAY_COVERAGE_THRESHOLD,
+    EXPECTED_TIMESTAMPS,
 )
 
 
 def summarize_solar_analytics_day_eligibility(
     prepared_day_df,
-    coverage_threshold=SOLAR_ANALYTICS_DAY_COVERAGE_THRESHOLD,
-    expected_timestamps=SOLAR_ANALYTICS_EXPECTED_TIMESTAMPS,
+    coverage_threshold=DAY_COVERAGE_THRESHOLD,
+    expected_timestamps=EXPECTED_TIMESTAMPS,
 ):
     """Summarize complete PV-power and V10m timestamps in a prepared day."""
     required_columns = {"local_tstamp", "v10m_avg"}

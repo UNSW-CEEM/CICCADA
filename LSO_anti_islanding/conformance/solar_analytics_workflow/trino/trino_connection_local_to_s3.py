@@ -12,13 +12,7 @@ from uuid import uuid4
 import polars as pl
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
-
-AWS_PROFILE = "ciccada"
-AWS_REGION = "ap-southeast-2"
-SSM_INSTANCE_ID = "i-0f5bc0dd90f8a58d1"
-TRINO_HOST = "trino2.ciccada"
-TRINO_PORT = 8080
-LOCAL_PORT = 18080
+from trino_config import *
 
 
 @contextmanager

@@ -1,35 +1,52 @@
 import sys
-from functools import partial
+from datetime import datetime
 from pathlib import Path
 
 import polars as pl
 
-CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
+CONFORMANCE_DIR = Path(__file__).resolve().parents[2]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from config import (
-    GENERATE_SITE_PLOTS_DEFAULT,
+from core.check_pv_behaviour import CheckPVBehaviour
+from core.phase_a import run_phase_a_for_site
+from core.phase_b import run_phase_b_for_site
+from solar_analytics_workflow.config import (
+    DAY_ANALYSIS_START,
+    DAY_END,
+    DAY_EXTRACTION_START,
+    GENERATE_SITE_PLOTS,
     LOCAL_TIMEZONE,
-    PHASE_B_METHODS,
     PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS,
     PRIMARY_PHASE_B_METHOD,
-    SITE_DAY_END,
-    SITE_DAY_EXTRACTION_START,
 )
-from core.data_cleaning import (
+from solar_analytics_workflow.data_cleaning import (
     addLocalTStamp,
     addPolarityToPower,
     addValidVoltage,
     convertWToKw,
     deduplicateMeasurements,
 )
-from core.pipeline import run_conformance
-from core.workflow import build_workflow_inputs, prepare_site
-from reporting.plotting import plot_site_threshold_distribution
-from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_CONFORMANCE_CONFIG
+from solar_analytics_workflow.plotting import (
+    plot_site_compliance_day,
+    plot_site_threshold_distribution,
+)
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
-from trino_connection_local_to_s3 import local_trino_engine, read_query_via_parquet
+from solar_analytics_workflow.rated_capacity import add_s_rated_capacity
+from solar_analytics_workflow.site_day_filtering import (
+    summarize_solar_analytics_day_eligibility,
+)
+from solar_analytics_workflow.site_preparation import (
+    calculate_site_day_voltage_signals,
+    extract_site_day,
+    map_circuit_data_to_site,
+    trim_site_day_analysis_window,
+)
+from solar_analytics_workflow.solar_paths import TRINO_LIMITED_OUTPUT_DIR
+from solar_analytics_workflow.trino.trino_connection_local_to_s3 import (
+    local_trino_engine,
+    read_query_via_parquet,
+)
 
 CLEANED_DATA_SCHEMA = {
     "c_id": pl.Int64,
@@ -60,7 +77,7 @@ CONFORMANCE_SUMMARY_SCHEMA = {
     "threshold_confidence_tier": pl.Utf8,
 }
 
-LIMITED_OUTPUT_DIR = SOLAR_ANALYTICS_CONFORMANCE_CONFIG.output_dir / "trino_limited"
+LIMITED_OUTPUT_DIR = TRINO_LIMITED_OUTPUT_DIR
 LIMITED_SITE_PLOT_DIR = LIMITED_OUTPUT_DIR / "overall_site_plots"
 LIMITED_THRESHOLD_PLOT_DIR = LIMITED_OUTPUT_DIR / "threshold_distribution_plots"
 LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "solA_conformance_trino_limited_summary.csv"
@@ -225,8 +242,8 @@ def _iter_site_timeseries_batches(engine, selected_sites, circuit_data):
                             with_timezone(t_stamp, 'UTC'),
                             '{batch_timezone}'
                         ) AS time
-                    ) BETWEEN TIME '{SITE_DAY_EXTRACTION_START.isoformat()}'
-                        AND TIME '{SITE_DAY_END.isoformat()}'
+                    ) BETWEEN TIME '{DAY_EXTRACTION_START.isoformat()}'
+                        AND TIME '{DAY_END.isoformat()}'
             """
 
             batch_timeseries_data = read_query_via_parquet(
@@ -296,10 +313,20 @@ SELECT
     MAX(s.state) AS state,
     CAST(MAX(s.postcode) AS INTEGER) AS postcode,
     system.bucket(CAST(MAX(s.postcode) AS INTEGER), 16) AS postcode_bucket,
-    MAX(s.ac_capacity_kw) AS ac_capacity_kw
+    MAX(m.ac_capacity_kw) AS ac_capacity_kw,
+    MAX(m.s_99) AS s_99
 FROM hive.solar_analytics.sites AS s
 INNER JOIN eligible_sites AS e
     ON s.site_id = e.site_id
+LEFT JOIN (
+    SELECT
+        site_id,
+        MAX(ac_capacity_kw) AS ac_capacity_kw,
+        MAX(s_99) AS s_99
+    FROM iceberg.solar_analytics_iceberg.meta_up23c
+    GROUP BY site_id
+) AS m
+    ON s.site_id = m.site_id
 GROUP BY s.site_id
 ORDER BY s.site_id
 LIMIT 2000
@@ -320,15 +347,13 @@ with local_trino_engine(
         [
             pl.col("site_id").cast(pl.Int64),
             pl.col("state").cast(pl.Utf8),
-            pl.col("ac_capacity_kw")
-            .cast(pl.Float64, strict=False)
-            .alias("capacity_kw"),
             pl.col("state")
             .replace_strict(STATE_TIMEZONES, default=LOCAL_TIMEZONE)
             .cast(pl.Utf8)
             .alias("timezone"),
         ]
     )
+    site_data = add_s_rated_capacity(site_data)
 
     # Retrieve PV circuits only for the selected ten sites.
     site_ids = ", ".join(site_data["site_id"].cast(pl.String).to_list())
@@ -365,6 +390,7 @@ with local_trino_engine(
     )
 
     processed_sites = 0
+    completed_phase_sites = 0
     for (
         batch_sites,
         batch_circuit_data,
@@ -410,39 +436,125 @@ with local_trino_engine(
                 f"{site_timeseries_data.height} rows",
                 flush=True,
             )
+            processed_sites += 1
 
-            site_workflow_inputs = build_workflow_inputs(
-                site_data.filter(pl.col("site_id") == site["site_id"]),
-                site_circuit_data,
-                site_timeseries_data,
+            day_behaviours = []
+            local_dates = (
+                site_timeseries_data.select(
+                    pl.col("local_tstamp").dt.date().alias("local_date")
+                )
+                .drop_nulls()
+                .unique()
+                .sort("local_date")["local_date"]
+                .to_list()
             )
-            prepare_trino_site = partial(
-                prepare_site,
-                inputs=site_workflow_inputs,
-                workflow_config=SOLAR_ANALYTICS_CONFORMANCE_CONFIG,
+            for local_date in local_dates:
+                site_day_long = extract_site_day(
+                    site_timeseries_data,
+                    datetime.combine(local_date, DAY_EXTRACTION_START),
+                    datetime.combine(local_date, DAY_END),
+                )
+                if site_day_long.is_empty():
+                    continue
+                prepared_day = calculate_site_day_voltage_signals(
+                    map_circuit_data_to_site(
+                        site_day_long,
+                        site["site_id"],
+                    ),
+                    voltage_prefix="voltage_valid",
+                )
+                analysis_day = trim_site_day_analysis_window(
+                    prepared_day,
+                    DAY_ANALYSIS_START,
+                    DAY_END,
+                )
+                eligibility = summarize_solar_analytics_day_eligibility(analysis_day)
+                if eligibility["eligible"]:
+                    day_behaviours.append(
+                        {
+                            "day": local_date,
+                            "behaviour": CheckPVBehaviour(
+                                analysis_day,
+                                volCol="voltage_valid",
+                            ),
+                        }
+                    )
+
+            if not day_behaviours:
+                print(
+                    f"No eligible days for site {site['site_id']}; skipping.",
+                    flush=True,
+                )
+                continue
+
+            s_rated = site["s_rated"]
+            if s_rated is None:
+                print(
+                    f"No S_rated for site {site['site_id']}; skipping.",
+                    flush=True,
+                )
+                continue
+
+            phase_a_result = run_phase_a_for_site(
+                site["site_id"],
+                day_behaviours,
+                s_rated,
             )
-            site_result = run_conformance(
-                candidate_site_ids=site_workflow_inputs["candidate_site_ids"],
-                prepare_site=prepare_trino_site,
-                methods=PHASE_B_METHODS,
-                primary_method=PRIMARY_PHASE_B_METHOD,
-                generate_site_plots=GENERATE_SITE_PLOTS_DEFAULT,
-                plot_no_eligible_timestamp_days=(PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS),
-                site_plot_dir=LIMITED_SITE_PLOT_DIR,
+            phase_b_result = run_phase_b_for_site(
+                site["site_id"],
+                day_behaviours,
+                s_rated,
+                raw_thresholds=phase_a_result["raw_thresholds"],
+                confidence_info=phase_a_result["confidence_info"],
+                phase_b_method=PRIMARY_PHASE_B_METHOD,
             )
+            site_result = {
+                "phase_b_site_summary": phase_b_result["summary_row"],
+                "site_thresholds": phase_b_result["threshold_row"],
+            }
+
+            summary = phase_b_result["summary_row"].to_dicts()[0]
+            thresholds = phase_b_result["threshold_row"].to_dicts()[0]
+            if GENERATE_SITE_PLOTS and summary["overall_pass"] is not None:
+                plot_folder = (
+                    "compliant" if summary["overall_pass"] is True else "non_compliant"
+                )
+                for day_info in day_behaviours:
+                    day_plot = day_info["behaviour"].phase_b_day(
+                        s_rated,
+                        los_threshold=summary["los_threshold_used"],
+                        ov1_work_threshold=thresholds["ov1_work_site"],
+                    )
+                    plot_site_compliance_day(
+                        day_plot["frame"],
+                        site["site_id"],
+                        day_info["day"],
+                        p_rated=s_rated,
+                        lso_threshold=summary["los_threshold_used"],
+                        ov1_threshold=thresholds["ov1_test_site"],
+                        overall_pass=summary["overall_pass"],
+                        day_summary=day_plot["summary"],
+                        plot_no_eligible_timestamp_days=(
+                            PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS
+                        ),
+                        save_path=(
+                            LIMITED_SITE_PLOT_DIR
+                            / plot_folder
+                            / f"Site_{site['site_id']}_Day_"
+                            f"{day_info['day']}_{plot_folder}.png"
+                        ),
+                    )
 
             summary_row = _conformance_summary_row(site_result)
             if summary_row is not None:
                 conformance_summary_rows.append(summary_row)
 
-            phase_a_records = site_result["phase_a_trip_attribution"]
+            phase_a_records = phase_a_result["records"]
             if not phase_a_records.is_empty():
                 phase_a_record_frames.append(phase_a_records)
 
-            processed_sites += 1
+            completed_phase_sites += 1
             del site_result
-            del prepare_trino_site
-            del site_workflow_inputs
             del site_timeseries_data
 
 conformance_summary = pl.DataFrame(
@@ -459,3 +571,4 @@ _generate_threshold_distribution_plots(phase_a_record_frames)
 print(f"Selected sites: {site_data.height}")
 print(f"Selected PV circuits: {circuit_data['c_id'].n_unique()}")
 print(f"Sites processed through conformance: {processed_sites}")
+print(f"Sites completing Phase A and Phase B: {completed_phase_sites}")

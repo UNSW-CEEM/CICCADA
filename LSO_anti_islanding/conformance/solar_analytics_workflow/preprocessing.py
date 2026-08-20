@@ -1,11 +1,11 @@
-"""Solar Analytics orchestration of shared measurement cleaning operations."""
+"""Solar Analytics measurement preprocessing."""
 
 from pathlib import Path
 
 import polars as pl
 import pyarrow.parquet as pq
-from config import LOCAL_TIMEZONE
-from core.data_cleaning import (
+from solar_analytics_workflow.config import LOCAL_TIMEZONE
+from solar_analytics_workflow.data_cleaning import (
     addLocalTStamp,
     addPolarityToPower,
     addValidVoltage,
@@ -30,15 +30,6 @@ STATE_TIMEZONES = {
     "VIC": "Australia/Melbourne",
     "WA": "Australia/Perth",
 }
-
-
-def _raw_parquet_paths(data_dir, cleaned_path):
-    cleaned_path = cleaned_path.resolve()
-    return sorted(
-        path
-        for path in data_dir.glob("*.parquet")
-        if path.resolve() != cleaned_path and path.name != CLEANED_DATA_PATH.name
-    )
 
 
 def load_circuit_details(path=CIRCUIT_METADATA_PATH):
@@ -81,7 +72,13 @@ def build_cleaned_site_data(
     if not site_metadata_path.exists():
         raise FileNotFoundError(f"Missing site metadata at {site_metadata_path}.")
 
-    raw_parquet_paths = _raw_parquet_paths(data_dir, cleaned_path)
+    resolved_cleaned_path = cleaned_path.resolve()
+    raw_parquet_paths = sorted(
+        path
+        for path in data_dir.glob("*.parquet")
+        if path.resolve() != resolved_cleaned_path
+        and path.name != CLEANED_DATA_PATH.name
+    )
     if not raw_parquet_paths:
         raise FileNotFoundError(
             f"No raw parquet files found in {data_dir}. Expected one or more "

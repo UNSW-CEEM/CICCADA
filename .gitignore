@@ -162,6 +162,9 @@ ciccada/
 
 SAPN2022_Analysis/curtailment/scripts/local_paths.py
 LSO_anti_islanding/curtailment/scripts/local_paths.py
+LSO_anti_islanding/conformance/solar_analytics_workflow/trino/trino_config.py
+LSO_anti_islanding/conformance/solar_analytics_workflow/trino/trino_data_query.ipynb
+LSO_anti_islanding/conformance/data_query_s3_scripts/
 SAPN2022_Analysis/curtailment/outputs/
 LSO_anti_islanding/conformance/datasets/
 LSO_anti_islanding/conformance/updated results/

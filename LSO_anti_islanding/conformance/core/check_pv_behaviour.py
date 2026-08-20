@@ -3,7 +3,8 @@
 from typing import Any
 
 import polars as pl
-from config import MAX_DISCONNECT_EDGE_GAP_SECONDS
+
+MAX_DISCONNECT_EDGE_GAP_SECONDS = 300
 
 
 class CheckPVBehaviour:
