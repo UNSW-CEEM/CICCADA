@@ -474,7 +474,7 @@ class CheckPVBehaviour:
                 (
                     pl.col("eligible_los")
                     & (~pl.col("ov1_responsible"))
-                    & (pl.col("v10m_avg") > los_threshold)
+                    & (pl.col("v10m_avg") >= los_threshold)
                 ).alias("los_responsible"),
                 (
                     pl.col("is_disc").fill_null(False)

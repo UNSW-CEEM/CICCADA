@@ -216,7 +216,7 @@ def _build_day_flag_frame(
             (
                 pl.col("_keep_row")
                 & ~pl.col("_ov1_kicks_in")
-                & (pl.col("v10m_avg") > los_threshold_used)
+                & (pl.col("v10m_avg") >= los_threshold_used)
             )
             .fill_null(False)
             .alias("_los_responsible"),
