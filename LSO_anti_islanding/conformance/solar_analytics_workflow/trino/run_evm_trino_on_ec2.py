@@ -43,6 +43,7 @@ from solar_analytics_workflow.site_preparation import (
     trim_site_day_analysis_window,
 )
 from solar_analytics_workflow.solar_paths import TRINO_OUTPUT_DIR
+from solar_analytics_workflow.trino.trino_config import TRINO_EC2_ICEBERG_URL
 
 EVM_TRINO_SITE_BATCH_SIZE = 10 # num sites queried at once
 
@@ -190,7 +191,7 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
 
 # Connect directly to the Trino2 service already running for the EC2 instance.
 engine = create_engine(
-    "trino://ubuntu@trino2.ciccada:8080/iceberg/solar_analytics_iceberg",
+    TRINO_EC2_ICEBERG_URL,
     pool_pre_ping=True,
 )
 try:

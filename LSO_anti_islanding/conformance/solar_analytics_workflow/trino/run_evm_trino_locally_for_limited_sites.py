@@ -379,7 +379,7 @@ with local_trino_engine(
     selected_sites = (
         site_data.filter(pl.col("site_id").is_in(eligible_site_ids.implode()))
         .sort("site_id")
-        .head(2000)
+        # .head(2000)
     )
     selected_site_ids = selected_sites.get_column("site_id")
     circuit_data = circuit_data.filter(
