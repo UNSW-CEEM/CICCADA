@@ -61,6 +61,8 @@ iceberg_exec("""CREATE TABLE curtailment_lso_anti_islanding (
     day INTEGER,
     site_id BIGINT,
     curtailment_lso_anti_islanding_sum DOUBLE,
+    uncurtailed_lso_anti_islanding_sum DOUBLE,
+    uncurtailed_lso_anti_islanding_eligible_sum DOUBLE,
     curtailment_lso_anti_islanding_count BIGINT,
     curtailment_lso_anti_islanding_eligible_count BIGINT
 )
@@ -467,6 +469,15 @@ try:
                             pl.col("curtailed_power_kw")
                             .sum()
                             .alias("curtailment_lso_anti_islanding_sum"),
+                            pl.col("uncurtailed_P")
+                            .sum()
+                            .alias("uncurtailed_lso_anti_islanding_sum"),
+                            pl.col("uncurtailed_P")
+                            .filter(pl.col("voltage_triggered"))
+                            .sum()
+                            .alias(
+                                "uncurtailed_lso_anti_islanding_eligible_sum"
+                            ),
                             (pl.col("curtailed_power_kw") > 0)
                             .sum()
                             .cast(pl.Int64)
@@ -486,6 +497,8 @@ try:
                             "day",
                             "site_id",
                             "curtailment_lso_anti_islanding_sum",
+                            "uncurtailed_lso_anti_islanding_sum",
+                            "uncurtailed_lso_anti_islanding_eligible_sum",
                             "curtailment_lso_anti_islanding_count",
                             "curtailment_lso_anti_islanding_eligible_count",
                         ]
