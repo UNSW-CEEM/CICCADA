@@ -368,12 +368,12 @@ try:
                 )
                 if batch_signals.is_empty():
                     continue
-                batch_signals.write_database(
-                    table_name="v10_vinst_assessed_sites",
-                    connection=engine,
-                    if_table_exists="append",
-                    engine_options={"chunksize": 250, "method": "multi"},
-                )
+                # batch_signals.write_database(
+                #     table_name="v10_vinst_assessed_sites",
+                #     connection=engine,
+                #     if_table_exists="append",
+                #     engine_options={"chunksize": 250, "method": "multi"},
+                # )
 
                 batch_signal_site_ids = batch_signals.get_column("site_id").unique()
                 batch_signal_site_ids_sql = ", ".join(
