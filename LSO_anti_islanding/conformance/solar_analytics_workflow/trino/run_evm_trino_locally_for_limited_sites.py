@@ -42,7 +42,10 @@ from solar_analytics_workflow.site_preparation import (
     map_circuit_data_to_site,
     trim_site_day_analysis_window,
 )
-from solar_analytics_workflow.solar_paths import TRINO_LIMITED_OUTPUT_DIR
+from solar_analytics_workflow.solar_paths import (
+    TRINO_LIMITED_OUTPUT_DIR,
+    TRINO_OUTPUT_DIR,
+)
 from solar_analytics_workflow.trino.trino_connection_local_to_s3 import (
     local_trino_engine,
     read_query_via_parquet,
@@ -80,6 +83,8 @@ LIMITED_OUTPUT_DIR = TRINO_LIMITED_OUTPUT_DIR
 LIMITED_SITE_PLOT_DIR = LIMITED_OUTPUT_DIR / "overall_site_plots"
 LIMITED_THRESHOLD_PLOT_DIR = LIMITED_OUTPUT_DIR / "threshold_distribution_plots"
 LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "solA_conformance_trino_limited_summary.csv"
+ASSESSMENT_SUMMARY_PATH = TRINO_OUTPUT_DIR / "solA_conformance_trino_summary.csv"
+MAX_ASSESSED_SITES = 10
 
 
 def _conformance_summary_row(site_result):
@@ -312,6 +317,22 @@ WHERE m.inverter_count = 1
 LIMITED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 conformance_summary_rows = []
 phase_a_record_frames = []
+assessed_site_ids = (
+    pl.read_csv(
+        ASSESSMENT_SUMMARY_PATH,
+        schema_overrides={
+            "site_id": pl.Int64,
+            "overall_pass": pl.Boolean,
+        },
+    )
+    .filter(pl.col("overall_pass").is_not_null())
+    .select("site_id")
+    .drop_nulls()
+    .unique(maintain_order=True)
+    .get_column("site_id")
+)
+print(f"Assessed sites in summary: {assessed_site_ids.len()}", flush=True)
+print(f"Configured assessed-site cap: {MAX_ASSESSED_SITES}", flush=True)
 
 with local_trino_engine(
     catalog="iceberg",
@@ -377,10 +398,16 @@ with local_trino_engine(
         pl.col("pv_circuit_count").is_between(1, 3)
     )["site_id"]
     selected_sites = (
-        site_data.filter(pl.col("site_id").is_in(eligible_site_ids.implode()))
+        site_data.filter(
+            pl.col("site_id").is_in(eligible_site_ids.implode())
+            & pl.col("site_id").is_in(assessed_site_ids.implode())
+        )
         .sort("site_id")
-        # .head(2000)
     )
+    if MAX_ASSESSED_SITES is not None:
+        selected_sites = selected_sites.head(MAX_ASSESSED_SITES)
+    print(f"Selected assessed sites: {selected_sites.height}", flush=True)
+
     selected_site_ids = selected_sites.get_column("site_id")
     circuit_data = circuit_data.filter(
         pl.col("site_id").is_in(selected_site_ids.implode())

@@ -261,7 +261,7 @@ with local_trino_engine(
     conformance_output_dir = TRINO_OUTPUT_DIR
     conformance_output_dir.mkdir(parents=True, exist_ok=True)
     conformance_output_path = (
-        conformance_output_dir / "solA_conformance_trino_summary.csv"
+        conformance_output_dir / "solA_conformance_trino_summary_local.csv"
     )
     pl.DataFrame(schema=CONFORMANCE_SUMMARY_SCHEMA).write_csv(conformance_output_path)
 

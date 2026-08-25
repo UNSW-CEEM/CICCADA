@@ -32,28 +32,27 @@ from solar_analytics_workflow.site_preparation import (
     trim_site_day_analysis_window,
 )
 from solar_analytics_workflow.rated_capacity import add_s_rated_capacity
-from solar_analytics_workflow.solar_paths import TRINO_OUTPUT_DIR
 from solar_analytics_workflow.trino.trino_connection_on_ec2 import (
     engine,
     iceberg_exec,
 )
 
 iceberg_exec("DROP TABLE IF EXISTS v10_vinst_assessed_sites")
-iceberg_exec("""CREATE TABLE IF NOT EXISTS v10_vinst_assessed_sites (
-    site_id BIGINT,
-    utc_tstamp TIMESTAMP(6) WITH TIME ZONE,
-    local_tstamp TIMESTAMP(6),
-    timezone VARCHAR,
-    s_rated DOUBLE,
-    v10m_avg DOUBLE,
-    vinst_max DOUBLE
-)
-WITH (
-    format = 'PARQUET',
-    partitioning = ARRAY['month(utc_tstamp)'],
-    sorted_by = ARRAY['site_id', 'utc_tstamp']
-)
-""")
+# iceberg_exec("""CREATE TABLE IF NOT EXISTS v10_vinst_assessed_sites (
+#     site_id BIGINT,
+#     utc_tstamp TIMESTAMP(6) WITH TIME ZONE,
+#     local_tstamp TIMESTAMP(6),
+#     timezone VARCHAR,
+#     s_rated DOUBLE,
+#     v10m_avg DOUBLE,
+#     vinst_max DOUBLE
+# )
+# WITH (
+#     format = 'PARQUET',
+#     partitioning = ARRAY['month(utc_tstamp)'],
+#     sorted_by = ARRAY['site_id', 'utc_tstamp']
+# )
+# """)
 
 iceberg_exec("DROP TABLE IF EXISTS curtailment_lso_anti_islanding")
 iceberg_exec("""CREATE TABLE curtailment_lso_anti_islanding (
@@ -62,7 +61,8 @@ iceberg_exec("""CREATE TABLE curtailment_lso_anti_islanding (
     day INTEGER,
     site_id BIGINT,
     curtailment_lso_anti_islanding_sum DOUBLE,
-    curtailment_lso_anti_islanding_count BIGINT
+    curtailment_lso_anti_islanding_count BIGINT,
+    curtailment_lso_anti_islanding_eligible_count BIGINT
 )
 WITH (
     format = 'PARQUET',
@@ -72,10 +72,21 @@ WITH (
 """)
 
 TRINO_SITE_BATCH_SIZE = 10
+CONFORMANCE_TABLE = (
+    "iceberg.solar_analytics_iceberg.lso_anti_islanding_conformance"
+)
 
-conformance_summary = pl.read_csv(
-    TRINO_OUTPUT_DIR / "solA_conformance_trino_summary_new.csv"
-).filter(pl.col("assessment_status") != "unassessed")
+conformance_summary = pl.read_database(
+    query=f"""
+        SELECT
+            site_id,
+            los_threshold_used,
+            ov1_threshold_used
+        FROM {CONFORMANCE_TABLE}
+        WHERE assessment_status <> 'unassessed'
+    """,
+    connection=engine,
+)
 
 acceptable_site_ids = (
     conformance_summary.get_column("site_id")
@@ -460,6 +471,12 @@ try:
                             .sum()
                             .cast(pl.Int64)
                             .alias("curtailment_lso_anti_islanding_count"),
+                            pl.col("voltage_triggered")
+                            .sum()
+                            .cast(pl.Int64)
+                            .alias(
+                                "curtailment_lso_anti_islanding_eligible_count"
+                            ),
                         ]
                     )
                     .select(
@@ -470,6 +487,7 @@ try:
                             "site_id",
                             "curtailment_lso_anti_islanding_sum",
                             "curtailment_lso_anti_islanding_count",
+                            "curtailment_lso_anti_islanding_eligible_count",
                         ]
                     )
                 )

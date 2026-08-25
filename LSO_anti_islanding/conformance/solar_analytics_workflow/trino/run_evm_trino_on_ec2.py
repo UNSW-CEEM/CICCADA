@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 
 import polars as pl
-from sqlalchemy import create_engine
 
 CONFORMANCE_DIR = Path(__file__).resolve().parents[2]
 REPOSITORY_DIR = Path(__file__).resolve().parents[4]
@@ -43,7 +42,10 @@ from solar_analytics_workflow.site_preparation import (
     trim_site_day_analysis_window,
 )
 from solar_analytics_workflow.solar_paths import TRINO_OUTPUT_DIR
-from solar_analytics_workflow.trino.trino_config import TRINO_EC2_ICEBERG_URL
+from solar_analytics_workflow.trino.trino_connection_on_ec2 import (
+    engine,
+    iceberg_exec,
+)
 
 EVM_TRINO_SITE_BATCH_SIZE = 10 # num sites queried at once
 
@@ -189,11 +191,6 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
                 yield batch_sites, batch_circuit_data, batch_timeseries_data
 
 
-# Connect directly to the Trino2 service already running for the EC2 instance.
-engine = create_engine(
-    TRINO_EC2_ICEBERG_URL,
-    pool_pre_ping=True,
-)
 try:
     # Select the site cohort before looking up its circuits.
     site_data = pl.read_database(query=SITE_QUERY, connection=engine)
@@ -466,6 +463,43 @@ try:
                     include_header=False,
                 )
             conformance_summary_rows.clear()
+
+    conformance_summary = pl.read_csv(
+        conformance_output_path,
+        schema_overrides=CONFORMANCE_SUMMARY_SCHEMA,
+    )
+
+    iceberg_exec("DROP TABLE IF EXISTS lso_anti_islanding_conformance")
+    iceberg_exec("""
+        CREATE TABLE lso_anti_islanding_conformance (
+            site_id BIGINT,
+            method_key VARCHAR,
+            assessment_status VARCHAR,
+            overall_pass BOOLEAN,
+            los_pass BOOLEAN,
+            los_compliance_pct DOUBLE,
+            los_threshold_used DOUBLE,
+            ov1_pass BOOLEAN,
+            ov1_compliance_pct DOUBLE,
+            ov1_threshold_used DOUBLE,
+            pass_basis VARCHAR,
+            threshold_selection_basis VARCHAR,
+            threshold_confidence_tier VARCHAR
+        )
+        WITH (format = 'PARQUET')
+    """)
+
+    rows_written = conformance_summary.write_database(
+        table_name="lso_anti_islanding_conformance",
+        connection=engine,
+        if_table_exists="append",
+        engine_options={"chunksize": 250, "method": "multi"},
+    )
+    print(
+        "Uploaded conformance summary to lso_anti_islanding_conformance: "
+        f"{rows_written} rows",
+        flush=True,
+    )
 
 finally:
     engine.dispose()
