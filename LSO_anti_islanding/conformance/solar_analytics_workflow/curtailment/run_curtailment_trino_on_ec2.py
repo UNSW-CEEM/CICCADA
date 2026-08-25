@@ -446,7 +446,11 @@ try:
                         pl.when(pl.col("curtailment_triggered"))
                         .then(
                             pl.max_horizontal(
-                                pl.col("uncurtailed_P") - pl.col("P_kw"),
+                                pl.col("uncurtailed_P")
+                                - pl.max_horizontal(
+                                    pl.col("P_kw"),
+                                    pl.lit(0.0),
+                                ),
                                 pl.lit(0.0),
                             )
                         )
