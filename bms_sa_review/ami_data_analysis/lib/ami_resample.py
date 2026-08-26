@@ -24,13 +24,64 @@ from __future__ import annotations
 import pandas as pd
 
 __all__ = [
-    "interval_energy_kwh", "verify_column_units", "resample_to_interval",
+    "interval_energy_kwh", "verify_column_units", "confirm_energy_matches_power",
+    "resample_to_interval",
 ]
 
 
 def interval_energy_kwh(power_w: pd.Series, source_interval_minutes: float) -> pd.Series:
     """kWh delivered in one source interval, from instantaneous power in W. Pure."""
     return power_w / 1000.0 * (source_interval_minutes / 60.0)
+
+
+def confirm_energy_matches_power(
+    sample: pd.DataFrame, *,
+    power_column: str = "power",
+    energy_column: str = "energy",
+    interval_minutes: float = 5.0,
+    tolerance_wh: float = 0.5,
+    max_mismatch_share: float = 0.01,
+) -> dict:
+    """
+    Does a native `energy` column already equal `power * interval_hours`, as
+    its name promises? Pure.
+
+    `verify_column_units` exists for a genuinely ambiguous column -- but it
+    only had to guess at `energy_reactive`'s units because the queries that
+    fed it never pulled `ts`'s own `energy` column (an oversight inherited
+    from Stage 1's narrower column list, not a fact about the source data).
+    Once `energy` -- and its siblings `energy_import`, `energy_export`,
+    `energy_reactive_import`, `energy_reactive_export` -- are actually
+    queried, there is nothing left to guess: this just confirms the
+    relationship the column's own name promises, the same spot-check any
+    other named column would get before being trusted at face value.
+    `tolerance_wh` absorbs ordinary floating-point/rounding noise, not a
+    real discrepancy; `max_mismatch_share` is how much of the sample is
+    allowed to miss that tolerance before `confirmed` turns False.
+    """
+    if sample is None or not len(sample):
+        return {
+            "n_rows": 0, "n_mismatched": 0, "share_mismatched": None,
+            "confirmed": None, "reason": "no sample available",
+        }
+    expected_wh = sample[power_column] * (interval_minutes / 60.0)
+    diff = (sample[energy_column] - expected_wh).abs()
+    mismatched = diff > tolerance_wh
+    n_mismatched = int(mismatched.sum())
+    share = n_mismatched / len(sample)
+    confirmed = share <= max_mismatch_share
+    return {
+        "n_rows": int(len(sample)),
+        "n_mismatched": n_mismatched,
+        "share_mismatched": float(share),
+        "confirmed": confirmed,
+        "reason": (
+            f"{n_mismatched:,} of {len(sample):,} row(s) ({share:.2%}) differ from "
+            f"`{power_column}` * interval_hours by more than {tolerance_wh} Wh -- "
+            + ("within tolerance, `energy` is directly usable" if confirmed else
+               "exceeds the allowed mismatch share, do not trust `energy` blindly here")
+        ),
+    }
 
 
 def verify_column_units(

@@ -29,7 +29,7 @@ __all__ = [
     "summarise_circuit_types", "flag_suspected_aggregates", "cohort_completeness",
     "signal_coverage_summary",
     "AggregationCheck", "check_aggregation", "pick_aggregation_test_site",
-    "find_duplicate_circuits",
+    "find_duplicate_circuits", "find_inactive_circuits", "sites_missing_day_data",
 ]
 
 
@@ -313,6 +313,94 @@ def find_duplicate_circuits(
                         "n_overlap": len(paired),
                     })
     return pd.DataFrame(results)
+
+
+def find_inactive_circuits(
+    long: pd.DataFrame, *,
+    circuit_column: str = "circuit_id",
+    power_column: str = "power",
+    inactive_threshold_w: float = 5.0,
+) -> pd.DataFrame:
+    """
+    Which circuit_ids show essentially NO activity at all in this sample --
+    a likely-retired/placeholder circuit_id, not a live meter. Pure -- no
+    query, no plotting.
+
+    The companion check to `find_duplicate_circuits` for "why does this site
+    have 3 circuits of one type": a duplicate is a circuit_id that IS live
+    but mirrors another; this catches the other real pattern seen in the
+    fleet -- extra circuit_ids left in `meta_up23c` after a meter or logger
+    was re-registered, which are simply dead (near-enough-constant zero, no
+    real reading ever recorded), not a genuine second measurement point to
+    reconcile.
+
+    Deliberately checks RAW `power` (not `power_signed`): whether a circuit
+    ever moves at all does not depend on its `circuit_polarity` sign
+    correction -- a dead circuit reads ~0 regardless of which sign convention
+    would apply to it.
+
+    `inactive_threshold_w` should be well below any circuit's real load --
+    the default (5W) is chosen to clear ordinary standby/CT noise, which
+    `find_duplicate_circuits`'s and the PV night-diagnostic's evidence both
+    put in the tens of Watts, while still catching a circuit whose reading
+    never leaves a few Watts of zero.
+    """
+    if long is None or not len(long):
+        return pd.DataFrame(columns=[circuit_column, "max_abs_power", "inactive"])
+    grouped = long.groupby(circuit_column)[power_column].apply(lambda s: float(s.abs().max()))
+    out = grouped.reset_index()
+    out.columns = [circuit_column, "max_abs_power"]
+    out["inactive"] = out["max_abs_power"] < inactive_threshold_w
+    return out.sort_values(circuit_column).reset_index(drop=True)
+
+
+def sites_missing_day_data(
+    test_site_ids, meta: pd.DataFrame, reporting_circuit_ids, *,
+    candidate_type: str, component_types,
+    site_column: str = "site_id",
+    type_column: str = "circuit_type",
+    circuit_column: str = "circuit_id",
+) -> dict:
+    """
+    Which of `test_site_ids` have NO chance of a conclusive aggregation check
+    on the target day, because neither the candidate nor any component
+    circuit_id actually reported a single row -- {site_id: reason}. Pure.
+
+    This is a DIFFERENT failure mode from `check_aggregation`'s own
+    inconclusive reason ("N overlapping intervals, need at least M"): that
+    one means data existed for both sides but didn't line up (a partial-day
+    gap); this one means the day was hopeless before any per-site query ran
+    -- `meta_up23c` lists the circuit, but it never reported on this day at
+    all (real fleet churn: sites join/leave, meters get swapped). A full
+    real run found 83 of 200 tested sites came back inconclusive, indistin-
+    guishable in the results table from a genuine partial-overlap case --
+    this function exists to tell the two apart, and let the caller skip the
+    (wasted) per-site query for sites already known to be hopeless.
+
+    `reporting_circuit_ids` is the set of circuit_ids confirmed (by one
+    cheap presence query, run once for the whole batch of `test_site_ids`
+    rather than once per site) to have at least one row on the target day.
+    """
+    reporting = set(reporting_circuit_ids)
+    component_types = list(component_types)
+    result = {}
+    for site_id in test_site_ids:
+        site_meta = meta[meta[site_column] == site_id]
+        candidate_ids = site_meta[site_meta[type_column] == candidate_type][circuit_column].tolist()
+        component_ids = site_meta[site_meta[type_column].isin(component_types)][circuit_column].tolist()
+        candidate_has_data = any(c in reporting for c in candidate_ids)
+        component_has_data = any(c in reporting for c in component_ids)
+        if not candidate_has_data or not component_has_data:
+            missing = []
+            if not candidate_has_data:
+                missing.append("candidate")
+            if not component_has_data:
+                missing.append("component(s)")
+            result[site_id] = (
+                f"no {' and '.join(missing)} data reported this day "
+                "(listed in meta_up23c, but zero `ts` rows this day)"
+            )
+    return result
 
 
 def pick_aggregation_test_site(

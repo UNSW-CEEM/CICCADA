@@ -76,6 +76,55 @@ def test_empty_sample_returns_empty_frame():
     assert S.verify_polarity_makes_positive(None).empty
 
 
+def test_small_magnitude_noise_is_not_bidirectional_with_default_floor():
+    """
+    A real fleet run without a magnitude floor flagged 17 of 24 load types
+    (lighting, hot water, a fridge...) as bidirectional -- physically
+    implausible for most of them. The cause: small negative readings from
+    CT/power-factor noise around an idle baseline clear a bare sign-count
+    threshold at fleet scale without the circuit ever really reversing.
+    This reproduces that shape at small scale: 20% genuinely small negative
+    noise (-5W, well under the 50W default floor) plus 80% real positive
+    draw -- must NOT be flagged, even though the RAW share easily would be.
+    """
+    sample = pd.DataFrame({
+        "circuit_type": ["load_lighting"] * 20,
+        "power": [500.0] * 16 + [-5.0] * 4,
+        "circuit_polarity": np.full(20, 1),
+    })
+    out = S.verify_polarity_makes_positive(sample).set_index("circuit_type")
+    assert out.loc["load_lighting", "share_negative_raw"] == pytest.approx(0.2)
+    assert out.loc["load_lighting", "share_negative"] == 0.0
+    assert out.loc["load_lighting", "bidirectional"] == False  # noqa: E712
+
+
+def test_large_magnitude_reversal_still_flagged_bidirectional():
+    # Genuine reversal (well above the noise floor) must still be caught --
+    # the floor should not blind the check entirely.
+    sample = pd.DataFrame({
+        "circuit_type": ["battery_1"] * 20,
+        "power": [500.0] * 10 + [-500.0] * 10,
+        "circuit_polarity": np.full(20, 1),
+    })
+    out = S.verify_polarity_makes_positive(sample).set_index("circuit_type")
+    assert out.loc["battery_1", "bidirectional"] == True  # noqa: E712
+    assert out.loc["battery_1", "share_negative"] == pytest.approx(0.5)
+
+
+def test_noise_floor_is_configurable():
+    sample = pd.DataFrame({
+        "circuit_type": ["load_x"] * 20,
+        "power": [500.0] * 16 + [-5.0] * 4,
+        "circuit_polarity": np.full(20, 1),
+    })
+    out = S.verify_polarity_makes_positive(
+        sample, noise_floor_w=1.0
+    ).set_index("circuit_type")
+    # With a 1W floor, the -5W readings now clear it and count as negative.
+    assert out.loc["load_x", "share_negative"] == pytest.approx(0.2)
+    assert out.loc["load_x", "bidirectional"] == True  # noqa: E712
+
+
 # ── build_signal_map ─────────────────────────────────────────────────────────
 
 def test_aggregate_type_is_excluded():

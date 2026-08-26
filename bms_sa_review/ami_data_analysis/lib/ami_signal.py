@@ -46,6 +46,7 @@ def verify_polarity_makes_positive(
     power_column: str = "power",
     polarity_column: str = "circuit_polarity",
     bidirectional_share_threshold: float = 0.05,
+    noise_floor_w: float = 50.0,
 ) -> pd.DataFrame:
     """
     Does `power * circuit_polarity` come out consistently one-signed per
@@ -59,21 +60,43 @@ def verify_polarity_makes_positive(
     genuine candidate for `ami_config.STORAGE_HANDLING`: it needs a
     charge/discharge split, not a sign flip, because no single fixed
     `circuit_polarity` value can be "correct" for both directions.
+
+    `share_negative`/`share_positive`/`bidirectional` only count a reading
+    once its magnitude clears `noise_floor_w` -- a real-fleet run without this
+    floor flagged 17 of 24 load types (lighting, hot water, a fridge...) as
+    "bidirectional", which is not a plausible fleet of reversible appliances.
+    A circuit idling near zero (CT/power-factor measurement noise, or simply
+    "off") produces small negative readings by chance; at fleet scale (tens
+    of thousands of intervals per type) even a couple of percent of such
+    noise clears a bare sign-count threshold easily, without the circuit ever
+    genuinely reversing power flow. `share_negative_raw`/`share_positive_raw`
+    keep the old sign-only computation alongside the new one, so the
+    difference this floor makes stays visible rather than silently changing
+    history. This mirrors `ami_signal.classify_pv_night_behaviour`'s
+    `net_like_threshold_w`, which exists for the identical reason.
     """
     if sample is None or not len(sample):
         return pd.DataFrame()
     frame = sample.copy()
     frame["power_signed"] = frame[power_column] * frame[polarity_column]
 
-    def _share_negative(s):
+    def _share_negative_raw(s):
         return float((s < 0).mean())
 
-    def _share_positive(s):
+    def _share_positive_raw(s):
         return float((s > 0).mean())
+
+    def _share_negative(s):
+        return float((s < -noise_floor_w).mean())
+
+    def _share_positive(s):
+        return float((s > noise_floor_w).mean())
 
     grouped = frame.groupby(type_column)["power_signed"]
     out = pd.DataFrame({
         "n": grouped.count(),
+        "share_negative_raw": grouped.apply(_share_negative_raw),
+        "share_positive_raw": grouped.apply(_share_positive_raw),
         "share_negative": grouped.apply(_share_negative),
         "share_positive": grouped.apply(_share_positive),
     }).reset_index()

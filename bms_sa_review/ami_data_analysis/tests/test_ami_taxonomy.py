@@ -293,3 +293,66 @@ def test_find_duplicate_circuits_respects_threshold():
     # Same generator, but a threshold above 1.0 can never be met.
     out = T.find_duplicate_circuits(_duplicate_test_frame(), correlation_threshold=1.5)
     assert len(out) == 0
+
+
+# ── find_inactive_circuits ───────────────────────────────────────────────────
+
+def test_find_inactive_circuits_flags_near_zero_circuit():
+    frame = pd.DataFrame({
+        "circuit_id": [1] * 10 + [2] * 10,
+        "power": [500.0 + i for i in range(10)] + [0.5, -0.3, 0.1, 0.0, 0.4,
+                                                     -0.2, 0.3, -0.1, 0.2, 0.0],
+    })
+    out = T.find_inactive_circuits(frame).set_index("circuit_id")
+    assert out.loc[1, "inactive"] == False  # noqa: E712
+    assert out.loc[2, "inactive"] == True  # noqa: E712
+
+
+def test_find_inactive_circuits_respects_threshold():
+    frame = pd.DataFrame({"circuit_id": [1] * 5, "power": [3.0, -2.0, 4.0, -1.0, 2.5]})
+    assert T.find_inactive_circuits(frame, inactive_threshold_w=5.0).iloc[0]["inactive"]
+    assert not T.find_inactive_circuits(frame, inactive_threshold_w=1.0).iloc[0]["inactive"]
+
+
+def test_find_inactive_circuits_empty_input():
+    out = T.find_inactive_circuits(pd.DataFrame())
+    assert len(out) == 0
+    assert "inactive" in out.columns
+
+
+# ── sites_missing_day_data ───────────────────────────────────────────────────
+
+def _day_data_meta():
+    return pd.DataFrame({
+        "site_id":      [1, 1, 2, 2, 3, 3],
+        "circuit_id":   [10, 11, 20, 21, 30, 31],
+        "circuit_type": ["ac_load_net", "load_pool",
+                          "ac_load_net", "load_pool",
+                          "ac_load_net", "load_pool"],
+    })
+
+
+def test_sites_missing_day_data_flags_site_with_no_reporting_circuits():
+    meta = _day_data_meta()
+    # Site 1: both circuits reported. Site 2: neither did. Site 3: only the
+    # candidate did (component silent).
+    reporting = {10, 11, 30}
+    out = T.sites_missing_day_data(
+        [1, 2, 3], meta, reporting,
+        candidate_type="ac_load_net", component_types=["load_pool"],
+    )
+    assert 1 not in out
+    assert 2 in out
+    assert 3 in out
+    assert "component" in out[3]
+    assert "candidate" in out[2] and "component" in out[2]
+
+
+def test_sites_missing_day_data_empty_when_all_report():
+    meta = _day_data_meta()
+    reporting = {10, 11, 20, 21, 30, 31}
+    out = T.sites_missing_day_data(
+        [1, 2, 3], meta, reporting,
+        candidate_type="ac_load_net", component_types=["load_pool"],
+    )
+    assert out == {}

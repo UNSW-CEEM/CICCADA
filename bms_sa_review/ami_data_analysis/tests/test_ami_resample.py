@@ -77,6 +77,45 @@ def test_all_zero_power_returns_none_verdict():
     assert "nonzero power" in result["reason"]
 
 
+# ── confirm_energy_matches_power ─────────────────────────────────────────────
+
+def test_energy_matching_power_times_interval_is_confirmed():
+    # Real `ts` sample shape: energy [Wh] = power [W] * (5/60) exactly.
+    power = pd.Series([208.8633, 93.0567, -565.5367])
+    sample = pd.DataFrame({"power": power, "energy": power * (5.0 / 60.0)})
+    result = R.confirm_energy_matches_power(sample, interval_minutes=5.0)
+    assert result["confirmed"] is True
+    assert result["n_mismatched"] == 0
+
+
+def test_energy_not_matching_power_times_interval_is_not_confirmed():
+    sample = pd.DataFrame({
+        "power": [1000.0] * 10,
+        "energy": [999.0] * 10,  # way off from 1000 * 5/60 = 83.33
+    })
+    result = R.confirm_energy_matches_power(sample, interval_minutes=5.0, tolerance_wh=0.5)
+    assert result["confirmed"] is False
+    assert result["n_mismatched"] == 10
+    assert result["share_mismatched"] == pytest.approx(1.0)
+
+
+def test_tolerance_absorbs_small_rounding_noise():
+    sample = pd.DataFrame({
+        "power": [1200.0] * 5,
+        # expected = 1200 * 5/60 = 100.0 Wh; off by 0.1, under the 0.5 default tolerance
+        "energy": [100.1] * 5,
+    })
+    result = R.confirm_energy_matches_power(sample, interval_minutes=5.0)
+    assert result["confirmed"] is True
+    assert result["n_mismatched"] == 0
+
+
+def test_confirm_energy_empty_sample_returns_none():
+    result = R.confirm_energy_matches_power(pd.DataFrame())
+    assert result["confirmed"] is None
+    assert "no sample" in result["reason"]
+
+
 # ── resample_to_interval ─────────────────────────────────────────────────────
 
 def test_instantaneous_power_resamples_via_energy_sum_not_mean_of_power():
