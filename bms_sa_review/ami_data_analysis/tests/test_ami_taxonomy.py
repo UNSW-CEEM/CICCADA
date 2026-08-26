@@ -239,3 +239,57 @@ def test_coverage_summary_empty_cohort():
     out = T.signal_coverage_summary(pd.DataFrame(), pv_types=["pv_site"], load_types=["load_pool"])
     assert out["n_with_both"] is None
     assert out["n_sites"] == 0
+
+
+# ── find_duplicate_circuits ──────────────────────────────────────────────────
+
+def _duplicate_test_frame():
+    rng = np.random.default_rng(0)
+    times = pd.date_range("2025-06-01", periods=100, freq="5min")
+    base = rng.uniform(-5000, 5000, size=len(times))
+    independent = rng.uniform(-1000, 1000, size=len(times))
+    rows = []
+    for cid, values in (
+        (1, base),                    # site 1: original
+        (2, -base + 0.01),            # site 1: near-exact mirror (opposite sign)
+        (3, independent),              # site 1: genuinely independent
+        (4, base),                    # site 2: a different site -- must NOT match circuit 1
+    ):
+        site_id = 1 if cid != 4 else 2
+        for t, v in zip(times, values):
+            rows.append({"site_id": site_id, "circuit_id": cid, "t_stamp": t, "power": v})
+    return pd.DataFrame(rows)
+
+
+def test_find_duplicate_circuits_flags_mirrored_pair():
+    out = T.find_duplicate_circuits(_duplicate_test_frame())
+    pair = out[out.circuit_id_a.isin([1, 2]) & out.circuit_id_b.isin([1, 2])]
+    assert len(pair) == 1
+    assert pair.iloc[0]["sign"] == "opposite"
+    assert pair.iloc[0]["correlation"] == pytest.approx(-1.0, abs=1e-3)
+
+
+def test_find_duplicate_circuits_does_not_flag_independent_circuit():
+    out = T.find_duplicate_circuits(_duplicate_test_frame())
+    involves_3 = out[(out.circuit_id_a == 3) | (out.circuit_id_b == 3)]
+    assert len(involves_3) == 0
+
+
+def test_find_duplicate_circuits_does_not_cross_sites():
+    # Circuit 1 (site 1) and circuit 4 (site 2) carry identical values, but a
+    # duplicate reading only means something WITHIN one site -- two different
+    # sites coincidentally matching is not a data-tagging bug to flag.
+    out = T.find_duplicate_circuits(_duplicate_test_frame())
+    assert not ((out.circuit_id_a == 4) | (out.circuit_id_b == 4)).any()
+
+
+def test_find_duplicate_circuits_empty_input():
+    out = T.find_duplicate_circuits(pd.DataFrame())
+    assert len(out) == 0
+    assert "correlation" in out.columns
+
+
+def test_find_duplicate_circuits_respects_threshold():
+    # Same generator, but a threshold above 1.0 can never be met.
+    out = T.find_duplicate_circuits(_duplicate_test_frame(), correlation_threshold=1.5)
+    assert len(out) == 0

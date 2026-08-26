@@ -29,6 +29,7 @@ __all__ = [
     "summarise_circuit_types", "flag_suspected_aggregates", "cohort_completeness",
     "signal_coverage_summary",
     "AggregationCheck", "check_aggregation", "pick_aggregation_test_site",
+    "find_duplicate_circuits",
 ]
 
 
@@ -245,6 +246,73 @@ def check_aggregation(
         site_id, candidate_type, component_types, n,
         mean_abs_diff, max_abs_diff, reference_scale, is_aggregate, reason,
     )
+
+
+def find_duplicate_circuits(
+    long: pd.DataFrame, *,
+    site_column: str = "site_id",
+    circuit_column: str = "circuit_id",
+    time_column: str = "t_stamp",
+    power_column: str = "power",
+    correlation_threshold: float = 0.99,
+    min_overlap: int = 20,
+) -> pd.DataFrame:
+    """
+    Which circuit pairs, AT THE SAME SITE, read essentially the same physical
+    signal (up to a sign flip)? Pure -- no query, no plotting.
+
+    Deliberately correlates the RAW `power_column` (default `"power"`), not
+    `power_signed`: `circuit_polarity` is itself a per-circuit correction
+    guessed from the circuit's own name/type, so comparing already-corrected
+    values could mask a duplicate whose corrections happen to differ, or
+    manufacture a false one whose corrections happen to agree. Correlating
+    the raw meter reading is blind to that choice.
+
+    This is a different failure mode from `check_aggregation`: that asks
+    "is the candidate the SUM of several named siblings" (a whole-site
+    aggregate). This asks "are these two circuit_ids reading the SAME
+    physical circuit" (a data/tagging duplicate) -- found in real data as a
+    `load`-tagged circuit whose raw reading was identical to a `pv`-tagged
+    circuit's, just carrying an opposite `circuit_polarity`. Summing that
+    "load" into `gross_load` would double-count the PV signal with a sign
+    error, not add a genuinely separate appliance.
+
+    A correlation this close to +-1 across a real day's noisy readings is not
+    what two independent circuits do by chance, so a hit here is worth
+    inspecting even before deciding what it means (two CTs on one physical
+    circuit, a metadata mix-up, or a genuine near-perfect antiphase
+    relationship) -- this function only flags it, it does not explain it.
+    """
+    if long is None or not len(long):
+        return pd.DataFrame(
+            columns=["site_id", "circuit_id_a", "circuit_id_b", "correlation",
+                     "sign", "n_overlap"]
+        )
+
+    results = []
+    for site_id, site_frame in long.groupby(site_column):
+        wide = site_frame.pivot_table(
+            index=time_column, columns=circuit_column, values=power_column
+        )
+        ids = wide.columns.tolist()
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                paired = wide[[ids[i], ids[j]]].dropna()
+                if len(paired) < min_overlap:
+                    continue
+                a, b = paired.iloc[:, 0], paired.iloc[:, 1]
+                if a.std() == 0 or b.std() == 0:
+                    continue
+                corr = float(a.corr(b))
+                if abs(corr) >= correlation_threshold:
+                    results.append({
+                        "site_id": site_id,
+                        "circuit_id_a": ids[i], "circuit_id_b": ids[j],
+                        "correlation": corr,
+                        "sign": "same" if corr > 0 else "opposite",
+                        "n_overlap": len(paired),
+                    })
+    return pd.DataFrame(results)
 
 
 def pick_aggregation_test_site(
