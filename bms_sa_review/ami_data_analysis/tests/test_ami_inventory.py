@@ -136,7 +136,7 @@ def test_totals_from_a_hive_frame_have_no_counts_but_do_have_coverage():
 
 
 def test_totals_of_nothing():
-    assert I.partition_totals(pd.DataFrame()) == {"n_partitions": 0}
+    assert I.partition_totals(pd.DataFrame()) == {"n_partitions": 0, "partition_columns": []}
 
 
 def test_is_pv_breakdown_is_what_phase_2_hangs_on():
@@ -197,3 +197,66 @@ def test_shortlist_flags_but_never_drops():
     assert out.set_index("table").shortlisted.to_dict() == {
         "ts": True, "meta_up23c": True, "unrelated_thing": False
     }
+
+
+# ── should_probe_partitions: the Iceberg-hides-partitioning-from-Glue bug ──
+#
+# Real failure this guards: `ts` is genuinely partitioned on (year, month,
+# is_pv) per `aws_config.py`, but Glue's declared `PartitionKeys` for it came
+# back empty (`entry.partition_keys == ""`) -- a known Iceberg-on-Glue quirk,
+# where the partition spec lives in Iceberg's own metadata rather than in
+# Glue's Hive-style field. `probe_partitions` used to gate on the declared
+# keys, which meant `$partitions` for `ts` was never queried and every
+# downstream cell that expected `ts` partition data got nothing.
+
+def test_should_probe_an_iceberg_table_with_no_declared_keys():
+    """This is exactly the `ts` case: Iceberg, Glue says "no partition keys"."""
+    assert I.should_probe_partitions(is_iceberg=True, declared_partition_keys="") is True
+
+
+def test_should_probe_an_iceberg_table_with_declared_keys_too():
+    assert I.should_probe_partitions(is_iceberg=True, declared_partition_keys="year, month") is True
+
+
+def test_should_not_probe_an_unpartitioned_hive_table():
+    """A Hive table with no declared keys genuinely has no $partitions to read."""
+    assert I.should_probe_partitions(is_iceberg=False, declared_partition_keys="") is False
+
+
+def test_should_probe_a_partitioned_hive_table():
+    assert I.should_probe_partitions(is_iceberg=False, declared_partition_keys="year") is True
+
+
+def test_should_probe_treats_none_like_empty_string():
+    assert I.should_probe_partitions(is_iceberg=False, declared_partition_keys=None) is False
+
+
+# ── partition_totals reports the ACTUAL columns, not what Glue declared ────
+
+def test_totals_report_actual_partition_columns():
+    totals = I.partition_totals(I.normalise_partitions(iceberg_struct_frame()))
+    assert totals["partition_columns"] == ["year", "month", "is_pv"]
+
+
+def test_totals_of_nothing_still_has_the_key():
+    """So callers can do `stats.get("partition_columns", [])` uniformly."""
+    assert I.partition_totals(pd.DataFrame())["partition_columns"] == []
+
+
+# ── summary_table surfaces a Glue-hidden partitioning rather than showing "" ─
+
+def test_summary_table_shows_recovered_columns_when_glue_declares_none():
+    catalog = pd.DataFrame([{
+        "database": "solar_analytics_iceberg", "table": "ts", "table_type": "EXTERNAL_TABLE",
+        "format": "ICEBERG", "is_iceberg": True, "n_columns": 12,
+        "partition_keys": "",  # <- Glue declares nothing, exactly the real `ts` case
+        "location": "s3://x/ts/", "updated": None,
+    }])
+    totals = {
+        "solar_analytics_iceberg.ts": I.partition_totals(
+            I.normalise_partitions(iceberg_struct_frame())
+        )
+    }
+    summary = I.summary_table(catalog, totals)
+    assert "year, month, is_pv" in summary.loc[0, "partitioned_by"]
+    assert "not declared in Glue" in summary.loc[0, "partitioned_by"]

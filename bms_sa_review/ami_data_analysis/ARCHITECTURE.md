@@ -101,9 +101,9 @@ so an unresolved choice cannot quietly become a silent default.
 
 | Phase | Notebook | Modules | State |
 |---|---|---|---|
-| 0 | `00_connection_check` | `ami_athena`, `ami_diagnostics` | written |
-| 1 | `01_data_lake_inventory` | `ami_inventory` | written |
-| 2 | `02_source_selection` | `ami_sources` | not started |
+| 0 | `00_connection_check` | `ami_athena`, `ami_diagnostics` | written, run, confirmed |
+| 1 | `01_data_lake_inventory` | `ami_inventory` | written, run, confirmed |
+| 2 | `02_source_selection` | `ami_sources` | written -- recommendation (raw `ts`) pending your confirm/overrule |
 | 3 | `03_signal_taxonomy` | `ami_taxonomy`, `ami_signal`, `ami_resample` | not started |
 | 4 | `04_extract` | `ami_extract`, `ami_store` | not started |
 | 5 | `05_build_ami` | `ami_params`, `ami_contract`, `ami_build`, `ami_degrade` | not started |

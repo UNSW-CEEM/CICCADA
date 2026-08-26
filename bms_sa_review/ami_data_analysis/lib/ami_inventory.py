@@ -2,15 +2,11 @@
 Data lake inventory: what is actually in the catalogue.
 =======================================================
 
-Phase 1. Answers "what have I got?" as cheaply as it can be answered.
+Almost everything here reads METADATA:
 
-Cost strategy
--------------
-Almost everything here reads METADATA, not data:
-
-* **Glue** (`glue_inventory`, `column_inventory_glue`) is a free API. It gives
-  every database, every table, its storage location, its declared columns and
-  its partition keys, without Athena being involved at all.
+* **Glue** (`glue_inventory`, `column_inventory_glue`):
+  It gives every database, every table, its storage location, its declared columns and its partition keys, without Athena being involved at all.
+  
 * **Iceberg metadata tables** (`partition_frame`) -- `SELECT * FROM "ts$partitions"`
   -- read the table's own manifests. Athena reports these as a near-zero scan.
   For an Iceberg fact table this is how you get exact per-partition ROW COUNTS
@@ -39,7 +35,7 @@ from bms_sa_review.ami_data_analysis.lib import ami_athena as A
 
 __all__ = [
     "glue_inventory", "column_inventory", "column_inventory_glue",
-    "partition_frame", "probe_partitions",
+    "partition_frame", "should_probe_partitions", "probe_partitions",
     "normalise_partitions", "partition_totals",
     "database_summary", "summary_table",
     "dimension_counts", "sample", "guess_candidates",
@@ -279,19 +275,30 @@ def normalise_partitions(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+#: Column names `partition_totals` will report as the table's actual partition
+#: columns, in preference order. Deliberately the same set `normalise_partitions`
+#: knows how to recover, so the two never disagree about what "actual" means.
+_PARTITION_COLUMN_NAMES = ("year", "month", "day", "is_pv")
+
+
 def partition_totals(tidy: pd.DataFrame) -> dict:
     """
     Roll a tidy partition frame up to one dict. Pure.
 
     Keys: n_partitions, n_rows, n_files, size_bytes, year_min, year_max,
-    first_partition, last_partition, is_pv_values. Missing inputs give None
-    rather than a KeyError -- a Hive `$partitions` frame has values and nothing
-    else, and that is a legitimate answer.
+    first_partition, last_partition, is_pv_values, partition_columns. Missing
+    inputs give None rather than a KeyError -- a Hive `$partitions` frame has
+    values and nothing else, and that is a legitimate answer.
+
+    `partition_columns` is the ACTUAL partition columns found in the data, which
+    is the thing to trust over Glue's declared `PartitionKeys` -- see
+    `should_probe_partitions` for why those two can disagree.
     """
     if tidy is None or not len(tidy):
-        return {"n_partitions": 0}
+        return {"n_partitions": 0, "partition_columns": []}
 
     out: dict = {"n_partitions": int(len(tidy))}
+    out["partition_columns"] = [c for c in _PARTITION_COLUMN_NAMES if c in tidy.columns]
     for column in ("n_rows", "n_files", "size_bytes"):
         out[column] = float(tidy[column].sum()) if column in tidy.columns else None
 
@@ -328,12 +335,18 @@ def summary_table(catalog: pd.DataFrame, totals: dict[str, dict]) -> pd.DataFram
         key = f"{entry.database}.{entry.table}"
         stats = totals.get(key, {})
         size = stats.get("size_bytes")
+        declared = entry.partition_keys
+        actual = ", ".join(stats.get("partition_columns", []) or [])
+        partitioned_by = declared or actual
+        if not declared and actual:
+            partitioned_by += "  [not declared in Glue]"
+
         rows.append({
             "database": entry.database,
             "table": entry.table,
             "fmt": "iceberg" if entry.is_iceberg else (entry.table_type or "hive").lower(),
             "cols": entry.n_columns,
-            "partitioned_by": entry.partition_keys,
+            "partitioned_by": partitioned_by,
             "n_partitions": stats.get("n_partitions"),
             "n_rows": stats.get("n_rows"),
             "size": A.fmt_bytes(size) if size else "",
@@ -363,6 +376,26 @@ def database_summary(catalog: pd.DataFrame) -> pd.DataFrame:
     return grouped.sort_values("n_tables", ascending=False).reset_index(drop=True)
 
 
+def should_probe_partitions(is_iceberg: bool, declared_partition_keys: str) -> bool:
+    """
+    Whether a table's `$partitions` metadata is worth reading. Pure.
+
+    Iceberg tables are ALWAYS probed: Glue's declared `PartitionKeys` reflects
+    Hive-style partitioning and routinely comes back empty for an Iceberg table
+    even when it is genuinely partitioned, because the spec lives in Iceberg's own
+    metadata rather than in Glue. `$partitions` is authoritative for Iceberg
+    regardless of what Glue says, and costs almost nothing to read even when the
+    table turns out to be unpartitioned (one row of real totals comes back).
+
+    A Hive table with no declared partition keys is skipped: it genuinely has no
+    `$partitions` to serve, and asking would be a wasted, billed query that just
+    errors.
+    """
+    if is_iceberg:
+        return True
+    return bool(str(declared_partition_keys or "").strip())
+
+
 def probe_partitions(
     catalog: pd.DataFrame,
     only: list[str] | None = None,
@@ -381,8 +414,25 @@ def probe_partitions(
     table on an engine that will not serve it, a permissions gap -- is logged and
     skipped, because one awkward table should not stop the inventory.
 
-    Only tables that declare partition keys are probed. Unpartitioned tables have
-    no `$partitions` and asking for it is a wasted (billed) query.
+    WHICH TABLES ARE PROBED, AND WHY THIS IS NOT JUST "has declared partition keys"
+    --------------------------------------------------------------------------
+    Iceberg hides its partition spec from Glue: `Table.PartitionKeys` reflects
+    Hive-style declarative partitioning, and an Iceberg table registered in Glue
+    routinely reports an EMPTY partition key list there even when it is genuinely
+    partitioned -- the spec lives in the Iceberg metadata, not in Glue. `ts` in
+    this catalogue is exactly this case: Glue says "(none)", but it is partitioned
+    on (year, month, is_pv) per `aws_config.py`, and `$partitions` is the only
+    place that is visible from the catalogue.
+
+    So every Iceberg table is probed regardless of what Glue declares -- `$partitions`
+    is authoritative for Iceberg either way, and on an unpartitioned Iceberg table it
+    still returns one row of real totals. Only a Hive table with no declared keys is
+    skipped, because a Hive table genuinely has no `$partitions` to read in that case,
+    and asking would be a wasted, billed query that just errors.
+
+    `partition_columns` in the returned totals (see `partition_totals`) is set from
+    what `$partitions` actually contained, so a mismatch against the DECLARED keys
+    is visible in `log` as `glue_hides_partitioning` rather than silently absorbed.
     """
     totals: dict[str, dict] = {}
     raws: dict[str, pd.DataFrame] = {}
@@ -395,29 +445,51 @@ def probe_partitions(
         key = f"{entry.database}.{entry.table}"
         if only is not None and key not in only and entry.table not in only:
             continue
-        if not str(getattr(entry, "partition_keys", "") or "").strip():
+        declared = str(getattr(entry, "partition_keys", "") or "").strip()
+        is_iceberg = bool(getattr(entry, "is_iceberg", False))
+        if not should_probe_partitions(is_iceberg, declared):
             continue
 
         try:
             raw = partition_frame(entry.table, database=entry.database)
             tidy = normalise_partitions(raw)
             raws[key] = raw
-            totals[key] = partition_totals(tidy)
-            rows.append({"table": key, "ok": True,
-                         "n_partitions": totals[key].get("n_partitions"),
-                         "error": ""})
+            stats = partition_totals(tidy)
+            totals[key] = stats
+            actual_cols = stats.get("partition_columns", [])
+            hidden = is_iceberg and not declared and bool(actual_cols)
+            rows.append({
+                "table": key, "ok": True,
+                "n_partitions": stats.get("n_partitions"),
+                "declared_partition_keys": declared or "(none declared in Glue)",
+                "actual_partition_columns": ", ".join(actual_cols),
+                "glue_hides_partitioning": hidden,
+                "error": "",
+            })
             if verbose:
-                stats = totals[key]
                 n_rows = stats.get("n_rows")
+                note = "  [partitioning hidden from Glue]" if hidden else ""
                 print(f"  {key:<50} {stats.get('n_partitions', 0):>5} partitions"
-                      + (f", {n_rows:>15,.0f} rows" if n_rows else ""))
+                      + (f", {n_rows:>15,.0f} rows" if n_rows else "") + note)
         except Exception as exc:
             rows.append({"table": key, "ok": False, "n_partitions": None,
+                         "declared_partition_keys": declared or "(none declared in Glue)",
+                         "actual_partition_columns": "", "glue_hides_partitioning": False,
                          "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
             if verbose:
                 print(f"  {key:<50} SKIPPED -- {type(exc).__name__}")
 
-    return totals, raws, pd.DataFrame(rows)
+    log = pd.DataFrame(rows)
+    if verbose and len(log) and "glue_hides_partitioning" in log.columns:
+        hidden_rows = log[log.glue_hides_partitioning]
+        if len(hidden_rows):
+            print(f"\nNote: {len(hidden_rows)} Iceberg table(s) are partitioned but "
+                  f"Glue declares no PartitionKeys for them -- a known Iceberg-on-Glue "
+                  f"quirk, not a data problem. Real partition columns, from $partitions:")
+            for row in hidden_rows.itertuples():
+                print(f"  - {row.table}: {row.actual_partition_columns}")
+
+    return totals, raws, log
 
 
 # ═══════════════════════════════════════════════════════════════════════════

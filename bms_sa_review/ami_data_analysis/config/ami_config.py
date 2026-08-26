@@ -370,7 +370,119 @@ SOURCE_CHOICE = "UNRESOLVED"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6. REPORTING
+# 6. PHASE 1 FINDINGS  (measured 2026-08-26, via Inventory.probe_partitions)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Facts about the catalogue, not methodological choices -- recorded here so
+# Phase 2 onward read them rather than repeating a `$partitions` scan that
+# already answered them for free. Re-measure and update if the catalogue
+# changes (a re-load, a new Stage 1 rebuild, ...).
+
+#: THE number Phase 2 needed. `ts` row counts by its is_pv partition key --
+#: load circuits (is_pv=false) are NOT a discarded minority, they are in fact
+#: slightly the larger half of the table.
+TS_ROWS_BY_IS_PV: dict[str, int] = {
+    "is_pv=false (load)": 8_521_715_460,
+    "is_pv=true (pv)":    7_823_538_598,
+}
+TS_TOTAL_ROWS = sum(TS_ROWS_BY_IS_PV.values())            # 16,345,254,058
+
+#: Approximate -- reconstructed from the 2-decimal-place GB `Athena.fmt_bytes`
+#: printed, not the raw byte counts, so treat these as +/- a few MB.
+TS_SIZE_GB_BY_IS_PV: dict[str, float] = {
+    "is_pv=false (load)": 252.02,
+    "is_pv=true (pv)":    204.91,
+}
+TS_TOTAL_SIZE_GB = sum(TS_SIZE_GB_BY_IS_PV.values())      # ~456.93 GB compressed
+
+#: `ts` reports 816 total partitions -- RESOLVED, 2026-08-26, from the raw
+#: `$partitions` frame. The initial guess here (Iceberg partition-spec
+#: evolution -- day granularity early, month granularity later) was WRONG; the
+#: real explanation is a FOURTH partition dimension this module did not know
+#: about. The raw `partition` struct reads
+#: `{year=..., month=..., is_pv=..., postcode_bu...}` (the fourth key is
+#: truncated in pandas' display -- confirm the exact name with
+#: `list(ts_tidy.columns)` before relying on it by name). Arithmetic proof:
+#:     24 months x 2 is_pv values x 17 (postcode buckets) = 816   exact
+#: and the by-month row counts sum to exactly TS_TOTAL_ROWS. So `ts` is
+#: partitioned on (year, month, is_pv, <postcode bucket>), at MONTH
+#: granularity throughout -- there is no day-level data and no partition-spec
+#: evolution. `normalise_partitions` already handles this correctly: it
+#: expands every key in the struct generically, so `ts_tidy` carries the
+#: postcode-bucket column even though nothing here names it explicitly, and
+#: every groupby used so far (by is_pv, by year/month) sums across it
+#: correctly. It matters for Phase 4: chunking `ts` by (year, month) alone
+#: undercounts the true partition count by 17x, which changes the resumability
+#: math.
+TS_PARTITION_COUNT_ANOMALY_RESOLVED = True
+
+#: Confirmed date coverage, from the coverage-by-month table: 24 consecutive
+#: months, no gaps.
+TS_COVERAGE = ("2024-01", "2025-12")
+TS_COVERAGE_MONTHS = 24
+
+#: `structured_data` (all variants) confirmed PV-only by schema (no `is_pv`
+#: column at all -- it does not need one, because `ts.is_pv = True` is baked
+#: into `build_structured_data.py` before the table is ever written) and by
+#: partitioning (year, month only -- no is_pv key, consistent with a table
+#: that only ever holds one is_pv value). NOT a candidate source for
+#: gross_load. Confirms the concern in the original brief.
+STRUCTURED_DATA_IS_PV_ONLY = True
+
+#: circuits (dimension table, presumed canonical circuit list): 171,411 rows.
+N_CIRCUITS_DIM_TABLE = 171_411
+#: meta_up23c: 423,990 rows -- ~2.47x more than `circuits`. meta_up23c is
+#: therefore NOT one row per circuit_id. `build_structured_data.py` already
+#: guards this with `GROUP BY circuit_id` + `max(...)` over every metadata
+#: column before joining (see `_insert_sql`'s inner subquery) -- that is the
+#: established convention and `ami_signal` (Phase 3) must follow it, not
+#: rediscover it. WHY meta_up23c fans out (time-versioned rows? re-registration
+#: history?) is not yet established -- a Phase 3 question.
+N_META_UP23C_ROWS = 423_990
+N_SITES = 41_393
+
+#: Databases confirmed OUT OF SCOPE for this project -- not Solar Analytics
+#: data, or scratch/infrastructure artefacts. Excluded from every later phase
+#: without re-justifying it each time.
+OUT_OF_SCOPE_DATABASES = frozenset({
+    "sapn2022",     # a different DNSP's dataset (South Australia Power Networks)
+    "test_db",      # scratch tables (evm_batch_*)
+    "elb_logdb",    # AWS load-balancer access logs
+})
+#: Individual tables out of scope within an otherwise in-scope database.
+OUT_OF_SCOPE_TABLES = frozenset({
+    "solar_analytics.test_sola_2025_7",
+    "solar_analytics.test_sola_2025_8",
+    "solar_analytics.test_sola_2025_9",
+    "solar_analytics.test_sola_2025_12",
+})
+
+
+def phase1_findings():
+    """The measured facts above, as one table. Printable from any later notebook."""
+    import pandas as pd
+
+    return pd.DataFrame([
+        ("ts: rows, is_pv=false (load)", f"{TS_ROWS_BY_IS_PV['is_pv=false (load)']:,}"),
+        ("ts: rows, is_pv=true (pv)",    f"{TS_ROWS_BY_IS_PV['is_pv=true (pv)']:,}"),
+        ("ts: total rows",               f"{TS_TOTAL_ROWS:,}"),
+        ("ts: is_pv=false share of rows",
+         f"{TS_ROWS_BY_IS_PV['is_pv=false (load)'] / TS_TOTAL_ROWS:.1%}"),
+        ("ts: total size (compressed, approx)", f"{TS_TOTAL_SIZE_GB:.1f} GB"),
+        ("ts: partition count anomaly resolved", str(TS_PARTITION_COUNT_ANOMALY_RESOLVED)),
+        ("ts: date coverage", f"{TS_COVERAGE[0]} .. {TS_COVERAGE[1]} ({TS_COVERAGE_MONTHS} months, no gaps)"),
+        ("structured_data: is PV-only",  str(STRUCTURED_DATA_IS_PV_ONLY)),
+        ("circuits (dimension table)",   f"{N_CIRCUITS_DIM_TABLE:,} rows"),
+        ("meta_up23c",                   f"{N_META_UP23C_ROWS:,} rows "
+                                          f"({N_META_UP23C_ROWS / N_CIRCUITS_DIM_TABLE:.2f}x "
+                                          "circuits -- fans out, GROUP BY circuit_id required)"),
+        ("sites",                        f"{N_SITES:,} rows"),
+        ("out-of-scope databases",       ", ".join(sorted(OUT_OF_SCOPE_DATABASES))),
+    ], columns=["finding", "value"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7. REPORTING
 # ═══════════════════════════════════════════════════════════════════════════
 
 #: (label, value, resolved) for every convention above. `resolved=False` means
