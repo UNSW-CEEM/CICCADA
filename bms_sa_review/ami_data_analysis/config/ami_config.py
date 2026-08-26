@@ -362,11 +362,14 @@ CORE_SIGNALS = ("pv_generation", "gross_load")
 #: at all before the question needs answering.
 STORAGE_HANDLING = "UNRESOLVED"
 
-#: Source dataset. Phase 2 decides between raw `ts` and `structured_data`.
-#: `structured_data` is site-level, PV-only, and every Stage 1 query filters
-#: `is_pv = True` -- so it may already have discarded the load circuits this
-#: exercise depends on. UNRESOLVED until 02 checks it.
-SOURCE_CHOICE = "UNRESOLVED"
+#: Source dataset. RESOLVED, 2026-08-26, in notebook 02 -- raw `ts` (joined to
+#: `meta_up23c` for circuit metadata). `structured_data` (all variants) was
+#: ruled out on two independent grounds, either one sufficient alone: it has
+#: no `is_pv` column at all (`Sources.verify_is_pv_only` confirms it can only
+#: ever hold one signal), and even where load rows exist elsewhere the single
+#: `p_kw_norm` scalar per site is not decomposable back into components. See
+#: PHASE 2 FINDINGS below for the full comparison.
+SOURCE_CHOICE = "ts"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -478,6 +481,83 @@ def phase1_findings():
                                           "circuits -- fans out, GROUP BY circuit_id required)"),
         ("sites",                        f"{N_SITES:,} rows"),
         ("out-of-scope databases",       ", ".join(sorted(OUT_OF_SCOPE_DATABASES))),
+    ], columns=["finding", "value"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 6b. PHASE 2 FINDINGS  (measured 2026-08-26, notebook 02_source_selection)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The source-selection decision, and the evidence behind it -- recorded so
+# Phase 3 onward can cite it rather than re-deriving it. Live re-checks in
+# notebook 02 (schema check, fresh partition probe, row-count cross-check
+# against Phase 1's numbers) all passed without discrepancy on this run.
+
+#: `meta_up23c` circuit counts, by is_pv -- for reference against `ts`'s row
+#: split (TS_ROWS_BY_IS_PV above). Not identical shares, and not expected to
+#: be: circuits differ in how much history each has, so a circuit-count share
+#: and a row-count share are different things. Recorded here as a sanity
+#: check, not as a value future code should index into by name.
+N_CIRCUITS_BY_IS_PV: dict[str, int] = {
+    "is_pv=false (load)": 33_462,
+    "is_pv=true (pv)":    27_108,
+}
+N_SITES_BY_IS_PV: dict[str, int] = {
+    "is_pv=false (load)": 15_167,
+    "is_pv=true (pv)":    16_148,
+}
+
+#: `structured_data_v2_flex_included` (the live `Config.TABLES["structured_data"]`
+#: target), measured fresh in notebook 02 -- matches the shape implied by
+#: Phase 1's inventory (year, month partitioning; no is_pv key).
+STRUCTURED_DATA_V2_FLEX_N_ROWS = 871_655_350
+STRUCTURED_DATA_V2_FLEX_SIZE_GB = 36.62
+
+#: Full-table scan costs, AUD, as computed by `Sources.build_comparison_table`
+#: -- the cost of building from EVERY row, before any partition/date pruning
+#: Phase 4 will actually apply. Included so a future re-read of this file
+#: doesn't have to re-run the notebook to see why cost never overrode the
+#: decision: `ts` costs more and was chosen anyway, because it is the only
+#: candidate with both signals and a decomposable grain.
+TS_FULL_SCAN_COST_AUD = 3.57
+STRUCTURED_DATA_V2_FLEX_FULL_SCAN_COST_AUD = 0.29
+
+#: `Sources.recommend()`'s verdict on the two candidates it was given.
+QUALIFYING_SOURCE = "raw `ts` + `meta_up23c`"
+EXCLUDED_SOURCES: dict[str, str] = {
+    "`structured_data_v2_flex_included` (site-level, PV-only)":
+        "no load signal, not decomposable at this grain",
+}
+
+#: Total Athena cost actually incurred running notebook 02 end to end --
+#: the sample-circuit-pruning trick (per-file min/max `circuit_id` stats)
+#: worked as intended: 8 queries, well under the ~8.5 GB worst case quoted
+#: to the user before the notebook was run.
+PHASE2_NOTEBOOK_SCAN_MB = 74.61
+PHASE2_NOTEBOOK_SCAN_COST_AUD = 0.0011
+
+
+def phase2_findings():
+    """The Phase 2 source-selection evidence, as one table."""
+    import pandas as pd
+
+    return pd.DataFrame([
+        ("source dataset chosen", SOURCE_CHOICE),
+        ("qualifying candidate", QUALIFYING_SOURCE),
+        ("excluded candidate(s)", "; ".join(
+            f"{name} -- {reason}" for name, reason in EXCLUDED_SOURCES.items())),
+        ("meta_up23c circuits, is_pv=false (load)",
+         f"{N_CIRCUITS_BY_IS_PV['is_pv=false (load)']:,}"),
+        ("meta_up23c circuits, is_pv=true (pv)",
+         f"{N_CIRCUITS_BY_IS_PV['is_pv=true (pv)']:,}"),
+        ("structured_data_v2_flex_included: rows",
+         f"{STRUCTURED_DATA_V2_FLEX_N_ROWS:,}"),
+        ("structured_data_v2_flex_included: size",
+         f"{STRUCTURED_DATA_V2_FLEX_SIZE_GB:.2f} GB"),
+        ("ts: full-scan cost (reference, not what Phase 4 will pay)",
+         f"AUD {TS_FULL_SCAN_COST_AUD:.2f}"),
+        ("notebook 02 actual cost",
+         f"{PHASE2_NOTEBOOK_SCAN_MB:.2f} MB, AUD {PHASE2_NOTEBOOK_SCAN_COST_AUD:.4f}"),
     ], columns=["finding", "value"])
 
 
