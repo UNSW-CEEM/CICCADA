@@ -18,7 +18,7 @@ import pandas as pd
 
 from bms_sa_review.ami_data_analysis.config import ami_config as C
 
-__all__ = ["to_aest", "plot_circuit_day", "plot_aggregation_check"]
+__all__ = ["to_aest", "plot_circuit_day", "plot_aggregation_check", "aest_day_window_utc"]
 
 
 def to_aest(t_stamp: pd.Series) -> pd.Series:
@@ -38,6 +38,53 @@ def to_aest(t_stamp: pd.Series) -> pd.Series:
     if t_stamp.dt.tz is None:
         t_stamp = t_stamp.dt.tz_localize("UTC")
     return t_stamp.dt.tz_convert(C.FIXED_OFFSET)
+
+
+def aest_day_window_utc(day_start, *, n_days: int = 1, fixed_offset=None) -> dict:
+    """
+    Convert an AEST calendar-day start into the equivalent UTC query window,
+    plus the `(year, month)` partition pairs that window spans. Pure.
+
+    `ts.t_stamp` is UTC and `year`/`month` are partition columns derived
+    from it. Picking "N full AEST days" by reusing a UTC calendar day's
+    bounds (e.g. `t_stamp >= '2025-06-01 00:00' AND < '2025-06-02 00:00'`)
+    actually selects 10:00 AEST to 10:00 AEST the next day, not midnight to
+    midnight -- the same UTC/AEST mismatch `plot_circuit_day`'s tz= comment
+    warns about for tick labels, but here it would silently shift which
+    rows a query returns, not just how they're labelled. This makes the
+    conversion explicit and testable rather than inline notebook
+    arithmetic. `year_month_pairs`/`year_month_sql` matter because a window
+    that is exactly `n_days` whole AEST days can still straddle a UTC
+    calendar-month boundary (AEST is UTC+10, so the AEST day starts 10
+    hours into the previous UTC day) -- a query that only filters on the
+    AEST start date's own `(year, month)` would silently miss the tail end
+    of the window.
+    """
+    if fixed_offset is None:
+        fixed_offset = C.FIXED_OFFSET
+    aest_start = pd.Timestamp(day_start).tz_localize(fixed_offset)
+    aest_end = aest_start + pd.Timedelta(days=n_days)
+    start_utc = aest_start.tz_convert("UTC").tz_localize(None)
+    end_utc = aest_end.tz_convert("UTC").tz_localize(None)
+
+    last_included_moment = end_utc - pd.Timedelta(microseconds=1)
+    year_month_pairs = set()
+    day_pointer = start_utc.normalize()
+    while day_pointer <= last_included_moment:
+        year_month_pairs.add((day_pointer.year, day_pointer.month))
+        day_pointer += pd.Timedelta(days=1)
+    year_month_pairs = sorted(year_month_pairs)
+
+    return {
+        "aest_start": aest_start,
+        "aest_end": aest_end,
+        "start_utc": start_utc,
+        "end_utc": end_utc,
+        "year_month_pairs": year_month_pairs,
+        "year_month_sql": " OR ".join(
+            f"(year = {y} AND month = {m})" for y, m in year_month_pairs
+        ),
+    }
 
 
 def plot_circuit_day(

@@ -356,3 +356,85 @@ def test_sites_missing_day_data_empty_when_all_report():
         candidate_type="ac_load_net", component_types=["load_pool"],
     )
     assert out == {}
+
+
+# ── grouping_keys_agree ───────────────────────────────────────────────────────
+
+def test_grouping_keys_agree_when_bijective():
+    meta = pd.DataFrame({
+        "m_id": ["m1", "m1", "m2", "m2"],
+        "device_id": ["d1", "d1", "d2", "d2"],
+    })
+    out = T.grouping_keys_agree(meta, key_a="m_id", key_b="device_id")
+    assert out["agree"] is True
+    assert out["n_a_with_multiple_b"] == 0
+    assert out["n_b_with_multiple_a"] == 0
+
+
+def test_grouping_keys_disagree_when_one_key_spans_multiple_of_the_other():
+    meta = pd.DataFrame({
+        # m1 maps to BOTH d1 and d2 -- not the same grouping as device_id.
+        "m_id": ["m1", "m1", "m2"],
+        "device_id": ["d1", "d2", "d2"],
+    })
+    out = T.grouping_keys_agree(meta, key_a="m_id", key_b="device_id")
+    assert out["agree"] is False
+    assert out["n_a_with_multiple_b"] == 1
+    assert out["n_b_with_multiple_a"] == 1
+
+
+def test_grouping_keys_agree_missing_column_returns_none():
+    meta = pd.DataFrame({"device_id": ["d1"]})
+    out = T.grouping_keys_agree(meta, key_a="m_id", key_b="device_id")
+    assert out["agree"] is None
+    assert "missing" in out["reason"]
+
+
+def test_grouping_keys_agree_empty_meta_returns_none():
+    out = T.grouping_keys_agree(pd.DataFrame(), key_a="m_id", key_b="device_id")
+    assert out["agree"] is None
+
+
+# ── circuits_grouped_by_device ────────────────────────────────────────────────
+
+def _device_grouping_meta():
+    return pd.DataFrame({
+        "site_id":     [1, 1, 1, 2, 2, 3],
+        "circuit_id":  [10, 11, 12, 20, 21, 30],
+        "circuit_type": ["ac_load_net"] * 5 + ["load_pool"],
+        "device_id":   ["dA", "dA", "dA", "dB", "dC", "dD"],
+    })
+
+
+def test_circuits_grouped_by_device_flags_single_device_site():
+    # Site 1 has 3 ac_load_net circuit_ids, all under ONE device_id -- phase-like.
+    out = T.circuits_grouped_by_device(_device_grouping_meta(), candidate_type="ac_load_net")
+    row1 = out[out.site_id == 1].iloc[0]
+    assert row1.n_circuits == 3
+    assert row1.n_distinct_devices == 1
+    assert row1.single_device == True  # noqa: E712
+
+
+def test_circuits_grouped_by_device_flags_multi_device_site():
+    # Site 2 has 2 ac_load_net circuit_ids under TWO different device_ids --
+    # duplicate/independent-registration-like, not phases.
+    out = T.circuits_grouped_by_device(_device_grouping_meta(), candidate_type="ac_load_net")
+    row2 = out[out.site_id == 2].iloc[0]
+    assert row2.n_circuits == 2
+    assert row2.n_distinct_devices == 2
+    assert row2.single_device == False  # noqa: E712
+
+
+def test_circuits_grouped_by_device_excludes_single_circuit_sites():
+    # Site 3 has only 1 load_pool circuit -- not a multi-circuit case at all.
+    out = T.circuits_grouped_by_device(_device_grouping_meta(), candidate_type="load_pool")
+    assert out.empty
+
+
+def test_circuits_grouped_by_device_missing_device_column_returns_empty():
+    meta = pd.DataFrame({
+        "site_id": [1, 1], "circuit_id": [10, 11], "circuit_type": ["ac_load_net"] * 2,
+    })
+    out = T.circuits_grouped_by_device(meta, candidate_type="ac_load_net")
+    assert out.empty
+    assert list(out.columns) == ["site_id", "n_circuits", "n_distinct_devices", "single_device"]

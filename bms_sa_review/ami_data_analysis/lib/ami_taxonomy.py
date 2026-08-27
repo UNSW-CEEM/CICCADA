@@ -30,6 +30,7 @@ __all__ = [
     "signal_coverage_summary",
     "AggregationCheck", "check_aggregation", "pick_aggregation_test_site",
     "find_duplicate_circuits", "find_inactive_circuits", "sites_missing_day_data",
+    "grouping_keys_agree", "circuits_grouped_by_device",
 ]
 
 
@@ -434,3 +435,85 @@ def pick_aggregation_test_site(
     qualifying["_n_components"] = n_components[has_candidate & (n_components >= min_components)]
     qualifying = qualifying.sort_values("_n_components", ascending=False)
     return qualifying[site_column].tolist()
+
+
+def grouping_keys_agree(meta: pd.DataFrame, *, key_a: str, key_b: str) -> dict:
+    """
+    Do `key_a` and `key_b` partition the rows of `meta` the SAME way? Pure.
+
+    Exists to answer "what actually IS this column, and does it agree with
+    a column we already understand" without guessing -- e.g. `meta_up23c`'s
+    `m_id` next to the already-used `device_id`. If every distinct `key_a`
+    value maps to exactly one `key_b` value and vice versa, the two columns
+    are the same grouping under different names. If they disagree, the
+    counts here show how much, which is a real clue to what `key_a` means
+    (a coarser or finer grouping than `key_b`) rather than a guess.
+    """
+    if meta is None or not len(meta) or key_a not in meta.columns or key_b not in meta.columns:
+        return {"agree": None, "reason": f"missing {key_a!r} or {key_b!r} column, or empty meta"}
+    valid = meta[[key_a, key_b]].dropna()
+    if not len(valid):
+        return {"agree": None, "reason": f"no rows with both {key_a!r} and {key_b!r} present"}
+
+    a_to_b = valid.groupby(key_a)[key_b].nunique()
+    b_to_a = valid.groupby(key_b)[key_a].nunique()
+    n_a_with_multiple_b = int((a_to_b > 1).sum())
+    n_b_with_multiple_a = int((b_to_a > 1).sum())
+    agree = (n_a_with_multiple_b == 0) and (n_b_with_multiple_a == 0)
+    return {
+        "agree": agree,
+        "n_distinct_a": int(valid[key_a].nunique()),
+        "n_distinct_b": int(valid[key_b].nunique()),
+        "n_a_with_multiple_b": n_a_with_multiple_b,
+        "n_b_with_multiple_a": n_b_with_multiple_a,
+        "reason": (
+            f"{key_a} <-> {key_b}: "
+            + (f"every {key_a} maps to exactly one {key_b} and vice versa -- same grouping"
+               if agree else
+               f"{n_a_with_multiple_b} {key_a} value(s) span more than one {key_b}, "
+               f"{n_b_with_multiple_a} {key_b} value(s) span more than one {key_a} -- "
+               "these are different groupings, not the same key twice")
+        ),
+    }
+
+
+def circuits_grouped_by_device(
+    meta: pd.DataFrame, *,
+    candidate_type: str,
+    site_column: str = "site_id",
+    type_column: str = "circuit_type",
+    circuit_column: str = "circuit_id",
+    device_column: str = "device_id",
+) -> pd.DataFrame:
+    """
+    For every site with MORE THAN ONE `candidate_type` circuit_id, do those
+    circuit_ids share one `device_id` (consistent with separately-metered
+    phases/channels of one physical device) or span multiple `device_id`s
+    (consistent with independent/duplicate registrations, or genuinely
+    separate sub-panels)? Pure.
+
+    This is the metadata-first companion to `find_duplicate_circuits` (which
+    tests BEHAVIOUR -- do the readings correlate): `device_id` is what the
+    installer/registration process actually recorded, so agreement between
+    the two is strong corroborating evidence, and disagreement (e.g. a
+    correlated pair under two different device_ids) is worth a closer look
+    rather than trusting either signal alone.
+    """
+    empty = pd.DataFrame(columns=[site_column, "n_circuits", "n_distinct_devices", "single_device"])
+    if meta is None or not len(meta) or device_column not in meta.columns:
+        return empty
+    candidates = meta[meta[type_column] == candidate_type]
+    if not len(candidates):
+        return empty
+    counts = candidates.groupby(site_column)[circuit_column].nunique()
+    multi_sites = counts[counts > 1].index
+    if not len(multi_sites):
+        return empty
+
+    subset = candidates[candidates[site_column].isin(multi_sites)]
+    grouped = subset.groupby(site_column).agg(
+        n_circuits=(circuit_column, "nunique"),
+        n_distinct_devices=(device_column, "nunique"),
+    ).reset_index()
+    grouped["single_device"] = grouped["n_distinct_devices"] == 1
+    return grouped.sort_values(site_column).reset_index(drop=True)

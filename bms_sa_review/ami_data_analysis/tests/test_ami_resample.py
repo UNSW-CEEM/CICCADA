@@ -238,6 +238,82 @@ def test_actual_interval_check_breakdown_by_group():
     assert breakdown["load_pool"] == pytest.approx(0.0)
 
 
+# ── energy_granularity_and_implied_interval ──────────────────────────────────
+
+def test_clean_circuit_shows_exact_nominal_interval_and_no_integer_snapping():
+    times = pd.date_range("2025-06-01 00:00", periods=6, freq="5min")
+    sample = pd.DataFrame({
+        "circuit_id": [1] * 6,
+        "power": [601.2, 431.9, 812.4, 250.7, 999.3, 111.1],
+        # exactly power * 5/60 -- a genuinely continuous energy column
+        "energy": [p * (5.0 / 60.0) for p in [601.2, 431.9, 812.4, 250.7, 999.3, 111.1]],
+    })
+    sample["t_stamp"] = times
+    result = R.energy_granularity_and_implied_interval(sample)
+    row = result[result.circuit_id == 1].iloc[0]
+    assert row.share_integer_energy == pytest.approx(0.0)
+    assert row.implied_interval_minutes == pytest.approx(5.0)
+
+
+def test_integer_energy_register_with_shorter_true_interval_is_flagged():
+    # energy is always a whole Wh, and consistently implies ~4.9 minutes,
+    # not the logged 5-minute cadence -- the device/meter-model signature
+    # `confirm_energy_matches_power_actual_interval` cannot see (its
+    # `t_stamp` gaps are still exactly 5 minutes).
+    powers = [700.0, 900.0, 1200.0, 500.0, 1500.0]
+    true_interval_minutes = 4.9
+    sample = pd.DataFrame({
+        "circuit_id": [2] * 5,
+        "power": powers,
+        "energy": [round(p * (true_interval_minutes / 60.0)) for p in powers],
+    })
+    result = R.energy_granularity_and_implied_interval(sample)
+    row = result[result.circuit_id == 2].iloc[0]
+    assert row.share_integer_energy == pytest.approx(1.0)
+    assert row.implied_interval_minutes == pytest.approx(true_interval_minutes, abs=0.05)
+
+
+def test_low_power_rows_excluded_from_the_ratio_by_default():
+    # Below the 200W default floor -- would still count toward
+    # share_integer_energy, but must NOT be used for the interval ratio,
+    # where small-power quantization noise dominates.
+    sample = pd.DataFrame({
+        "circuit_id": [3] * 3,
+        "power": [5.0, 8.0, 900.0],
+        "energy": [1.0, 1.0, 900.0 * (5.0 / 60.0)],
+    })
+    result = R.energy_granularity_and_implied_interval(sample)
+    row = result[result.circuit_id == 3].iloc[0]
+    assert row.n_rows == 3
+    assert row.n_rows_used_for_ratio == 1
+    assert row.implied_interval_minutes == pytest.approx(5.0)
+
+
+def test_distinguishes_circuits_within_the_same_sample():
+    clean_times = pd.date_range("2025-06-01 00:00", periods=3, freq="5min")
+    sample = pd.DataFrame({
+        "circuit_id": [1, 1, 1, 2, 2, 2],
+        "power": [601.2, 803.5, 1002.9, 601.2, 803.5, 1002.9],
+        "energy": [
+            601.2 * (5.0 / 60.0), 803.5 * (5.0 / 60.0), 1002.9 * (5.0 / 60.0),
+            round(601.2 * (4.9 / 60.0)), round(803.5 * (4.9 / 60.0)), round(1002.9 * (4.9 / 60.0)),
+        ],
+    })
+    result = R.energy_granularity_and_implied_interval(sample).set_index("circuit_id")
+    assert result.loc[1, "share_integer_energy"] == pytest.approx(0.0)
+    assert result.loc[2, "share_integer_energy"] == pytest.approx(1.0)
+    assert result.loc[1, "implied_interval_minutes"] > result.loc[2, "implied_interval_minutes"]
+
+
+def test_empty_sample_returns_empty_frame_with_expected_columns():
+    result = R.energy_granularity_and_implied_interval(pd.DataFrame())
+    assert list(result.columns) == [
+        "circuit_id", "n_rows", "share_integer_energy",
+        "implied_interval_minutes", "n_rows_used_for_ratio",
+    ]
+    assert len(result) == 0
+
+
 # ── resample_to_interval ─────────────────────────────────────────────────────
 
 def test_instantaneous_power_resamples_via_energy_sum_not_mean_of_power():

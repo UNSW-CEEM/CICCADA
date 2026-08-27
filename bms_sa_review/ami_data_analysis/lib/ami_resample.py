@@ -26,6 +26,7 @@ import pandas as pd
 __all__ = [
     "interval_energy_kwh", "verify_column_units", "confirm_energy_matches_power",
     "confirm_energy_matches_power_actual_interval", "resample_to_interval",
+    "energy_granularity_and_implied_interval",
 ]
 
 
@@ -170,6 +171,66 @@ def confirm_energy_matches_power_actual_interval(
         by_group = mismatched.groupby(frame[group_column]).mean().sort_values(ascending=False)
         result["share_mismatched_by_group"] = {str(k): float(v) for k, v in by_group.items()}
     return result
+
+
+def energy_granularity_and_implied_interval(
+    sample: pd.DataFrame, *,
+    circuit_column: str = "circuit_id",
+    power_column: str = "power",
+    energy_column: str = "energy",
+    min_abs_power_for_ratio: float = 200.0,
+) -> pd.DataFrame:
+    """
+    Per circuit_id: is `energy` logged as a whole-Wh integer, and what
+    interval does `energy / power` actually imply? Pure.
+
+    `confirm_energy_matches_power`/`..._actual_interval` both assume every
+    circuit's `energy` is consistent with ONE interval (nominal, or actual
+    from `t_stamp` gaps). A device/meter-model effect can slip past both: a
+    circuit's `t_stamp` gaps can land exactly on the nominal grid (its
+    LOGGING cadence isn't drifting) while its internal energy-accumulation
+    window is slightly shorter or longer than that -- invisible to a
+    gap-based check, but visible here as `implied_interval_minutes` (the
+    median of `energy / power * 60`, restricted to rows with
+    `abs(power) >= min_abs_power_for_ratio` so small-power quantization
+    noise doesn't swamp the ratio) differing from the nominal interval.
+
+    `share_integer_energy` close to 1.0 for one circuit while its siblings
+    sit near 0.0 is itself informative -- a different logging convention
+    (e.g. a whole-watt-hour energy register vs a continuously computed
+    value) for that specific circuit, independent of its `circuit_type`.
+    Cross-referencing flagged circuit_ids against `device_type` (a
+    `meta_up23c` column, not present in `sample` -- join it in the caller)
+    is the natural next step: two documented AMI hardware brands
+    (`CATCH Power`, `Watt Watcher`) could plausibly differ in exactly this
+    way.
+    """
+    columns = [
+        "circuit_id", "n_rows", "share_integer_energy",
+        "implied_interval_minutes", "n_rows_used_for_ratio",
+    ]
+    if sample is None or not len(sample):
+        return pd.DataFrame(columns=columns)
+
+    frame = sample.copy()
+    is_integer = (frame[energy_column].astype(float) % 1.0) == 0.0
+    granularity = is_integer.groupby(frame[circuit_column]).agg(["mean", "count"])
+    granularity.columns = ["share_integer_energy", "n_rows"]
+
+    ratio_rows = frame[frame[power_column].abs() >= min_abs_power_for_ratio]
+    implied = (
+        (ratio_rows[energy_column] / ratio_rows[power_column] * 60.0)
+        .groupby(ratio_rows[circuit_column])
+        .agg(["median", "count"])
+    )
+    implied.columns = ["implied_interval_minutes", "n_rows_used_for_ratio"]
+
+    result = granularity.join(implied, how="left").reset_index()
+    result = result.rename(columns={circuit_column: "circuit_id"})
+    result["n_rows_used_for_ratio"] = (
+        result["n_rows_used_for_ratio"].fillna(0).astype(int)
+    )
+    return result[columns].sort_values("circuit_id").reset_index(drop=True)
 
 
 def verify_column_units(

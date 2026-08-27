@@ -63,6 +63,44 @@ def test_to_aest_coerces_non_datetime_dtype():
     assert out.dt.tz is not None
 
 
+def test_aest_day_window_utc_one_day_shifts_ten_hours_earlier():
+    # AEST 2025-06-01 00:00 -> UTC 2025-05-31 14:00 (AEST is UTC+10)
+    window = P.aest_day_window_utc("2025-06-01", n_days=1)
+    assert window["start_utc"] == pd.Timestamp("2025-05-31 14:00:00")
+    assert window["end_utc"] == pd.Timestamp("2025-06-01 14:00:00")
+
+
+def test_aest_day_window_utc_two_days_spans_expected_range():
+    window = P.aest_day_window_utc("2025-06-01", n_days=2)
+    assert window["end_utc"] - window["start_utc"] == pd.Timedelta(days=2)
+    assert window["start_utc"] == pd.Timestamp("2025-05-31 14:00:00")
+    assert window["end_utc"] == pd.Timestamp("2025-06-02 14:00:00")
+
+
+def test_aest_day_window_utc_crosses_a_month_boundary_in_utc():
+    # 2 AEST days from 2025-06-01 span UTC 2025-05-31 .. 2025-06-02 --
+    # both May and June partitions must be included even though the AEST
+    # start date is entirely in June.
+    window = P.aest_day_window_utc("2025-06-01", n_days=2)
+    assert window["year_month_pairs"] == [(2025, 5), (2025, 6)]
+    assert "(year = 2025 AND month = 5)" in window["year_month_sql"]
+    assert "(year = 2025 AND month = 6)" in window["year_month_sql"]
+
+
+def test_aest_day_window_utc_single_month_when_no_boundary_crossed():
+    # AEST 2025-06-15 + 1 day stays well inside UTC June.
+    window = P.aest_day_window_utc("2025-06-15", n_days=1)
+    assert window["year_month_pairs"] == [(2025, 6)]
+
+
+def test_aest_day_window_utc_does_not_include_trailing_month_at_exact_boundary():
+    # AEST 2025-06-29 + 2 days = AEST 2025-07-01 00:00, i.e. UTC
+    # 2025-06-30 14:00 (exclusive) -- the window never touches July at all.
+    window = P.aest_day_window_utc("2025-06-29", n_days=2)
+    assert window["end_utc"] == pd.Timestamp("2025-06-30 14:00:00")
+    assert window["year_month_pairs"] == [(2025, 6)]
+
+
 def test_plot_circuit_day_draws_one_line_per_circuit():
     fig, ax = P.plot_circuit_day(_sample_frame(), title="test")
     assert len(ax.get_lines()) == 2
@@ -98,3 +136,42 @@ def test_plot_aggregation_check_draws_two_lines():
         frame, candidate_circuit_ids=[1], component_circuit_ids=[2], title="test"
     )
     assert len(ax.get_lines()) == 2
+
+
+def test_plot_circuit_day_axis_labels_are_aest_not_utc():
+    """
+    matplotlib's DateFormatter renders tick labels in its rcParam timezone
+    (UTC by default) regardless of the plotted datetimes' own tzinfo --
+    confirmed empirically (a UTC-midnight-aligned AEST series plotted
+    without `tz=` passed to DateFormatter renders a tick sequence starting
+    at "23:00", i.e. 10 hours behind the true AEST time). With `tz=` set
+    correctly, matplotlib's auto tick locator places 3-hour-aligned ticks --
+    for a window starting at 10:00 AEST that means the first tick reads
+    "09:00" (the nearest round boundary at/before the data start), then
+    "12:00", "15:00", ... -- never a UTC-clock value like "00:00" or "23:00".
+    """
+    times = pd.date_range("2025-06-01 00:00:00", periods=24, freq="1h", tz="UTC")
+    frame = pd.DataFrame({
+        "circuit_id": [1] * 24, "circuit_type": ["pv_site"] * 24,
+        "t_stamp": times, "power_signed": list(range(24)),
+    })
+    fig, ax = P.plot_circuit_day(frame)
+    fig.canvas.draw()
+    labels = [t.get_text() for t in ax.get_xticklabels()]
+    assert labels == ["09:00", "12:00", "15:00", "18:00", "21:00", "00:00", "03:00", "06:00", "09:00"], (
+        f"got {labels!r} -- DateFormatter is likely missing tz=C.FIXED_OFFSET, which would "
+        f"instead show the raw UTC clock time (a tick sequence starting at '23:00')"
+    )
+
+
+def test_plot_aggregation_check_axis_labels_are_aest_not_utc():
+    times = pd.date_range("2025-06-01 00:00:00", periods=24, freq="1h", tz="UTC")
+    frame = pd.DataFrame({
+        "circuit_id": [1] * 24 + [2] * 24,
+        "t_stamp": list(times) * 2,
+        "power_signed": list(range(24)) * 2,
+    })
+    fig, ax = P.plot_aggregation_check(frame, candidate_circuit_ids=[1], component_circuit_ids=[2])
+    fig.canvas.draw()
+    labels = [t.get_text() for t in ax.get_xticklabels()]
+    assert labels[0] == "09:00", f"got {labels!r} -- DateFormatter is likely missing tz=C.FIXED_OFFSET"
