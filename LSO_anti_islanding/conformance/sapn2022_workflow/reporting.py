@@ -111,6 +111,65 @@ def build_sapn_site_conformance_summary(results):
     )
 
 
+def write_method_conformance_final_table(site_conformance_summary):
+    final_table = (
+        site_conformance_summary.group_by("method_key", maintain_order=True)
+        .agg(
+            [
+                pl.col("site_id")
+                .n_unique()
+                .alias("Eligible Sites After Filtering"),
+                pl.col("overall_pass")
+                .is_not_null()
+                .sum()
+                .alias("Sites Assessed"),
+                pl.col("overall_pass").is_null().sum().alias("Unassessed Sites"),
+                pl.col("overall_pass")
+                .eq(True)
+                .fill_null(False)
+                .sum()
+                .alias("Conformant Sites"),
+                pl.col("overall_pass")
+                .eq(False)
+                .fill_null(False)
+                .sum()
+                .alias("Non-Conformant Sites"),
+            ]
+        )
+        .with_columns(
+            (
+                pl.col("Conformant Sites")
+                / pl.col("Sites Assessed")
+                * 100.0
+            )
+            .round(2)
+            .alias("Conformance Percentage (% of Assessed)")
+        )
+        .rename({"method_key": "Method Used"})
+        .select(
+            [
+                "Method Used",
+                "Eligible Sites After Filtering",
+                "Sites Assessed",
+                "Unassessed Sites",
+                "Conformant Sites",
+                "Non-Conformant Sites",
+                "Conformance Percentage (% of Assessed)",
+            ]
+        )
+    )
+    final_table.write_excel(
+        workbook=(
+            Path(__file__).resolve().parent
+            / "results"
+            / "site_conformance_final_table.xlsx"
+        ),
+        column_formats={"Conformance Percentage (% of Assessed)": "0.00"},
+        table_style=None,
+        autofit=True,
+    )
+
+
 def build_sapn_conformance_exclusions(results):
     rows = []
     for reason, site_ids in results["skipped_sites"].items():

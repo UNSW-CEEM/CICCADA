@@ -45,7 +45,9 @@ def _dominant_voltage_window(values, width_v=0.5):
     }
 
 
-def _mechanism_threshold_evidence(records, mechanism, voltage_column, default):
+def _mechanism_threshold_evidence(
+    records, mechanism, voltage_column, default, min_events=3
+):
     if records.is_empty() or voltage_column not in records.columns:
         values = []
     else:
@@ -61,7 +63,9 @@ def _mechanism_threshold_evidence(records, mechanism, voltage_column, default):
     voltage_range = _range_or_none(values)
     window = _dominant_voltage_window(values)
     learned = (
-        window["count"] >= 3 and voltage_range is not None and voltage_range <= 2.0
+        window["count"] >= min_events
+        and voltage_range is not None
+        and voltage_range <= 2.0
     )
     return {
         "threshold": window["median_v"] if learned else default,
@@ -94,13 +98,13 @@ def _site_thresholds_from_records(
         records,
         "LOS",
         "v_los_recorded",
-        258.0,
+        258.0, min_events=3,
     )
     ov1 = _mechanism_threshold_evidence(
         records,
         "OV1",
         "v_ov1_recorded",
-        265.0,
+        265.0, min_events=3,
     )
 
     los_anchor = float(los["threshold"])

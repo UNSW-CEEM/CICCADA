@@ -36,6 +36,7 @@ from sapn2022_workflow.reporting import (
     SITE_CONFORMANCE_SUMMARY_NAME,
     build_sapn_conformance_exclusions,
     build_sapn_site_conformance_summary,
+    write_method_conformance_final_table,
     write_sapn_threshold_distribution_plots,
 )
 from sapn2022_workflow.sapn_paths import (
@@ -323,6 +324,7 @@ conformance_exclusions = build_sapn_conformance_exclusions(results)
 site_conformance_summary.write_csv(
     CONFORMANCE_OUTPUT_DIR / SITE_CONFORMANCE_SUMMARY_NAME
 )
+write_method_conformance_final_table(site_conformance_summary)
 conformance_exclusions.write_csv(CONFORMANCE_OUTPUT_DIR / CONFORMANCE_EXCLUSIONS_NAME)
 write_sapn_threshold_distribution_plots(
     results["phase_a_trip_attribution"],

@@ -350,7 +350,7 @@ def plot_site_compliance_day(
             v_lines = v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            v_labels = v_labels + ["EVM event"]
+            v_labels = v_labels + ["Region exceeding thresholds"]
         ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
     else:
         top_lines, top_labels = ax_top.get_legend_handles_labels()
@@ -359,7 +359,7 @@ def plot_site_compliance_day(
             top_v_lines = top_v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            top_v_labels = top_v_labels + ["EVM event"]
+            top_v_labels = top_v_labels + ["Region exceeding thresholds"]
         ax_top.legend(
             top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
         )
@@ -370,7 +370,7 @@ def plot_site_compliance_day(
             bottom_v_lines = bottom_v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            bottom_v_labels = bottom_v_labels + ["EVM event"]
+            bottom_v_labels = bottom_v_labels + ["Region exceeding thresholds"]
         ax_bottom.legend(
             bottom_lines + bottom_v_lines,
             bottom_labels + bottom_v_labels,
@@ -484,7 +484,7 @@ def plot_method_threshold_overlay_day(
         if event_spans:
             overlay_spans.append(
                 {
-                    "label": "EVM event",
+                    "label": "Region exceeding thresholds",
                     "color": PLOT_COLORS["shade"],
                     "alpha": 0.22,
                     "spans": event_spans,
