@@ -116,6 +116,128 @@ def test_confirm_energy_empty_sample_returns_none():
     assert "no sample" in result["reason"]
 
 
+def test_confirm_energy_breakdown_by_group_isolates_the_bad_type():
+    sample = pd.DataFrame({
+        "power": [1000.0] * 5 + [1000.0] * 5,
+        "circuit_type": ["load_pool"] * 5 + ["pv_site_net"] * 5,
+        # load_pool matches perfectly; pv_site_net is way off.
+        "energy": [83.333333] * 5 + [1.0] * 5,
+    })
+    result = R.confirm_energy_matches_power(
+        sample, interval_minutes=5.0, group_column="circuit_type"
+    )
+    assert result["confirmed"] is False
+    breakdown = result["share_mismatched_by_group"]
+    assert breakdown["pv_site_net"] == pytest.approx(1.0)
+    assert breakdown["load_pool"] == pytest.approx(0.0)
+
+
+# ── confirm_energy_matches_power_actual_interval ─────────────────────────────
+
+def test_missed_poll_gap_is_not_a_mismatch_when_using_actual_interval():
+    """
+    Reproduces the real-fleet shape: one circuit reports every 5 minutes
+    except for one missed poll, so the gap into the NEXT reading is really
+    10 minutes. `energy` on that row correctly reflects the full 10 minutes
+    (a genuinely-measured energy register would) -- comparing it against the
+    NOMINAL 5-minute interval wrongly flags it; comparing it against the
+    ACTUAL (t_stamp-derived) interval should not.
+    """
+    times = pd.to_datetime([
+        "2025-06-01 00:00:00", "2025-06-01 00:05:00",
+        "2025-06-01 00:15:00",  # missed the 00:10 poll -- a real 10-min gap
+        "2025-06-01 00:20:00",
+    ])
+    power = pd.Series([600.0, 600.0, 600.0, 600.0])
+    # energy correctly reflects each row's REAL elapsed time since the last
+    # reading (first row has no prior reading, so its value is irrelevant
+    # here -- the function drops rows with no actual interval to compute).
+    intervals_min = [5.0, 5.0, 10.0, 5.0]
+    energy = [p * (m / 60.0) for p, m in zip(power, intervals_min)]
+    sample = pd.DataFrame({
+        "circuit_id": [1] * 4, "t_stamp": times, "power": power, "energy": energy,
+    })
+
+    nominal = R.confirm_energy_matches_power(sample, interval_minutes=5.0)
+    actual = R.confirm_energy_matches_power_actual_interval(sample)
+
+    # Against the nominal (constant) 5-minute assumption, the missed-poll
+    # row's energy (600 * 10/60 = 100 Wh) doesn't match 600 * 5/60 = 50 Wh.
+    assert nominal["confirmed"] is False
+    assert nominal["n_mismatched"] == 1
+
+    # Against each row's own actual gap, every row matches.
+    assert actual["confirmed"] is True
+    assert actual["n_mismatched"] == 0
+    # 4 rows in, but the first has no earlier reading to diff against.
+    assert actual["n_rows"] == 3
+
+
+def test_actual_interval_check_still_flags_a_genuine_mismatch():
+    times = pd.to_datetime(["2025-06-01 00:00:00", "2025-06-01 00:05:00"])
+    sample = pd.DataFrame({
+        "circuit_id": [1, 1], "t_stamp": times,
+        "power": [1000.0, 1000.0],
+        "energy": [1000.0, 999.0],  # expected 1000*5/60=83.33 -- way off
+    })
+    result = R.confirm_energy_matches_power_actual_interval(sample)
+    assert result["confirmed"] is False
+    assert result["n_mismatched"] == 1
+
+
+def test_actual_interval_check_keeps_circuits_independent():
+    # Two circuits' own gaps must not bleed into each other via a naive
+    # groupby-less diff (which would compute a bogus interval between the
+    # last row of one circuit and the first row of the next).
+    sample = pd.DataFrame({
+        "circuit_id": [1, 1, 2, 2],
+        "t_stamp": pd.to_datetime([
+            "2025-06-01 00:00:00", "2025-06-01 00:05:00",
+            "2025-06-01 00:00:00", "2025-06-01 00:05:00",
+        ]),
+        "power": [600.0, 600.0, 300.0, 300.0],
+        "energy": [50.0, 50.0, 25.0, 25.0],  # each = power * 5/60
+    })
+    result = R.confirm_energy_matches_power_actual_interval(sample)
+    assert result["confirmed"] is True
+    assert result["n_rows"] == 2  # one first-reading dropped per circuit
+
+
+def test_actual_interval_check_single_reading_per_circuit_returns_none():
+    sample = pd.DataFrame({
+        "circuit_id": [1], "t_stamp": pd.to_datetime(["2025-06-01 00:00:00"]),
+        "power": [600.0], "energy": [50.0],
+    })
+    result = R.confirm_energy_matches_power_actual_interval(sample)
+    assert result["confirmed"] is None
+    assert "no row has an earlier reading" in result["reason"]
+
+
+def test_actual_interval_check_empty_sample_returns_none():
+    result = R.confirm_energy_matches_power_actual_interval(pd.DataFrame())
+    assert result["confirmed"] is None
+    assert "no sample" in result["reason"]
+
+
+def test_actual_interval_check_breakdown_by_group():
+    sample = pd.DataFrame({
+        "circuit_id": [1, 1, 2, 2],
+        "circuit_type": ["load_pool", "load_pool", "pv_site_net", "pv_site_net"],
+        "t_stamp": pd.to_datetime([
+            "2025-06-01 00:00:00", "2025-06-01 00:05:00",
+            "2025-06-01 00:00:00", "2025-06-01 00:05:00",
+        ]),
+        "power": [600.0, 600.0, 1000.0, 1000.0],
+        "energy": [50.0, 50.0, 1.0, 1.0],  # load_pool matches, pv_site_net doesn't
+    })
+    result = R.confirm_energy_matches_power_actual_interval(
+        sample, group_column="circuit_type"
+    )
+    breakdown = result["share_mismatched_by_group"]
+    assert breakdown["pv_site_net"] == pytest.approx(1.0)
+    assert breakdown["load_pool"] == pytest.approx(0.0)
+
+
 # ── resample_to_interval ─────────────────────────────────────────────────────
 
 def test_instantaneous_power_resamples_via_energy_sum_not_mean_of_power():

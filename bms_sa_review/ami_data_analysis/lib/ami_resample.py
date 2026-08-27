@@ -25,7 +25,7 @@ import pandas as pd
 
 __all__ = [
     "interval_energy_kwh", "verify_column_units", "confirm_energy_matches_power",
-    "resample_to_interval",
+    "confirm_energy_matches_power_actual_interval", "resample_to_interval",
 ]
 
 
@@ -41,6 +41,7 @@ def confirm_energy_matches_power(
     interval_minutes: float = 5.0,
     tolerance_wh: float = 0.5,
     max_mismatch_share: float = 0.01,
+    group_column: str = None,
 ) -> dict:
     """
     Does a native `energy` column already equal `power * interval_hours`, as
@@ -58,6 +59,12 @@ def confirm_energy_matches_power(
     `tolerance_wh` absorbs ordinary floating-point/rounding noise, not a
     real discrepancy; `max_mismatch_share` is how much of the sample is
     allowed to miss that tolerance before `confirmed` turns False.
+
+    `group_column`, if given (e.g. `circuit_type`), adds
+    `share_mismatched_by_group` -- worth checking if `confirmed` comes back
+    False: a mismatch concentrated in one or two circuit_types (rather than
+    spread evenly) points to something specific to that type, not a
+    fleet-wide units problem.
     """
     if sample is None or not len(sample):
         return {
@@ -70,7 +77,7 @@ def confirm_energy_matches_power(
     n_mismatched = int(mismatched.sum())
     share = n_mismatched / len(sample)
     confirmed = share <= max_mismatch_share
-    return {
+    result = {
         "n_rows": int(len(sample)),
         "n_mismatched": n_mismatched,
         "share_mismatched": float(share),
@@ -82,6 +89,87 @@ def confirm_energy_matches_power(
                "exceeds the allowed mismatch share, do not trust `energy` blindly here")
         ),
     }
+    if group_column is not None and group_column in sample.columns:
+        by_group = mismatched.groupby(sample[group_column]).mean().sort_values(ascending=False)
+        result["share_mismatched_by_group"] = {str(k): float(v) for k, v in by_group.items()}
+    return result
+
+
+def confirm_energy_matches_power_actual_interval(
+    sample: pd.DataFrame, *,
+    circuit_column: str = "circuit_id",
+    time_column: str = "t_stamp",
+    power_column: str = "power",
+    energy_column: str = "energy",
+    tolerance_wh: float = 0.5,
+    max_mismatch_share: float = 0.01,
+    group_column: str = None,
+) -> dict:
+    """
+    Same question as `confirm_energy_matches_power`, but computes each row's
+    interval length from the ACTUAL gap to that circuit's own previous
+    reading, instead of assuming every row is exactly
+    `ami_config.SOURCE_INTERVAL_MINUTES` apart. Pure.
+
+    Real AMI feeds miss polls: a circuit's next `ts` row can arrive 10 or 15
+    minutes after the last one, not the nominal 5, whenever a report was
+    dropped -- the same real-world fleet churn `sites_missing_day_data`
+    already accounts for at the whole-day level. If `energy` is the meter's
+    own reading for the time actually elapsed (which a genuinely-measured
+    energy column should be), comparing it against
+    `power * NOMINAL_interval_hours` mismatches on exactly those rows even
+    though `energy` is correct for its real interval -- a false alarm from
+    `confirm_energy_matches_power`, not a real units problem. This
+    recomputes the expected value from each row's own measured gap to test
+    that hypothesis directly instead of assuming it: if the mismatch share
+    drops sharply here relative to the nominal-interval version, missed
+    polls (not a units error) is the explanation.
+
+    The first reading of every circuit has no earlier timestamp to diff
+    against and is excluded from this check (not from the sample) -- there
+    is no actual interval to compute for it.
+    """
+    if sample is None or not len(sample):
+        return {
+            "n_rows": 0, "n_mismatched": 0, "share_mismatched": None,
+            "confirmed": None, "reason": "no sample available",
+        }
+    frame = sample.sort_values([circuit_column, time_column]).copy()
+    if not pd.api.types.is_datetime64_any_dtype(frame[time_column]):
+        frame[time_column] = pd.to_datetime(frame[time_column])
+    frame["_actual_interval_minutes"] = (
+        frame.groupby(circuit_column)[time_column].diff().dt.total_seconds() / 60.0
+    )
+    frame = frame.dropna(subset=["_actual_interval_minutes"])
+    if not len(frame):
+        return {
+            "n_rows": 0, "n_mismatched": 0, "share_mismatched": None,
+            "confirmed": None,
+            "reason": "no row has an earlier reading on its own circuit to diff against",
+        }
+
+    expected_wh = frame[power_column] * (frame["_actual_interval_minutes"] / 60.0)
+    diff = (frame[energy_column] - expected_wh).abs()
+    mismatched = diff > tolerance_wh
+    n_mismatched = int(mismatched.sum())
+    share = n_mismatched / len(frame)
+    confirmed = share <= max_mismatch_share
+    result = {
+        "n_rows": int(len(frame)),
+        "n_mismatched": n_mismatched,
+        "share_mismatched": float(share),
+        "confirmed": confirmed,
+        "reason": (
+            f"{n_mismatched:,} of {len(frame):,} row(s) ({share:.2%}) differ from "
+            f"`{power_column}` * ACTUAL-interval-hours (from consecutive `{time_column}` "
+            f"gaps on the same circuit, not the nominal interval) by more than "
+            f"{tolerance_wh} Wh"
+        ),
+    }
+    if group_column is not None and group_column in frame.columns:
+        by_group = mismatched.groupby(frame[group_column]).mean().sort_values(ascending=False)
+        result["share_mismatched_by_group"] = {str(k): float(v) for k, v in by_group.items()}
+    return result
 
 
 def verify_column_units(
