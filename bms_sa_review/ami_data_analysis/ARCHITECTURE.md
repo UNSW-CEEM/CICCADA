@@ -44,8 +44,13 @@ bms_sa_review/ami_data_analysis/
 │   │                             convention. One place. Both bugs live here.
 │   ├── ami_resample.py      [P3] 5-min -> AMI interval. Energy sums, not power
 │   │                             averages. Power vs energy columns handled apart.
-│   ├── ami_extract.py       [P4] Athena UNLOAD/CTAS, chunked and resumable,
+│   ├── ami_resolution.py    [P4] per-site duplicate/inactive circuit
+│   │                             resolution, device/meter-model power
+│   │                             correction, the two Phase 4 output tables.
+│   ├── ami_extract.py       [P?] Athena UNLOAD/CTAS, chunked and resumable,
 │   │                             provenance sidecar. TOUCHES AWS. Runs once.
+│   │                             (still real, still needed for a full-fleet
+│   │                             run -- no longer "Phase 4", see below.)
 │   ├── ami_store.py         [P4] DuckDB connect + register views over local
 │   │                             Parquet. Port of se_store.py. NO boto3.
 │   ├── ami_params.py        [P5] AmiConfig dataclass + validate() + with_changes()
@@ -104,7 +109,22 @@ so an unresolved choice cannot quietly become a silent default.
 | 0 | `00_connection_check` | `ami_athena`, `ami_diagnostics` | written, run, confirmed |
 | 1 | `01_data_lake_inventory` | `ami_inventory` | written, run, confirmed |
 | 2 | `02_source_selection` | `ami_sources` | written, run, confirmed -- source: raw `ts` + `meta_up23c` |
-| 3 | `03_signal_taxonomy` | `ami_taxonomy`, `ami_signal`, `ami_resample`, `ami_plots` | written -- run pending your Athena session |
-| 4 | `04_extract` | `ami_extract`, `ami_store` | not started |
+| 3 | `03_signal_taxonomy` | `ami_taxonomy`, `ami_signal`, `ami_resample`, `ami_plots` | CLOSED (2026-08-27) -- run against real fleet data, 37 cells, no errors |
+| 4 | `04_site_resolution` | `ami_resolution` | written, dry-run verified -- run against real data pending your Athena session |
 | 5 | `05_build_ami` | `ami_params`, `ami_contract`, `ami_build`, `ami_degrade` | not started |
 | 6 | `06_validate` | `ami_validate` | not started |
+
+**Renumbered 2026-08-27:** this sketch originally had Phase 4 = a bulk,
+resumable Athena UNLOAD/CTAS extract to local Parquet (`ami_extract`,
+`ami_store`), with per-site resolution folded into Phase 5's `ami_build`.
+In practice, Phase 4 became the per-site resolution pipeline itself
+(`ami_resolution`), querying Athena directly per-batch the same way
+notebook 3's Section 8b fleet scan did -- no bulk extract-to-Parquet step
+exists yet. `ami_extract`/`ami_store` remain real, still-needed future work
+(a full-fleet run will need a storage decision this validation-batch scale
+doesn't), just not positioned as "Phase 4" any more. `ami_build` (Phase 5)
+still owns applying `circuit_polarity` and the sign convention to turn the
+interval-level table into `ami_raw`/`ami_meter` -- Phase 4's output stays
+at the raw/corrected-power, per-circuit level (see `ami_resolution`'s
+module docstring and `ami_config.SIGN_CONVENTION_RESOLVED`, deliberately
+still `False`).

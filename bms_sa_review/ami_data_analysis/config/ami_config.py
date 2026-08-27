@@ -326,6 +326,18 @@ NET_SIGN_CONVENTION = (
 COMPONENT_SIGN_CONVENTION = (
     "magnitudes: pv_generation >= 0 (generated), gross_load >= 0 (consumed)"
 )
+#: Deliberately LEFT UNRESOLVED (2026-08-27), not flipped alongside
+#: CIRCUIT_SIGNAL_MAP_RESOLVED above: Phase 3 Section 5's real-fleet
+#: bidirectional-circuit_type check flagged `ac_load_net` itself (not just
+#: sub-loads) as bidirectional (share_negative/share_positive both above the
+#: noise-floor threshold) -- i.e. real sites export through `ac_load_net`,
+#: not just import. That is in real tension with `gross_load >= 0` above.
+#: Phase 4's interval-level table sidesteps this (it emits raw/corrected
+#: `power`, not a sign-applied `gross_load` column -- see `ami_resolution`),
+#: so it does not need this resolved to proceed, but whoever applies
+#: `circuit_polarity` and builds `gross_load` (originally sketched as
+#: Phase 5's `ami_build`) must revisit this before trusting the magnitude
+#: convention for `ac_load_net` specifically.
 SIGN_CONVENTION_RESOLVED = False
 
 # ---------------------------------------------------------------------------
@@ -348,9 +360,24 @@ SIGN_CONVENTION_RESOLVED = False
 # is why Phase 3 must PROVE aggregate status arithmetically (does the candidate
 # aggregate equal the sum of the others, interval by interval?) rather than
 # inferring it from the substring "net".
-CIRCUIT_SIGNAL_MAP: dict[str, str] = {}          # circuit_type -> signal name
+# RESOLVED, 2026-08-27, for the CORE two signals only (Phase 3's real-fleet
+# aggregation-check + PV-night-diagnostic findings): `ac_load_net` is a
+# genuine whole-site load signal, not a sum to reconstruct (0/200 sites
+# `is_aggregate=True`), and `pv_site_net` is confirmed generation-only
+# (0/36 tested sites showed net-of-load behaviour at night). Named sub-loads
+# (`load_pool`, `load_hot_water`, `load_other`, etc.) are bonus/optional --
+# NOT yet assigned a signal name here, since Phase 4's core ground-truth
+# table does not require them (see `bms_sa_review/ami_data_analysis`
+# Phase 4 kickoff doc). Add them here if/when a later phase needs them.
+CIRCUIT_SIGNAL_MAP: dict[str, str] = {
+    "ac_load_net": "gross_load",
+    "pv_site_net": "pv_generation",
+}
+#: No circuit_type has been proven an aggregate of its own siblings at fleet
+#: scale (Phase 3, Section 4: 0/200 sites `is_aggregate=True`) -- stays
+#: empty, not UNRESOLVED-empty; this IS the resolved answer.
 AGGREGATE_CIRCUIT_TYPES: frozenset[str] = frozenset()
-CIRCUIT_SIGNAL_MAP_RESOLVED = False
+CIRCUIT_SIGNAL_MAP_RESOLVED = True
 
 #: Signals the build emits. Sub-loads are appended once Phase 3 names them.
 CORE_SIGNALS = ("pv_generation", "gross_load")

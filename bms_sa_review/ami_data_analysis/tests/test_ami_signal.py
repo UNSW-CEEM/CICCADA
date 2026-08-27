@@ -273,3 +273,93 @@ def test_zero_load_night_mean_cannot_corroborate():
     out = S.compare_pv_night_to_load(pv_stats, load_stats)
     assert out["corroborated"] is False
     assert "~0" in out["reason"]
+
+
+# ── sites_with_storage_circuits ─────────────────────────────────────────────
+
+def test_sites_with_storage_circuits_flags_name_matches_only():
+    meta = pd.DataFrame({
+        "site_id": [1, 2, 3],
+        "circuit_type": ["load_battery", "ac_load_net", "load_pool"],
+    })
+    assert S.sites_with_storage_circuits(meta) == [1]
+
+
+def test_sites_with_storage_circuits_empty_input():
+    assert S.sites_with_storage_circuits(pd.DataFrame()) == []
+    assert S.sites_with_storage_circuits(None) == []
+
+
+# ── reconstruct_gross_load ──────────────────────────────────────────────────
+
+def _interval_row(site_id, circuit_id, circuit_type, t_stamp, power):
+    return {"site_id": site_id, "circuit_id": circuit_id, "circuit_type": circuit_type,
+            "t_stamp": t_stamp, "power": power}
+
+
+def test_reconstruct_gross_load_sums_multi_phase_and_adds_pv_back():
+    t = pd.Timestamp("2025-06-01 12:00:00")
+    interval_table = pd.DataFrame([
+        # 3-phase load: raw power positive on each phase, polarity +1 -> import
+        _interval_row(1, 11, "ac_load_net", t, 200.0),
+        _interval_row(1, 12, "ac_load_net", t, 150.0),
+        _interval_row(1, 13, "ac_load_net", t, 130.0),
+        # PV: raw power reads negative for generation, polarity -1 flips it positive
+        _interval_row(1, 14, "pv_site_net", t, -3000.0),
+    ])
+    circuit_polarity = pd.DataFrame({
+        "circuit_id": [11, 12, 13, 14],
+        "circuit_polarity": [1, 1, 1, -1],
+    })
+    out = S.reconstruct_gross_load(interval_table, circuit_polarity)
+    row = out.iloc[0]
+    assert row.load_signed == pytest.approx(480.0)     # 200+150+130, polarity +1
+    assert row.pv_signed == pytest.approx(3000.0)       # -3000 * -1
+    assert row.reconstructed_load == pytest.approx(3480.0)
+
+
+def test_reconstruct_gross_load_empty_input():
+    out = S.reconstruct_gross_load(pd.DataFrame(), pd.DataFrame())
+    assert out.empty
+    assert "reconstructed_load" in out.columns
+
+
+def test_reconstruct_gross_load_missing_pv_side_leaves_nan_not_zero():
+    t = pd.Timestamp("2025-06-01 12:00:00")
+    interval_table = pd.DataFrame([_interval_row(1, 11, "ac_load_net", t, 500.0)])
+    circuit_polarity = pd.DataFrame({"circuit_id": [11], "circuit_polarity": [1]})
+    out = S.reconstruct_gross_load(interval_table, circuit_polarity)
+    assert out.iloc[0].pv_signed != out.iloc[0].pv_signed  # NaN != NaN
+    assert out.iloc[0].reconstructed_load != out.iloc[0].reconstructed_load
+
+
+# ── evaluate_load_reconstruction ────────────────────────────────────────────
+
+def test_evaluate_load_reconstruction_flags_negative_night_values():
+    night = pd.Timestamp("2025-06-01 02:00:00")   # inside default 1-4am window
+    day = pd.Timestamp("2025-06-01 12:00:00")
+    reconstructed = pd.DataFrame({
+        "site_id": [1, 1, 2, 2],
+        "t_stamp": [night, day, night, day],
+        "reconstructed_load": [-500.0, 300.0, 400.0, 350.0],
+    })
+    out = S.evaluate_load_reconstruction(reconstructed).set_index("site_id")
+    assert out.loc[1, "likely_storage_or_sign_issue"] == True
+    assert out.loc[1, "share_negative_night"] == pytest.approx(1.0)
+    assert out.loc[2, "likely_storage_or_sign_issue"] == False
+    assert out.loc[2, "share_negative_night"] == pytest.approx(0.0)
+
+
+def test_evaluate_load_reconstruction_drops_nan_rows_before_scoring():
+    t = pd.Timestamp("2025-06-01 12:00:00")
+    reconstructed = pd.DataFrame({
+        "site_id": [1, 1], "t_stamp": [t, t], "reconstructed_load": [300.0, float("nan")],
+    })
+    out = S.evaluate_load_reconstruction(reconstructed)
+    assert out.iloc[0]["n_intervals"] == 1
+
+
+def test_evaluate_load_reconstruction_empty_input():
+    out = S.evaluate_load_reconstruction(pd.DataFrame())
+    assert out.empty
+    assert "likely_storage_or_sign_issue" in out.columns

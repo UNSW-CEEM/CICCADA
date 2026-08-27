@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import re
 
+import numpy as np
 import pandas as pd
 
 __all__ = [
     "STORAGE_KEYWORDS", "classify_storage_circuits",
     "verify_polarity_makes_positive", "build_signal_map",
     "night_window_stats", "classify_pv_night_behaviour", "compare_pv_night_to_load",
+    "sites_with_storage_circuits", "reconstruct_gross_load", "evaluate_load_reconstruction",
 ]
 
 #: Name fragments that suggest a circuit might be bidirectional (charges AND
@@ -285,3 +287,153 @@ def compare_pv_night_to_load(
             f"({'within' if corroborated else 'outside'} the {lo}-{hi} corroboration band)"
         ),
     }
+
+
+def sites_with_storage_circuits(
+    meta: pd.DataFrame, *,
+    site_column: str = "site_id",
+    type_column: str = "circuit_type",
+    keywords=STORAGE_KEYWORDS,
+) -> list:
+    """
+    Which site_ids have ANY circuit_type whose NAME suggests battery/EV
+    (`classify_storage_circuits`)? Pure, name-only -- a hypothesis generator
+    for which sites need a closer look before their `ac_load_net` is trusted
+    as pure house consumption, not a proof that storage is actually present
+    or actually affecting `ac_load_net`'s reading.
+
+    This is only the EXPLICIT half of storage detection: a battery wired
+    behind the SAME CT as `ac_load_net` (rather than separately metered
+    under its own circuit_id) would be invisible here -- see
+    `evaluate_load_reconstruction`'s night-time check for the other half.
+    """
+    if meta is None or not len(meta) or type_column not in meta.columns:
+        return []
+    flags = classify_storage_circuits(meta[type_column].unique())
+    storage_types = {t for t, flagged in flags.items() if flagged}
+    if not storage_types:
+        return []
+    return sorted(meta.loc[meta[type_column].isin(storage_types), site_column].unique().tolist())
+
+
+def reconstruct_gross_load(
+    interval_table: pd.DataFrame,
+    circuit_polarity: pd.DataFrame, *,
+    site_column: str = "site_id",
+    circuit_column: str = "circuit_id",
+    type_column: str = "circuit_type",
+    time_column: str = "t_stamp",
+    power_column: str = "power",
+    polarity_column: str = "circuit_polarity",
+    load_type: str = "ac_load_net",
+    pv_type: str = "pv_site_net",
+) -> pd.DataFrame:
+    """
+    Candidate reconstruction of true (PV-independent) house load from
+    Phase 4's interval-level table: `load_signed` (every `load_type` circuit
+    at a site, sign-corrected and SUMMED across phases -- the on-demand
+    grouping the settled Phase 4 decisions deliberately defer to a consumer,
+    not performed in `ami_resolution.build_interval_table` itself) plus
+    `pv_signed` (the analogous PV-side sum), one row per (site_id, t_stamp).
+
+    This function only COMPUTES the candidate reconstruction -- it does not
+    judge whether the result is trustworthy. `evaluate_load_reconstruction`
+    is the companion that does that. Keeping them separate means a bad
+    reconstruction formula and a bad plausibility threshold are two
+    independently testable claims, not one conflated one.
+
+    `circuit_polarity` is a separate small frame (`circuit_id`,
+    `circuit_polarity`) rather than assumed already present on
+    `interval_table` -- Phase 4's own output deliberately does not carry
+    polarity or apply the sign convention (see `ami_resolution`'s module
+    docstring and `ami_config.SIGN_CONVENTION_RESOLVED`), so this function is
+    where that correction is actually applied, once, for this diagnostic
+    specifically.
+    """
+    columns = [site_column, time_column, "load_signed", "pv_signed", "reconstructed_load"]
+    if interval_table is None or not len(interval_table):
+        return pd.DataFrame(columns=columns)
+
+    frame = interval_table.merge(circuit_polarity, on=circuit_column, how="left")
+    frame["power_signed"] = frame[power_column] * frame[polarity_column]
+
+    def _side_sum(side_type, out_name):
+        side = frame[frame[type_column] == side_type]
+        if not len(side):
+            return pd.DataFrame(columns=[site_column, time_column, out_name])
+        summed = (
+            side.groupby([site_column, time_column])["power_signed"]
+            .sum()
+            .reset_index()
+            .rename(columns={"power_signed": out_name})
+        )
+        return summed
+
+    load_side = _side_sum(load_type, "load_signed")
+    pv_side = _side_sum(pv_type, "pv_signed")
+
+    merged = load_side.merge(pv_side, on=[site_column, time_column], how="outer")
+    merged["reconstructed_load"] = merged["load_signed"] + merged["pv_signed"]
+    return merged[columns].sort_values([site_column, time_column]).reset_index(drop=True)
+
+
+def evaluate_load_reconstruction(
+    reconstructed: pd.DataFrame, *,
+    site_column: str = "site_id",
+    time_column: str = "t_stamp",
+    reconstructed_column: str = "reconstructed_load",
+    night_hour_start: int = 1,
+    night_hour_end: int = 4,
+    negative_threshold_w: float = -100.0,
+) -> pd.DataFrame:
+    """
+    Per-site plausibility summary for `reconstruct_gross_load`'s output:
+    true house load should not be meaningfully negative, so a share of
+    intervals below `negative_threshold_w` is the sanity signal -- split
+    into ALL intervals vs NIGHT-ONLY intervals specifically.
+
+    The night split matters: PV is ~0 overnight (Section 9's own finding),
+    so a negative reconstruction there cannot be explained by any
+    near-simultaneous PV over-generation double-counted into the sum --
+    a real night-time violation means either the sign convention is wrong
+    for that site, or (per the module's storage-handling note) a battery/EV
+    circuit is netted into `ac_load_net` invisibly, behind the same CT,
+    with no separate circuit_id to detect it by name
+    (`sites_with_storage_circuits` only catches the EXPLICIT case).
+
+    `time_column` must already be LOCAL time (e.g. via `ami_plots.to_aest`)
+    -- this function does no timezone conversion itself, mirroring
+    `night_window_stats`'s own contract.
+    """
+    columns = [
+        site_column, "n_intervals", "share_negative_all",
+        "n_night_intervals", "share_negative_night", "min_reconstructed_load",
+        "likely_storage_or_sign_issue",
+    ]
+    if reconstructed is None or not len(reconstructed):
+        return pd.DataFrame(columns=columns)
+
+    frame = reconstructed.dropna(subset=[reconstructed_column]).copy()
+    if not len(frame):
+        return pd.DataFrame(columns=columns)
+
+    hours = frame[time_column].dt.hour
+    frame["_is_night"] = (hours >= night_hour_start) & (hours < night_hour_end)
+    frame["_is_negative"] = frame[reconstructed_column] < negative_threshold_w
+
+    rows = []
+    for site_id, group in frame.groupby(site_column):
+        night = group[group["_is_night"]]
+        rows.append({
+            site_column: site_id,
+            "n_intervals": int(len(group)),
+            "share_negative_all": float(group["_is_negative"].mean()),
+            "n_night_intervals": int(len(night)),
+            "share_negative_night": float(night["_is_negative"].mean()) if len(night) else np.nan,
+            "min_reconstructed_load": float(group[reconstructed_column].min()),
+        })
+    out = pd.DataFrame(rows)
+    out["likely_storage_or_sign_issue"] = (
+        out["share_negative_night"].fillna(0.0) > 0.0
+    )
+    return out[columns].sort_values(site_column).reset_index(drop=True)
