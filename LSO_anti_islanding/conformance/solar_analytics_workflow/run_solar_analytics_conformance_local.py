@@ -10,9 +10,9 @@ CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from core.check_pv_behaviour import CheckPVBehaviour
 from core.phase_a import run_phase_a_for_site
-from core.phase_b import run_phase_b_for_site
+from core.phase_b import run_phase_b_for_day, run_phase_b_for_site
+from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
     DAY_ANALYSIS_START,
     DAY_COVERAGE_THRESHOLD,
@@ -124,7 +124,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         continue
 
     site_data = select_site_pv_data(all_data, circuit_details, site_id)
-    day_behaviours = []
+    eligible_analysis_days = []
     mapped_day_count = 0
     if not site_data.is_empty():
         local_dates = (
@@ -158,13 +158,10 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
                 coverage_threshold=DAY_COVERAGE_THRESHOLD,
             )
             if eligibility["eligible"]:
-                day_behaviours.append(
+                eligible_analysis_days.append(
                     {
-                        "day": local_date,
-                        "behaviour": CheckPVBehaviour(
-                            analysis_day,
-                            volCol="voltage_valid",
-                        ),
+                        "analysis_date": local_date,
+                        "analysis_frame": analysis_day,
                     }
                 )
             else:
@@ -189,7 +186,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
     if mapped_day_count == 0:
         skipped_sites["no_day_data"].append(site_id)
         continue
-    if not day_behaviours:
+    if not eligible_analysis_days:
         skipped_sites["no_eligible_days"].append(site_id)
         continue
 
@@ -199,7 +196,17 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         skipped_sites["missing_rated_capacity"].append(site_id)
         continue
 
-    phase_a = run_phase_a_for_site(site_id, day_behaviours, s_rated)
+    prepared_site_days = [
+        {
+            "analysis_date": day_info["analysis_date"],
+            "signal_frame": build_site_day_signals(
+                day_info["analysis_frame"], s_rated
+            ),
+        }
+        for day_info in eligible_analysis_days
+    ]
+
+    phase_a = run_phase_a_for_site(site_id, prepared_site_days, s_rated)
     if not phase_a["records"].is_empty():
         phase_a_records.append(phase_a["records"])
     if not phase_a["brackets"].is_empty():
@@ -207,8 +214,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
 
     phase_b = run_phase_b_for_site(
         site_id,
-        day_behaviours,
-        s_rated,
+        prepared_site_days,
         raw_thresholds=phase_a["raw_thresholds"],
         confidence_info=phase_a["confidence_info"],
         phase_b_method=PRIMARY_PHASE_B_METHOD,
@@ -224,16 +230,16 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         plot_folder = (
             "compliant" if summary["overall_pass"] is True else "non_compliant"
         )
-        for day_info in day_behaviours:
-            day_plot = day_info["behaviour"].phase_b_day(
-                s_rated,
+        for day_info in prepared_site_days:
+            day_plot = run_phase_b_for_day(
+                day_info["signal_frame"],
                 los_threshold=summary["los_threshold_used"],
                 ov1_work_threshold=thresholds["ov1_work_site"],
             )
             plot_site_compliance_day(
                 day_plot["frame"],
                 site_id,
-                day_info["day"],
+                day_info["analysis_date"],
                 p_rated=s_rated,
                 lso_threshold=summary["los_threshold_used"],
                 ov1_threshold=thresholds["ov1_test_site"],
@@ -244,7 +250,8 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
                     CONFORMANCE_OUTPUT_DIR
                     / "overall_site_plots"
                     / plot_folder
-                    / f"Site_{site_id}_Day_{day_info['day']}_{plot_folder}.png"
+                    / f"Site_{site_id}_Day_"
+                    f"{day_info['analysis_date']}_{plot_folder}.png"
                 ),
             )
 

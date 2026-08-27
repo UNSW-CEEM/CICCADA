@@ -13,9 +13,9 @@ if str(CONFORMANCE_DIR) not in sys.path:
 if str(REPOSITORY_DIR) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_DIR))
 
-from core.check_pv_behaviour import CheckPVBehaviour
 from core.phase_a import run_phase_a_for_site
 from core.phase_b import run_phase_b_for_site
+from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
     DAY_ANALYSIS_START,
     DAY_END,
@@ -324,8 +324,7 @@ try:
                 ]
             ).collect(engine="streaming")
 
-            # Build one CheckPVBehaviour object for each eligible local day.
-            day_behaviours = []
+            eligible_analysis_days = []
             local_dates = (
                 site_timeseries_data.select(
                     pl.col("local_tstamp").dt.date().alias("local_date")
@@ -376,17 +375,14 @@ try:
                 if not eligibility["eligible"]:
                     continue
 
-                day_behaviours.append(
+                eligible_analysis_days.append(
                     {
-                        "day": day,
-                        "behaviour": CheckPVBehaviour(
-                            analysis_day_df,
-                            volCol="voltage_valid",
-                        ),
+                        "analysis_date": day,
+                        "analysis_frame": analysis_day_df,
                     }
                 )
 
-            if not day_behaviours:
+            if not eligible_analysis_days:
                 continue
 
             capacity_row = site_data.filter(
@@ -400,16 +396,25 @@ try:
                 )
                 continue
 
+            prepared_site_days = [
+                {
+                    "analysis_date": day_info["analysis_date"],
+                    "signal_frame": build_site_day_signals(
+                        day_info["analysis_frame"], s_rated
+                    ),
+                }
+                for day_info in eligible_analysis_days
+            ]
+
             phase_a_result = run_phase_a_for_site(
                 site["site_id"],
-                day_behaviours,  # this has the CheckPVBehaviour obj
+                prepared_site_days,
                 s_rated,
             )
             for phase_b_method in PHASE_B_METHODS:
                 phase_b_result = run_phase_b_for_site(
                     site["site_id"],
-                    day_behaviours,  # this has the CheckPVBehaviour obj
-                    s_rated,
+                    prepared_site_days,
                     raw_thresholds=phase_a_result["raw_thresholds"],
                     confidence_info=phase_a_result["confidence_info"],
                     phase_b_method=phase_b_method,

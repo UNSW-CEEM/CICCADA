@@ -8,9 +8,9 @@ CONFORMANCE_DIR = Path(__file__).resolve().parents[2]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from core.check_pv_behaviour import CheckPVBehaviour
 from core.phase_a import run_phase_a_for_site
-from core.phase_b import run_phase_b_for_site
+from core.phase_b import run_phase_b_for_day, run_phase_b_for_site
+from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
     DAY_ANALYSIS_START,
     DAY_END,
@@ -459,7 +459,7 @@ with local_trino_engine(
             )
             processed_sites += 1
 
-            day_behaviours = []
+            eligible_analysis_days = []
             local_dates = (
                 site_timeseries_data.select(
                     pl.col("local_tstamp").dt.date().alias("local_date")
@@ -491,17 +491,14 @@ with local_trino_engine(
                 )
                 eligibility = summarize_solar_analytics_day_eligibility(analysis_day)
                 if eligibility["eligible"]:
-                    day_behaviours.append(
+                    eligible_analysis_days.append(
                         {
-                            "day": local_date,
-                            "behaviour": CheckPVBehaviour(
-                                analysis_day,
-                                volCol="voltage_valid",
-                            ),
+                            "analysis_date": local_date,
+                            "analysis_frame": analysis_day,
                         }
                     )
 
-            if not day_behaviours:
+            if not eligible_analysis_days:
                 print(
                     f"No eligible days for site {site['site_id']}; skipping.",
                     flush=True,
@@ -516,15 +513,24 @@ with local_trino_engine(
                 )
                 continue
 
+            prepared_site_days = [
+                {
+                    "analysis_date": day_info["analysis_date"],
+                    "signal_frame": build_site_day_signals(
+                        day_info["analysis_frame"], s_rated
+                    ),
+                }
+                for day_info in eligible_analysis_days
+            ]
+
             phase_a_result = run_phase_a_for_site(
                 site["site_id"],
-                day_behaviours,
+                prepared_site_days,
                 s_rated,
             )
             phase_b_result = run_phase_b_for_site(
                 site["site_id"],
-                day_behaviours,
-                s_rated,
+                prepared_site_days,
                 raw_thresholds=phase_a_result["raw_thresholds"],
                 confidence_info=phase_a_result["confidence_info"],
                 phase_b_method=PRIMARY_PHASE_B_METHOD,
@@ -540,16 +546,16 @@ with local_trino_engine(
                 plot_folder = (
                     "compliant" if summary["overall_pass"] is True else "non_compliant"
                 )
-                for day_info in day_behaviours:
-                    day_plot = day_info["behaviour"].phase_b_day(
-                        s_rated,
+                for day_info in prepared_site_days:
+                    day_plot = run_phase_b_for_day(
+                        day_info["signal_frame"],
                         los_threshold=summary["los_threshold_used"],
                         ov1_work_threshold=thresholds["ov1_work_site"],
                     )
                     plot_site_compliance_day(
                         day_plot["frame"],
                         site["site_id"],
-                        day_info["day"],
+                        day_info["analysis_date"],
                         p_rated=s_rated,
                         lso_threshold=summary["los_threshold_used"],
                         ov1_threshold=thresholds["ov1_test_site"],
@@ -562,7 +568,7 @@ with local_trino_engine(
                             LIMITED_SITE_PLOT_DIR
                             / plot_folder
                             / f"Site_{site['site_id']}_Day_"
-                            f"{day_info['day']}_{plot_folder}.png"
+                            f"{day_info['analysis_date']}_{plot_folder}.png"
                         ),
                     )
 

@@ -9,12 +9,83 @@ from core.threshold_methods import (
 )
 
 
+def run_phase_b_for_day(
+    signal_frame,
+    *,
+    los_threshold,
+    ov1_work_threshold,
+    tau=0.3,
+):
+    """Assign responsibility and score compliance for one prepared site-day."""
+    if signal_frame.is_empty():
+        return {
+            "frame": signal_frame,
+            "detail": pl.DataFrame(),
+            "summary": {
+                "los_eligible": 0,
+                "los_compliant": 0,
+                "ov1_eligible": 0,
+                "ov1_compliant": 0,
+            },
+        }
+
+    frame = signal_frame.with_columns(
+        (
+            pl.col("eligible_ov1")
+            & (pl.col("vinst_max") >= (ov1_work_threshold - tau))
+        ).alias("ov1_responsible")
+    )
+    frame = frame.with_columns(
+        [
+            (
+                pl.col("eligible_los")
+                & (~pl.col("ov1_responsible"))
+                & (pl.col("v10m_avg") >= los_threshold)
+            ).alias("los_responsible"),
+            (
+                pl.col("is_disc").fill_null(False)
+                | pl.col("is_disc_next").fill_null(False)
+            ).alias("is_disc_current_or_next"),
+        ]
+    )
+    frame = frame.with_columns(
+        [
+            (pl.col("los_responsible") & pl.col("is_disc_current_or_next")).alias(
+                "los_compliant"
+            ),
+            (pl.col("ov1_responsible") & pl.col("is_disc_current_or_next")).alias(
+                "ov1_compliant"
+            ),
+        ]
+    )
+    detail = frame.select(
+        [
+            "site_id",
+            "local_tstamp",
+            "utc_tstamp",
+            "v10m_avg",
+            "vinst_max",
+            "eligible_los",
+            "eligible_ov1",
+            "is_disc",
+            "is_disc_next",
+            "los_responsible",
+            "ov1_responsible",
+            "los_compliant",
+            "ov1_compliant",
+        ]
+    )
+    summary = {
+        "los_eligible": int(detail.filter(pl.col("los_responsible")).height),
+        "los_compliant": int(detail.filter(pl.col("los_compliant")).height),
+        "ov1_eligible": int(detail.filter(pl.col("ov1_responsible")).height),
+        "ov1_compliant": int(detail.filter(pl.col("ov1_compliant")).height),
+    }
+    return {"frame": frame, "detail": detail, "summary": summary}
+
+
 def _select_phase_b_threshold_profile_for_method(
-    site_id,
-    day_behaviours,
-    PRated,
     raw_thresholds,
-    confidence_info,
     *,
     phase_b_method="tier_based",
     tau=0.3,
@@ -40,8 +111,7 @@ def _select_phase_b_threshold_profile_for_method(
 
 def _run_phase_b_with_thresholds(
     site_id,
-    day_behaviours,
-    PRated,
+    prepared_site_days,
     *,
     los_threshold,
     los_threshold_p25=None,
@@ -62,9 +132,9 @@ def _run_phase_b_with_thresholds(
         ov1_eligible = 0
         ov1_compliant = 0
 
-        for day_info in day_behaviours:
-            outcome = day_info["behaviour"].phase_b_day(
-                PRated,
+        for prepared_day in prepared_site_days:
+            outcome = run_phase_b_for_day(
+                prepared_day["signal_frame"],
                 los_threshold=los_threshold_used,
                 ov1_work_threshold=ov1_work_threshold,
                 tau=tau,
@@ -72,7 +142,7 @@ def _run_phase_b_with_thresholds(
             if not outcome["detail"].is_empty():
                 detail_frames.append(
                     outcome["detail"].with_columns(
-                        pl.lit(day_info["day"]).alias("event_day")
+                        pl.lit(prepared_day["analysis_date"]).alias("event_day")
                     )
                 )
             summary = outcome["summary"]
@@ -152,8 +222,7 @@ def _run_phase_b_with_thresholds(
 
 def run_phase_b_for_site(
     site_id,
-    day_behaviours,
-    PRated,
+    prepared_site_days,
     *,
     raw_thresholds,
     confidence_info,
@@ -171,11 +240,7 @@ def run_phase_b_for_site(
         )
 
     selected_thresholds = _select_phase_b_threshold_profile_for_method(
-        site_id,
-        day_behaviours,
-        PRated,
         raw_thresholds,
-        confidence_info,
         phase_b_method=phase_b_method,
         tau=tau,
         ov1_floor_offset=ov1_floor_offset,
@@ -227,8 +292,7 @@ def run_phase_b_for_site(
     )
     phase_b = _run_phase_b_with_thresholds(
         site_id,
-        day_behaviours,
-        PRated,
+        prepared_site_days,
         los_threshold=selected_thresholds["los_anchor_site"],
         los_threshold_p25=selected_thresholds["los_anchor_p25_site"],
         los_threshold_p10=selected_thresholds["los_anchor_p10_site"],
