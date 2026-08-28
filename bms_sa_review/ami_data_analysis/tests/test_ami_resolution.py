@@ -268,6 +268,42 @@ def test_interval_table_reactive_power_always_derived():
     assert interval.reactive_power.iloc[0] == pytest.approx(300.0)
 
 
+def test_interval_table_carries_current_through_when_present():
+    meta = _meta([(11, 1101, "ac_load_net", 9902, False)])
+    sample = _series(1101, 11, power=1000.0, vary=False)
+    sample["current"] = 4.2
+    resolution = R.resolve_site_circuits(meta, sample)
+    interval = R.build_interval_table(sample, resolution)
+
+    assert "current" in interval.columns
+    assert interval.current.iloc[0] == pytest.approx(4.2)
+
+
+def test_interval_table_missing_current_omits_column_not_errors():
+    # The base `_series` fixture has no `current` column at all -- this
+    # must not error, just omit `current` from the output.
+    meta = _meta([(12, 1201, "ac_load_net", 9903, False)])
+    sample = _series(1201, 12, power=1000.0, vary=False)
+    resolution = R.resolve_site_circuits(meta, sample)
+    interval = R.build_interval_table(sample, resolution)
+
+    assert "current" not in interval.columns
+
+
+def test_interval_table_carries_power_factor_energy_import_export_through():
+    meta = _meta([(13, 1301, "ac_load_net", 9904, False)])
+    sample = _series(1301, 13, power=1000.0, vary=False)
+    sample["power_factor"] = 0.97
+    sample["energy_import"] = 80.0
+    sample["energy_export"] = 3.0
+    resolution = R.resolve_site_circuits(meta, sample)
+    interval = R.build_interval_table(sample, resolution)
+
+    assert interval.power_factor.iloc[0] == pytest.approx(0.97)
+    assert interval.energy_import.iloc[0] == pytest.approx(80.0)
+    assert interval.energy_export.iloc[0] == pytest.approx(3.0)
+
+
 def test_interval_table_empty_resolution_returns_empty_with_columns():
     resolution = pd.DataFrame(columns=[
         "site_id", "circuit_id", "circuit_type", "device_id",
@@ -409,3 +445,88 @@ def test_coverage_report_counts_excluded_sites_separately():
     report = R.build_coverage_report(resolution)
     assert report["n_excluded_storage_or_sign_issue"] == 1
     assert report["n_no_intervention"] == 1  # site 2 only
+
+
+# ── apply_power_correction toggle ────────────────────────────────────────
+
+def test_apply_power_correction_false_uses_raw_power_even_when_flagged():
+    """Same glitch-row fixture as the corrected-power test above, but with
+    apply_power_correction=False -- the raw (glitchy) power value should
+    survive untouched, matching structured_data's own build (which never
+    applies this correction), rather than being swapped for the
+    energy-derived value."""
+    meta = _meta([(9, 901, "ac_load_net", 9801, False)])
+    n_normal = 9
+    t_stamp = pd.date_range("2025-06-01", periods=n_normal + 1, freq="5min")
+    power = [1000.0] * n_normal + [2000.0]     # last row: a raw-power glitch
+    energy = [82.0] * (n_normal + 1)
+    sample = pd.DataFrame({
+        "circuit_id": 901, "site_id": 9, "t_stamp": t_stamp,
+        "power": power, "energy": energy, "energy_reactive": 10.0, "voltage": 240.0,
+    })
+
+    resolution = R.resolve_site_circuits(meta, sample)
+    assert resolution.iloc[0].power_correction_applied  # still flagged...
+
+    interval = R.build_interval_table(sample, resolution, apply_power_correction=False)
+    glitch_row = interval.sort_values("t_stamp").iloc[-1]
+    # ...but power is untouched raw, not energy-derived.
+    assert glitch_row.power == pytest.approx(2000.0)
+
+
+def test_apply_power_correction_false_still_derives_reactive_power():
+    """Reactive power has no raw column to fall back to -- it's always
+    derived from energy_reactive regardless of apply_power_correction."""
+    meta = _meta([(10, 1001, "ac_load_net", 9901, False)])
+    sample = _series(1001, 10, power=1000.0, energy_reactive=25.0, vary=False)
+    resolution = R.resolve_site_circuits(meta, sample)
+    interval = R.build_interval_table(sample, resolution, apply_power_correction=False)
+    assert interval.reactive_power.iloc[0] == pytest.approx(300.0)
+
+
+def test_apply_power_correction_true_is_the_default():
+    """Omitting the kwarg entirely still applies the correction -- an
+    existing call written before this toggle existed keeps working
+    unchanged."""
+    meta = _meta([(9, 901, "ac_load_net", 9801, False)])
+    n_normal = 9
+    t_stamp = pd.date_range("2025-06-01", periods=n_normal + 1, freq="5min")
+    power = [1000.0] * n_normal + [2000.0]
+    energy = [82.0] * (n_normal + 1)
+    sample = pd.DataFrame({
+        "circuit_id": 901, "site_id": 9, "t_stamp": t_stamp,
+        "power": power, "energy": energy, "energy_reactive": 10.0, "voltage": 240.0,
+    })
+    resolution = R.resolve_site_circuits(meta, sample)
+    implied = resolution.iloc[0].implied_interval_minutes
+
+    interval_default = R.build_interval_table(sample, resolution)
+    interval_explicit = R.build_interval_table(sample, resolution, apply_power_correction=True)
+    expected_corrected = 82.0 * 60.0 / implied
+    for interval in (interval_default, interval_explicit):
+        glitch_row = interval.sort_values("t_stamp").iloc[-1]
+        assert glitch_row.power == pytest.approx(expected_corrected, rel=1e-6)
+
+
+# ── sites_with_power_correction ──────────────────────────────────────────
+
+def test_sites_with_power_correction_flags_site_with_any_flagged_kept_circuit():
+    resolution = pd.DataFrame([
+        {"site_id": 1, "circuit_id": 11, "kept": True, "power_correction_applied": False},
+        {"site_id": 1, "circuit_id": 12, "kept": True, "power_correction_applied": True},
+        {"site_id": 2, "circuit_id": 21, "kept": True, "power_correction_applied": False},
+        {"site_id": 2, "circuit_id": 22, "kept": True, "power_correction_applied": False},
+        {"site_id": 3, "circuit_id": 31, "kept": False, "power_correction_applied": True},
+    ])
+    flagged = R.sites_with_power_correction(resolution)
+    assert flagged.loc[1] == True
+    assert flagged.loc[2] == False
+    # site 3's only circuit is dropped (kept=False) -- excluded from the
+    # rollup entirely, not counted as clean or flagged.
+    assert 3 not in flagged.index
+
+
+def test_sites_with_power_correction_empty_resolution():
+    assert R.sites_with_power_correction(pd.DataFrame(columns=[
+        "site_id", "circuit_id", "kept", "power_correction_applied",
+    ])).empty

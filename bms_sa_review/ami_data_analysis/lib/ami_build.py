@@ -1,39 +1,80 @@
 """
-Phase 5, step 4 -- the deliverable pair: `ami_raw` (ground truth, separate
-signals) and `ami_meter` (the synthetic smart meter).
-=====================================================================
+Phase 5, step 4 -- the deliverable trio: `ami_raw` (site-level ground
+truth), `ami_meter` (the synthetic smart meter), and `ami_raw_phaseseparate`
+(per-phase ground truth, PV-allocated).
+==============================================================================
 
-`ami_raw` gives a disaggregation algorithm's VALIDATOR the two things it
-needs to grade against: `pv_generation` (already confirmed generation-only,
-non-negative -- Phase 3 Section 9, no correction needed) and `gross_load`
-(the reconstruction formula the user's real plots confirmed:
-`ac_load_net (signed, summed across phases) + pv_site_net (signed)`). Both
-are site-level, not per-circuit -- `gross_load` in particular only means
-anything once every phase and the PV side are combined, so unlike the
-interval-level table this is deliberately an aggregate, computed once,
-here, as the answer key.
+Column/unit convention: this module follows `structured_data`'s naming style
+(site_id, t_stamp, year, month, V, P_kw/P_kw_norm, Q_kvar, kWh registers)
+rather than the raw `ts` units -- every W/var/Wh source column is divided by
+1000 here. PV generation is normalized by site capacity (`S_99` or
+`ac_capacity_kw`, matching `structured_data`'s own `normalization_basis`
+choice) because output scales with installed capacity and there is a real
+capacity metric behind it; load is NOT normalized, because there is no
+equivalent capacity metric for a load circuit in `meta_up23c` -- `P_kw` for
+load stays an absolute reading.
+
+`ami_raw` gives a disaggregation algorithm's VALIDATOR everything it needs
+to grade against: `P_kw_norm` (PV generation, capacity-normalized -- Phase 3
+Section 9 already confirmed the source circuit reads as pure generation, no
+correction needed), `P_kw` (`gross_load` -- the reconstruction formula the
+user's real plots confirmed: `ac_load_net` signed and summed across phases,
+plus `pv_site_net` signed), `V` (site voltage), and their reactive-power
+counterparts `Q_kvar_norm`/`Q_kvar` -- built the same way but WITHOUT the
+Phase 3 validation `P_kw`/`P_kw_norm` have (there is no night-time reactive-
+power diagnostic), so `Q_kvar_norm` is signed via `circuit_polarity` rather
+than assumed unsigned. All are site-level -- PV has no per-phase signal to
+preserve, and `gross_load`/`gross_reactive_load` only mean anything once
+every load phase and the PV side are combined.
 
 `ami_meter` is what a disaggregation ALGORITHM actually gets to see: each
-surviving `ac_load_net` circuit's own reading, kept PER PHASE (per the
-user's explicit call -- a real 3-phase meter reports phases separately,
-this doesn't pre-sum them), in load convention (`ac_load_net` is already a
-net reading, confirmed net-of-PV -- no sign flip needed). `net_import_w`/
-`net_export_w` split the signed reading into the two non-negative registers
-a real meter carries, but stay in WATTS, not kWh -- `ami_config`'s target
-AMI interval (`TARGET_INTERVAL_MINUTES`) is explicitly still
-`TARGET_INTERVAL_RESOLVED = False`, so resampling/kWh conversion is a
-separate, not-yet-made decision this module does not force.
+surviving `ac_load_net` circuit's own reading, kept PER PHASE (a real
+3-phase meter reports phases separately, this doesn't pre-sum them), using
+the RAW (uncorrected) `power` reading -- `ac_load_net` is already net-of-PV
+in the sign convention as landed, so `ami_meter.P_kw` is what a real meter
+would show, polarity quirks and all. `energy_import_kwh`/`energy_export_kwh`
+are the real measured registers (not a derived W-clip split), matching a
+genuine smart meter's import/export accumulators.
 
-Both tables are built ONE LANDED MONTH AT A TIME (`run_build`), mirroring
-`ami_extract`/`ami_revalidate`'s discipline: never hold more than one
-month's interval table in memory, write each month's output immediately,
-and never guess at a store path -- the caller supplies where to write.
+`ami_raw_phaseseparate` answers "what would the site-level ground truth
+look like broken out by phase" -- `load_kw_signed`/`Q_kvar_signed` are
+DELIBERATELY not the same values as `ami_meter.P_kw`/`Q_kvar`: they're
+polarity-corrected (via `circuit_polarity`), the same correction `ami_raw`'s
+own `gross_load`/`gross_reactive_load` reconstructions apply, so that
+`sum(gross_load_kw)`/`sum(gross_reactive_load_kvar)` across a site's phases
+reconcile with `ami_raw.P_kw`/`Q_kvar` for that site/timestamp. `V` is the
+raw per-circuit voltage (no polarity correction -- voltage has no sign
+ambiguity). `ami_meter`'s P/Q are deliberately the uncorrected sensor
+readings a real meter would show; these two tables answer different
+questions and are not meant to share a sign convention.
+
+PV allocation, per site, based on that MONTH's kept circuit sets: if the
+number of kept `pv_site_net` circuits equals the number of kept
+`ac_load_net` circuits, each load circuit is paired with one PV circuit
+(sorted circuit_id order) and uses that PV circuit's OWN signed reading
+directly (`pv_allocation_method = "direct_matched_circuit"`) -- real data,
+not an assumption. Otherwise (most commonly: one `pv_site_net` circuit
+serving a multi-phase load) the site's total signed PV is split evenly
+across load phases (`"equal_split_across_load_phases"`). A site with no
+surviving PV circuit gets `"no_pv_present"` and a zero allocation. See the
+project README for why: even where PV circuit counts happen to match phase
+counts, there is no verified circuit-to-phase (A/B/C) label in `meta_up23c`
+for either side -- direct matching is the best-available heuristic, not a
+proven pairing, which is exactly why every row carries its own
+`pv_allocation_method` for audit.
+
+All three tables are built ONE LANDED MONTH AT A TIME (`run_build`,
+`run_phase_split_build`), mirroring `ami_extract`/`ami_revalidate`'s
+discipline: never hold more than one month's interval table in memory,
+write each month's output immediately, and never guess at a store path --
+the caller supplies where to write.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from . import ami_resolution as Resolution
@@ -42,9 +83,17 @@ from . import ami_signal as Signal
 __all__ = [
     "build_ami_raw",
     "build_ami_meter",
+    "build_ami_raw_phaseseparate",
     "write_month_table",
     "run_build",
+    "run_phase_split_build",
 ]
+
+
+def _year_month(series: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """UTC year/month INT columns from a tz-aware timestamp series."""
+    idx = pd.DatetimeIndex(series)
+    return idx.year, idx.month
 
 
 def build_ami_raw(
@@ -54,51 +103,168 @@ def build_ami_raw(
     type_column: str = "circuit_type",
     time_column: str = "t_stamp",
     power_column: str = "power",
+    reactive_power_column: str = "reactive_power",
+    voltage_column: str = "voltage",
     pv_type: str = "pv_site_net",
+    load_type: str = "ac_load_net",
+    site_capacity: pd.DataFrame | None = None,
+    normalization_basis: str = "s_99",
 ) -> pd.DataFrame:
     """
-    One row per (site_id, t_stamp): `pv_generation` (raw, unsigned -- the
-    sum of any surviving `pv_type` circuits at that site; Section 9 already
-    confirmed this needs no polarity correction to read as generation) and
-    `gross_load` (`ami_signal.reconstruct_gross_load`'s `reconstructed_load`
-    -- the ONLY place polarity is applied, since that formula needs both
-    sides signed correctly to combine).
+    One row per (site_id, t_stamp) -- house-load and PV-system columns kept
+    SEPARATE, at site level, in two symmetric trios:
+
+    - Load side: `P_load_kw`, `Q_load_kvar`, `V_load`.
+    - PV side:   `P_pv_kw`,   `Q_pv_kvar`,   `V_pv`.
+
+    All four power/reactive-power columns are `circuit_polarity`-corrected
+    and SIGNED -- `P_load_kw`/`Q_load_kvar` are `ac_load_net`, summed across
+    the site's load phases; `P_pv_kw`/`Q_pv_kvar` are `pv_site_net`, summed
+    across the site's PV circuits. Both reuse
+    `ami_signal.reconstruct_gross_load`'s own `load_signed`/`pv_signed`
+    output -- the same validated per-side sums the `gross_load`
+    reconstruction is built from, just exposed directly instead of only
+    being visible pre-summed.
+
+    IMPORTANT sign-convention note (fixed here): earlier versions of this
+    function summed PV power UNSIGNED (raw `power`, no `circuit_polarity`
+    applied), on the theory that Phase 3 Section 9 already confirmed PV
+    needs no correction. That reading of Section 9 was wrong: Section 9
+    confirmed `pv_site_net` is a generation-only signal (no LOAD netted
+    into it) -- it says nothing about SIGN. Raw `power` for a PV circuit
+    reads NEGATIVE while generating (confirmed against real fleet data),
+    so summing it unsigned made `P_pv_kw`/`P_kw_norm` come out negative
+    during generation -- inconsistent with `Q_kvar_norm` and `gross_load`,
+    which already applied `circuit_polarity` correctly. `P_pv_kw` (and
+    therefore `P_kw_norm`, which divides it by capacity) now applies the
+    same `circuit_polarity` correction as everything else in this table,
+    so it reads POSITIVE while the site is generating, matching
+    `Q_pv_kvar`. If you compared `P_kw_norm` against an earlier build,
+    expect it to have flipped sign.
+
+    `P_kw`/`Q_kvar` (`gross_load`/`gross_reactive_load`) are kept as
+    convenience columns -- `P_kw = P_load_kw + P_pv_kw` by construction
+    (the "what would this site have consumed with no solar" counterfactual
+    demand), not a third independent quantity.
+
+    `P_kw_norm`/`Q_kvar_norm` are `P_pv_kw`/`Q_pv_kvar` divided by site
+    capacity -- need `site_capacity` (a frame with `site_id`, `S_99`,
+    `ac_capacity_kw`, one row per site, already deduplicated by the
+    caller); without it, those two columns (and `S_99`/`ac_capacity_kw`
+    themselves) are present but entirely null, so the column shape stays
+    stable whether or not capacity metadata was supplied.
+    `normalization_basis` selects which of `S_99`/`ac_capacity_kw` is the
+    denominator; a site with a zero or missing value there gets a null
+    normalized value, not a divide-by-zero inf.
+
+    Reactive-power columns (`Q_load_kvar`, `Q_pv_kvar`, `Q_kvar_norm`,
+    `Q_kvar`) carry a validation caveat active power doesn't: only the
+    active-power reconstruction has been checked against real plots
+    (Phase 4). Treat reactive power as reasonable-by-construction, not
+    independently confirmed.
+
+    `V_load` is the site's load-side voltage, averaged across kept
+    `ac_load_net` circuits at that timestamp (matching `structured_data`'s
+    own aggregation convention, just applied to the load side instead of
+    the PV side it uses). `V_pv` is the analogous average across the
+    site's kept `pv_site_net` circuits -- the inverter/PV-side voltage,
+    which can genuinely differ from `V_load` (local voltage rise from the
+    site's own export).
 
     Inner-joined on (site_id, t_stamp): a timestamp where only one side
-    reported (a real, if partial, day-coverage gap -- Phase 3 found these)
-    contributes no row here rather than a half-populated one, since a
-    disaggregation ground-truth row needs BOTH signals to mean anything.
-    That drop is silent at this function's level BY DESIGN -- callers that
-    care about coverage loss should compare `len(result)` against
-    `interval_table`'s own per-site timestamp counts themselves, not rely
-    on this function to report it.
+    reported contributes no row.
     """
-    columns = [site_column, time_column, "pv_generation", "gross_load"]
+    columns = [
+        site_column, time_column, "year", "month",
+        "V_load", "V_pv",
+        "P_load_kw", "P_pv_kw", "P_kw_norm", "P_kw",
+        "Q_load_kvar", "Q_pv_kvar", "Q_kvar_norm", "Q_kvar",
+        "S_99", "ac_capacity_kw", "normalization_basis",
+    ]
     if interval_table is None or not len(interval_table):
         return pd.DataFrame(columns=columns)
 
-    pv_side = interval_table[interval_table[type_column] == pv_type]
-    if len(pv_side):
-        pv_generation = (
-            pv_side.groupby([site_column, time_column])[power_column]
-            .sum()
-            .reset_index()
-            .rename(columns={power_column: "pv_generation"})
-        )
-    else:
-        pv_generation = pd.DataFrame(columns=[site_column, time_column, "pv_generation"])
-
-    reconstructed = Signal.reconstruct_gross_load(
+    reconstructed_p = Signal.reconstruct_gross_load(
         interval_table, circuit_polarity,
         site_column=site_column, circuit_column=circuit_column,
         type_column=type_column, time_column=time_column, power_column=power_column,
     )
-    gross_load = reconstructed[[site_column, time_column, "reconstructed_load"]].rename(
-        columns={"reconstructed_load": "gross_load"}
-    )
+    p_frame = reconstructed_p[
+        [site_column, time_column, "load_signed", "pv_signed", "reconstructed_load"]
+    ].rename(columns={
+        "load_signed": "load_w", "pv_signed": "pv_generation_w",
+        "reconstructed_load": "gross_load_w",
+    })
+    merged = p_frame.dropna(subset=["load_w", "pv_generation_w"])
+    if not len(merged):
+        return pd.DataFrame(columns=columns)
 
-    merged = pv_generation.merge(gross_load, on=[site_column, time_column], how="inner")
-    merged = merged.dropna(subset=["pv_generation", "gross_load"])
+    if reactive_power_column in interval_table.columns:
+        reconstructed_q = Signal.reconstruct_gross_load(
+            interval_table, circuit_polarity,
+            site_column=site_column, circuit_column=circuit_column,
+            type_column=type_column, time_column=time_column, power_column=reactive_power_column,
+        )
+        q_frame = reconstructed_q[
+            [site_column, time_column, "load_signed", "pv_signed", "reconstructed_load"]
+        ].rename(columns={
+            "load_signed": "load_var", "pv_signed": "pv_reactive_generation_var",
+            "reconstructed_load": "gross_reactive_load_var",
+        })
+    else:
+        q_frame = pd.DataFrame(columns=[
+            site_column, time_column, "load_var", "pv_reactive_generation_var",
+            "gross_reactive_load_var",
+        ])
+    merged = merged.merge(q_frame, on=[site_column, time_column], how="left")
+
+    load_side = interval_table[interval_table[type_column] == load_type]
+    if len(load_side) and voltage_column in load_side.columns:
+        v_load_agg = (
+            load_side.groupby([site_column, time_column])[voltage_column]
+            .mean()
+            .reset_index()
+            .rename(columns={voltage_column: "V_load"})
+        )
+        merged = merged.merge(v_load_agg, on=[site_column, time_column], how="left")
+    else:
+        merged["V_load"] = np.nan
+
+    pv_side = interval_table[interval_table[type_column] == pv_type]
+    if len(pv_side) and voltage_column in pv_side.columns:
+        v_pv_agg = (
+            pv_side.groupby([site_column, time_column])[voltage_column]
+            .mean()
+            .reset_index()
+            .rename(columns={voltage_column: "V_pv"})
+        )
+        merged = merged.merge(v_pv_agg, on=[site_column, time_column], how="left")
+    else:
+        merged["V_pv"] = np.nan
+
+    merged["P_load_kw"] = merged["load_w"] / 1000.0
+    merged["P_pv_kw"] = merged["pv_generation_w"] / 1000.0
+    merged["P_kw"] = merged["gross_load_w"] / 1000.0
+    merged["Q_load_kvar"] = merged["load_var"] / 1000.0
+    merged["Q_pv_kvar"] = merged["pv_reactive_generation_var"] / 1000.0
+    merged["Q_kvar"] = merged["gross_reactive_load_var"] / 1000.0
+    merged["year"], merged["month"] = _year_month(merged[time_column])
+
+    if site_capacity is not None and len(site_capacity):
+        merged = merged.merge(
+            site_capacity[[site_column, "S_99", "ac_capacity_kw"]],
+            on=site_column, how="left",
+        )
+    else:
+        merged["S_99"] = np.nan
+        merged["ac_capacity_kw"] = np.nan
+
+    normalization_col = "S_99" if normalization_basis == "s_99" else "ac_capacity_kw"
+    denominator = merged[normalization_col].where(merged[normalization_col] > 0)
+    merged["P_kw_norm"] = merged["P_pv_kw"] / denominator
+    merged["Q_kvar_norm"] = merged["Q_pv_kvar"] / denominator
+    merged["normalization_basis"] = normalization_basis
+
     return merged[columns].sort_values([site_column, time_column]).reset_index(drop=True)
 
 
@@ -110,20 +276,28 @@ def build_ami_meter(
     type_column: str = "circuit_type",
     time_column: str = "t_stamp",
     power_column: str = "power",
+    reactive_power_column: str = "reactive_power",
+    voltage_column: str = "voltage",
+    current_column: str = "current",
+    power_factor_column: str = "power_factor",
+    energy_import_column: str = "energy_import",
+    energy_export_column: str = "energy_export",
     load_type: str = "ac_load_net",
 ) -> pd.DataFrame:
     """
     One row per (site_id, device_id, circuit_id, t_stamp): each surviving
-    `load_type` circuit's own reading, kept PER PHASE (not summed across a
-    site's circuits -- see module docstring). `net_power_w` is the raw,
-    already-net (load-convention) reading; `net_import_w`/`net_export_w`
-    split it into the two non-negative registers a real meter carries
-    (`max(net, 0)` / `max(-net, 0)`), still in Watts -- no kWh/interval
-    conversion here (see module docstring on `TARGET_INTERVAL_RESOLVED`).
+    `load_type` circuit's own RAW reading -- no polarity correction here,
+    `ac_load_net` is already net-of-PV as landed, and this table is meant
+    to be what a real meter would show, quirks included (see module
+    docstring on how this differs from `ami_raw_phaseseparate`). Every
+    source column beyond `power`/`reactive_power` is passed straight
+    through when present, and simply omitted (not erroring) when the
+    interval table doesn't have it.
     """
     columns = [
-        site_column, device_column, circuit_column, time_column,
-        "net_power_w", "net_import_w", "net_export_w",
+        site_column, device_column, circuit_column, time_column, "year", "month",
+        "V", "P_kw", "Q_kvar", "S_kva", "power_factor", "current_a",
+        "energy_import_kwh", "energy_export_kwh",
     ]
     if interval_table is None or not len(interval_table):
         return pd.DataFrame(columns=columns)
@@ -132,12 +306,166 @@ def build_ami_meter(
     if not len(load_side):
         return pd.DataFrame(columns=columns)
 
-    load_side["net_power_w"] = load_side[power_column]
-    load_side["net_import_w"] = load_side["net_power_w"].clip(lower=0.0)
-    load_side["net_export_w"] = (-load_side["net_power_w"]).clip(lower=0.0)
+    load_side["P_kw"] = load_side[power_column] / 1000.0
+    if reactive_power_column in load_side.columns:
+        load_side["Q_kvar"] = load_side[reactive_power_column] / 1000.0
+        load_side["S_kva"] = np.sqrt(load_side["P_kw"] ** 2 + load_side["Q_kvar"] ** 2)
+    if voltage_column in load_side.columns:
+        load_side["V"] = load_side[voltage_column]
+    if current_column in load_side.columns:
+        load_side["current_a"] = load_side[current_column]
+    if power_factor_column in load_side.columns:
+        load_side["power_factor"] = load_side[power_factor_column]
+    if energy_import_column in load_side.columns:
+        load_side["energy_import_kwh"] = load_side[energy_import_column] / 1000.0
+    if energy_export_column in load_side.columns:
+        load_side["energy_export_kwh"] = load_side[energy_export_column] / 1000.0
+
+    load_side["year"], load_side["month"] = _year_month(load_side[time_column])
+
+    present_columns = [c for c in columns if c in load_side.columns]
+    return (
+        load_side[present_columns]
+        .sort_values([site_column, circuit_column, time_column])
+        .reset_index(drop=True)
+    )
+
+
+def build_ami_raw_phaseseparate(
+    interval_table: pd.DataFrame, circuit_polarity: pd.DataFrame, *,
+    site_column: str = "site_id",
+    circuit_column: str = "circuit_id",
+    device_column: str = "device_id",
+    type_column: str = "circuit_type",
+    time_column: str = "t_stamp",
+    power_column: str = "power",
+    reactive_power_column: str = "reactive_power",
+    voltage_column: str = "voltage",
+    polarity_column: str = "circuit_polarity",
+    load_type: str = "ac_load_net",
+    pv_type: str = "pv_site_net",
+) -> pd.DataFrame:
+    """
+    One row per (site_id, device_id, circuit_id, t_stamp) on the LOAD side
+    only. `load_kw_signed`/`Q_kvar_signed` are polarity-corrected (see
+    module docstring for why this deliberately differs from
+    `ami_meter.P_kw`/`Q_kvar`). `V` is the raw per-circuit voltage (not
+    polarity-corrected -- voltage has no sign-convention ambiguity).
+    `pv_allocation_kw`/`pv_reactive_allocation_kvar` and
+    `pv_allocation_method` follow the direct-match / equal-split / no-PV
+    rule described in the module docstring, decided ONCE per site (from
+    the active-power side's circuit counts) and reused for the reactive
+    allocation too -- not decided separately -- then applied uniformly
+    across every timestamp for that site within this month's frame.
+    """
+    columns = [
+        site_column, device_column, circuit_column, time_column, "year", "month",
+        "V", "load_kw_signed", "pv_allocation_kw", "gross_load_kw",
+        "Q_kvar_signed", "pv_reactive_allocation_kvar", "gross_reactive_load_kvar",
+        "n_phases_at_site", "pv_allocation_method",
+    ]
+    if interval_table is None or not len(interval_table):
+        return pd.DataFrame(columns=columns)
+
+    frame = interval_table.merge(circuit_polarity, on=circuit_column, how="left")
+    frame["power_signed"] = frame[power_column] * frame[polarity_column]
+    if reactive_power_column in frame.columns:
+        frame["reactive_power_signed"] = frame[reactive_power_column] * frame[polarity_column]
+    else:
+        frame["reactive_power_signed"] = np.nan
+
+    load_side = frame[frame[type_column] == load_type].copy()
+    if not len(load_side):
+        return pd.DataFrame(columns=columns)
+    pv_side = frame[frame[type_column] == pv_type].copy()
+
+    load_circuits_by_site = load_side.groupby(site_column)[circuit_column].unique()
+    pv_circuits_by_site = (
+        pv_side.groupby(site_column)[circuit_column].unique() if len(pv_side) else pd.Series(dtype=object)
+    )
+
+    site_plan_rows = []
+    pair_rows = []
+    for site_id, load_ids in load_circuits_by_site.items():
+        load_ids_sorted = sorted(load_ids)
+        n_phases = len(load_ids_sorted)
+        pv_ids_sorted = (
+            sorted(pv_circuits_by_site.loc[site_id])
+            if site_id in getattr(pv_circuits_by_site, "index", []) else []
+        )
+        if not pv_ids_sorted:
+            method = "no_pv_present"
+        elif len(pv_ids_sorted) == n_phases:
+            method = "direct_matched_circuit"
+            pair_rows.extend(
+                {circuit_column: lc, "matched_pv_circuit": pvc}
+                for lc, pvc in zip(load_ids_sorted, pv_ids_sorted)
+            )
+        else:
+            method = "equal_split_across_load_phases"
+        site_plan_rows.append({
+            site_column: site_id, "n_phases_at_site": n_phases, "pv_allocation_method": method,
+        })
+
+    site_plan = pd.DataFrame(site_plan_rows)
+    pairs = (
+        pd.DataFrame(pair_rows) if pair_rows
+        else pd.DataFrame(columns=[circuit_column, "matched_pv_circuit"])
+    )
+
+    pv_signed_totals = (
+        pv_side.groupby([site_column, time_column])[["power_signed", "reactive_power_signed"]].sum()
+        .reset_index().rename(columns={
+            "power_signed": "pv_signed_total", "reactive_power_signed": "pv_reactive_signed_total",
+        })
+        if len(pv_side) else pd.DataFrame({
+            site_column: pd.Series(dtype="int64"), time_column: pd.Series(dtype="datetime64[ns, UTC]"),
+            "pv_signed_total": pd.Series(dtype="float64"),
+            "pv_reactive_signed_total": pd.Series(dtype="float64"),
+        })
+    )
+    pv_by_circuit = pv_side[[circuit_column, time_column, "power_signed", "reactive_power_signed"]].rename(
+        columns={
+            "power_signed": "pv_signed_matched", "reactive_power_signed": "pv_reactive_signed_matched",
+            circuit_column: "matched_pv_circuit",
+        }
+    )
+
+    rows = load_side.copy()
+    rows["load_kw_signed"] = rows["power_signed"] / 1000.0
+    rows["Q_kvar_signed"] = rows["reactive_power_signed"] / 1000.0
+    if voltage_column in rows.columns:
+        rows["V"] = rows[voltage_column]
+    else:
+        rows["V"] = np.nan
+    rows = rows.merge(site_plan, on=site_column, how="left")
+    rows = rows.merge(pairs, on=circuit_column, how="left")
+    rows = rows.merge(pv_by_circuit, on=["matched_pv_circuit", time_column], how="left")
+    rows = rows.merge(pv_signed_totals, on=[site_column, time_column], how="left")
+
+    is_direct = rows["pv_allocation_method"] == "direct_matched_circuit"
+    is_split = rows["pv_allocation_method"] == "equal_split_across_load_phases"
+
+    direct_kw = (rows["pv_signed_matched"].astype("float64") / 1000.0).fillna(0.0)
+    split_kw = (
+        rows["pv_signed_total"].astype("float64") / 1000.0 / rows["n_phases_at_site"]
+    ).fillna(0.0)
+    rows["pv_allocation_kw"] = np.select([is_direct, is_split], [direct_kw, split_kw], default=0.0)
+    rows["gross_load_kw"] = rows["load_kw_signed"] + rows["pv_allocation_kw"]
+
+    direct_kvar = (rows["pv_reactive_signed_matched"].astype("float64") / 1000.0).fillna(0.0)
+    split_kvar = (
+        rows["pv_reactive_signed_total"].astype("float64") / 1000.0 / rows["n_phases_at_site"]
+    ).fillna(0.0)
+    rows["pv_reactive_allocation_kvar"] = np.select(
+        [is_direct, is_split], [direct_kvar, split_kvar], default=0.0
+    )
+    rows["gross_reactive_load_kvar"] = rows["Q_kvar_signed"] + rows["pv_reactive_allocation_kvar"]
+
+    rows["year"], rows["month"] = _year_month(rows[time_column])
 
     return (
-        load_side[columns]
+        rows[columns]
         .sort_values([site_column, circuit_column, time_column])
         .reset_index(drop=True)
     )
@@ -145,23 +473,22 @@ def build_ami_meter(
 
 def write_month_table(
     frame: pd.DataFrame, store_dir, year: int, month: int, *,
-    table_name: str,
     partition_key: str = "dt_month",
     compression: str = "zstd",
 ) -> Path | None:
     """
     Write one month's already-built output table to
-    `<store_dir>/<table_name>/<partition_key>=YYYY-MM/part-0000.parquet`.
+    `<store_dir>/<partition_key>=YYYY-MM/part-0000.parquet`.
 
-    Returns the path written, or None for an empty frame (nothing is
-    written -- an empty file would otherwise silently inflate a manifest's
-    file count for no reason). One file per month is enough here -- unlike
-    `ami_extract`'s landing chunks, `ami_raw`/`ami_meter` are already the
-    small, derived, per-month aggregate, not the raw multi-chunk pull.
+    `store_dir` is treated as ALREADY the table's own directory (e.g.
+    `ami_config.store_path("ami_raw")`) -- this function does not append a
+    table-name segment of its own.
+
+    Returns the path written, or None for an empty frame.
     """
     if frame is None or not len(frame):
         return None
-    partition_dir = Path(store_dir) / table_name / f"{partition_key}={year}-{month:02d}"
+    partition_dir = Path(store_dir) / f"{partition_key}={year}-{month:02d}"
     partition_dir.mkdir(parents=True, exist_ok=True)
     path = partition_dir / "part-0000.parquet"
     frame.to_parquet(path, compression=compression, index=False)
@@ -171,6 +498,9 @@ def write_month_table(
 def run_build(
     month_frames, resolution: pd.DataFrame, circuit_polarity: pd.DataFrame,
     ami_raw_dir, ami_meter_dir, *,
+    site_capacity: pd.DataFrame | None = None,
+    normalization_basis: str = "s_99",
+    apply_power_correction: bool = True,
     site_column: str = "site_id",
     circuit_column: str = "circuit_id",
     type_column: str = "circuit_type",
@@ -179,18 +509,24 @@ def run_build(
     partition_key: str = "dt_month",
 ) -> pd.DataFrame:
     """
-    Orchestrate the full build: for every (year, month, frame) in
-    `month_frames` (e.g. `ami_revalidate.iter_month_partitions` over the
-    landed extract), build that month's interval table from the FINAL
-    resolution (post Phase 4 + Section 7b + full-year revalidation),
-    derive `ami_raw` and `ami_meter` for that month, and write both
-    immediately -- never holding more than one month's tables in memory.
+    Orchestrate `ami_raw` + `ami_meter` for every (year, month, frame) in
+    `month_frames`, one month at a time. `site_capacity` is optional and
+    keyword-only: omitting it still produces both tables, just with
+    `ami_raw.P_kw_norm`/`S_99`/`ac_capacity_kw` left null -- this keeps a
+    call written before capacity metadata was wired in still working
+    unchanged.
 
-    Returns a provenance DataFrame, one row per month: `year, month,
-    n_raw_rows, n_meter_rows, raw_path, meter_path`. A month that lands no
-    rows in either table still gets a row here (with 0 counts and `None`
-    paths), so a silent gap in the final dataset is visible in this
-    manifest rather than only inferable from a missing partition directory.
+    `apply_power_correction` is passed straight through to
+    `Resolution.build_interval_table` (see its docstring) -- default True
+    keeps the validated Phase 4 device/meter-model correction; pass False
+    to use raw `power` for every circuit unconditionally, matching
+    `structured_data`'s own treatment. To exclude the sites this correction
+    affects entirely rather than just changing how they're treated, filter
+    `resolution` down first via `Resolution.sites_with_power_correction`
+    before calling this function -- see that helper's docstring for the
+    exact pattern.
+
+    Returns a provenance DataFrame, one row per month.
     """
     provenance_rows = []
     for year, month, frame in month_frames:
@@ -199,11 +535,13 @@ def run_build(
             site_column=site_column, circuit_column=circuit_column,
             type_column=type_column, device_column=device_column,
             time_column=time_column,
+            apply_power_correction=apply_power_correction,
         )
         ami_raw = build_ami_raw(
             interval_table, circuit_polarity,
             site_column=site_column, circuit_column=circuit_column,
             type_column=type_column, time_column=time_column,
+            site_capacity=site_capacity, normalization_basis=normalization_basis,
         )
         ami_meter = build_ami_meter(
             interval_table,
@@ -211,19 +549,65 @@ def run_build(
             device_column=device_column, type_column=type_column,
             time_column=time_column,
         )
-        raw_path = write_month_table(
-            ami_raw, ami_raw_dir, year, month,
-            table_name="ami_raw", partition_key=partition_key,
-        )
-        meter_path = write_month_table(
-            ami_meter, ami_meter_dir, year, month,
-            table_name="ami_meter", partition_key=partition_key,
-        )
+        raw_path = write_month_table(ami_raw, ami_raw_dir, year, month, partition_key=partition_key)
+        meter_path = write_month_table(ami_meter, ami_meter_dir, year, month, partition_key=partition_key)
         provenance_rows.append({
             "year": year, "month": month,
             "n_raw_rows": len(ami_raw), "n_meter_rows": len(ami_meter),
             "raw_path": raw_path, "meter_path": meter_path,
         })
         del interval_table, ami_raw, ami_meter
+
+    return pd.DataFrame(provenance_rows)
+
+
+def run_phase_split_build(
+    month_frames, resolution: pd.DataFrame, circuit_polarity: pd.DataFrame,
+    ami_raw_phaseseparate_dir, *,
+    apply_power_correction: bool = True,
+    site_column: str = "site_id",
+    circuit_column: str = "circuit_id",
+    type_column: str = "circuit_type",
+    device_column: str = "device_id",
+    time_column: str = "t_stamp",
+    partition_key: str = "dt_month",
+) -> pd.DataFrame:
+    """
+    Orchestrate `ami_raw_phaseseparate` for every (year, month, frame) in
+    `month_frames`, one month at a time -- same discipline as `run_build`,
+    kept as a separate entry point so it can be run independently (e.g.
+    against already-landed data, without re-running the `ami_raw`/
+    `ami_meter` build).
+
+    `apply_power_correction` is passed straight through to
+    `Resolution.build_interval_table` -- see `run_build`'s docstring for
+    what it does and how to instead exclude affected sites entirely via
+    `Resolution.sites_with_power_correction`. Pass the SAME value here as
+    you did to `run_build` if you want `ami_raw_phaseseparate` to reconcile
+    with `ami_raw`/`ami_meter` for the same site/timestamp -- the two
+    orchestrators don't share state, so a mismatched setting between them
+    would silently break that reconciliation property.
+
+    Returns a provenance DataFrame, one row per month: `year, month,
+    n_rows, path`.
+    """
+    provenance_rows = []
+    for year, month, frame in month_frames:
+        interval_table = Resolution.build_interval_table(
+            frame, resolution,
+            site_column=site_column, circuit_column=circuit_column,
+            type_column=type_column, device_column=device_column,
+            time_column=time_column,
+            apply_power_correction=apply_power_correction,
+        )
+        phase_split = build_ami_raw_phaseseparate(
+            interval_table, circuit_polarity,
+            site_column=site_column, circuit_column=circuit_column,
+            device_column=device_column, type_column=type_column,
+            time_column=time_column,
+        )
+        path = write_month_table(phase_split, ami_raw_phaseseparate_dir, year, month, partition_key=partition_key)
+        provenance_rows.append({"year": year, "month": month, "n_rows": len(phase_split), "path": path})
+        del interval_table, phase_split
 
     return pd.DataFrame(provenance_rows)

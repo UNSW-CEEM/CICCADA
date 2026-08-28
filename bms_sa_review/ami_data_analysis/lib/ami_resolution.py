@@ -258,7 +258,12 @@ def build_interval_table(
     energy_column: str = "energy",
     reactive_energy_column: str = "energy_reactive",
     voltage_column: str = "voltage",
+    current_column: str = "current",
+    power_factor_column: str = "power_factor",
+    energy_import_column: str = "energy_import",
+    energy_export_column: str = "energy_export",
     nominal_interval_minutes: float = 5.0,
+    apply_power_correction: bool = True,
 ) -> pd.DataFrame:
     """
     Assemble the core interval-level ground-truth table: one row per
@@ -267,16 +272,49 @@ def build_interval_table(
     across phases -- `device_id` is carried as a tag so a consumer can group
     and sum on demand (see the settled Phase 4 decisions).
 
-    Active power uses raw `power` unless the circuit was flagged for the
-    device/meter-model correction, in which case it is re-derived as
+    Active power: when `apply_power_correction` is True (the default), uses
+    raw `power` unless the circuit was flagged for the device/meter-model
+    correction, in which case it is re-derived as
     `energy * 60 / implied_interval_minutes` (that circuit's OWN implied
-    interval). Reactive power has no raw instantaneous column in `ts` at
-    all -- it is ALWAYS derived, `energy_reactive * 60 / interval_minutes`,
-    using the same interval basis (implied where flagged, nominal
-    otherwise) as the active-power correction.
+    interval). This flag exists because Phase 3 found real evidence that
+    `CATCH Power`-model circuits (identified by `power_correction_applied`,
+    from a whole-Wh energy-register diagnostic -- see
+    `energy_granularity_and_implied_interval`) report an unreliable raw
+    `power` field; re-deriving it from `energy` is the more defensible
+    per-circuit value, but because the source energy register only ticks in
+    whole Wh, it also makes the reconstructed power visibly stair-stepped
+    rather than smooth.
+
+    Set `apply_power_correction=False` to instead use raw `power` for
+    EVERY circuit unconditionally, ignoring `power_correction_applied`
+    entirely -- this is the same treatment `structured_data`'s own build
+    (`Write_structured_data.ipynb`) gives every circuit, so pass this when
+    you specifically want AMI-dataset numbers that are comparable to
+    `structured_data`'s, at the cost of reintroducing the known-unreliable
+    raw reading for flagged circuits. This is a deliberate per-call choice,
+    not a permanent decision -- both tables can be built side by side by
+    calling `Build.run_build`/`Build.run_phase_split_build` twice, once per
+    setting, into different `store_dir`s. See `sites_with_power_correction`
+    below for identifying (and optionally excluding) the sites this affects
+    -- e.g. to get an AMI dataset with the correction ON but built
+    ONLY from sites where it never fires, filter `resolution` down to
+    `sites_with_power_correction(resolution)`-False sites before calling
+    this (or the `Build.run_*` orchestrators) at all.
+
+    Reactive power has no raw instantaneous column in `ts` at all -- it is
+    ALWAYS derived, `energy_reactive * 60 / interval_minutes`, using the
+    same interval basis (implied where flagged, nominal otherwise) as the
+    active-power correction, REGARDLESS of `apply_power_correction` (there
+    is no raw reactive-power field to fall back to). `current`,
+    `power_factor`, `energy_import`, and `energy_export` are all carried
+    through as landed (raw, uncorrected) -- none of them have an alternate
+    derivation the way power/reactive power do, so neither correction
+    setting touches them.
     """
     out_columns = [site_column, device_column, circuit_column, type_column,
-                   time_column, "power", "reactive_power", voltage_column]
+                   time_column, "power", "reactive_power", voltage_column,
+                   current_column, power_factor_column,
+                   energy_import_column, energy_export_column]
     kept = resolution[resolution.kept]
     if not len(kept):
         return pd.DataFrame(columns=out_columns)
@@ -292,14 +330,55 @@ def build_interval_table(
     interval_minutes = frame["implied_interval_minutes"].where(
         frame["power_correction_applied"], nominal_interval_minutes
     )
-    frame["power"] = frame[power_column].where(
-        ~frame["power_correction_applied"],
-        frame[energy_column] * 60.0 / interval_minutes,
-    )
+    if apply_power_correction:
+        frame["power"] = frame[power_column].where(
+            ~frame["power_correction_applied"],
+            frame[energy_column] * 60.0 / interval_minutes,
+        )
+    else:
+        frame["power"] = frame[power_column]
     frame["reactive_power"] = frame[reactive_energy_column] * 60.0 / interval_minutes
 
     present_columns = [c for c in out_columns if c in frame.columns]
     return frame[present_columns].sort_values([circuit_column, time_column]).reset_index(drop=True)
+
+
+def sites_with_power_correction(
+    resolution: pd.DataFrame, *,
+    site_column: str = "site_id",
+    circuit_column: str = "circuit_id",
+) -> pd.Series:
+    """
+    Per-site rollup of `power_correction_applied`, restricted to KEPT
+    circuits: a boolean Series indexed by `site_id`, True if that site has
+    AT LEAST ONE kept circuit whose raw `power` field was flagged
+    unreliable (see `build_interval_table`'s `apply_power_correction`
+    docstring). A site is rolled up with `.any()`, not checked per side,
+    because a ground-truth row needs BOTH sides -- one untrustworthy
+    circuit (load OR PV) taints the whole site's reconstruction, not just
+    that circuit's own columns.
+
+    Use this to build an exclusion list before calling
+    `Build.run_build`/`Build.run_phase_split_build`, so the flagged sites
+    never enter the AMI tables at all (rather than filtering them out of
+    an already-built table after the fact):
+
+        flagged = Resolution.sites_with_power_correction(final_resolution)
+        clean_site_ids = flagged[~flagged].index
+        clean_resolution = final_resolution[
+            final_resolution.site_id.isin(clean_site_ids)
+        ]
+        # then pass clean_resolution as the `resolution` argument to
+        # Build.run_build / Build.run_phase_split_build instead of
+        # final_resolution.
+
+    An empty/all-dropped `resolution` returns an empty Series (rather than
+    raising), matching this module's other empty-input conventions.
+    """
+    kept = resolution[resolution.kept]
+    if not len(kept):
+        return pd.Series(dtype=bool)
+    return kept.groupby(site_column)["power_correction_applied"].any()
 
 
 def build_site_metadata(

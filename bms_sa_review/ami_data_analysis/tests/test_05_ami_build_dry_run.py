@@ -67,11 +67,17 @@ def _synthetic_meta() -> pd.DataFrame:
         "circuit_id", "site_id", "circuit_type", "device_id", "is_pv", "device_type",
     ])
     frame["circuit_polarity"] = np.where(frame.is_pv, -1, 1)
-    for col in ("ac_capacity_kw", "dc_capacity_kw", "export_limit_kw", "inverter_count",
-                "m_id", "voltage_class", "min_time", "max_time", "s_99", "postcode",
+    for col in ("dc_capacity_kw", "export_limit_kw", "inverter_count",
+                "m_id", "voltage_class", "min_time", "max_time", "postcode",
                 "dnsp_name", "flex_export_detected", "manufacturer", "model",
                 "monitoring_start", "pv_install_date"):
         frame[col] = None
+    # Real, non-null capacity figures -- exercised by the site_capacity_lookup
+    # query shape (`GROUP BY site_id`) in _fake_aq below, so P_kw_norm/
+    # Q_kvar_norm in the real ami_raw build actually get a denominator
+    # instead of staying null throughout this dry run.
+    frame["s_99"] = 5.0
+    frame["ac_capacity_kw"] = 6.0
     frame["state"] = "NSW"
     return frame
 
@@ -221,6 +227,18 @@ def _fake_aq(meta: pd.DataFrame):
                 .agg(n_circuits=("circuit_id", "count"), n_sites=("site_id", "nunique"))
                 .reset_index()
             )
+        if "GROUP BY site_id" in sql:
+            # site_capacity_lookup's shape: SELECT site_id, max(S_99) AS S_99,
+            # max(ac_capacity_kw) AS ac_capacity_kw FROM meta_up23c ...
+            # GROUP BY site_id -- simulate the real aggregation, including the
+            # uppercase `S_99` alias the real query (and build_ami_raw's own
+            # column selection) expect, rather than returning the raw fixture
+            # frame's lowercase `s_99` unmodified.
+            return (
+                meta.groupby("site_id")
+                .agg(S_99=("s_99", "max"), ac_capacity_kw=("ac_capacity_kw", "max"))
+                .reset_index()
+            )
         if "FROM meta_up23c" in sql:
             return meta.copy()
         if "FROM ts" in sql:
@@ -274,6 +292,18 @@ def test_notebook_05_runs_end_to_end_against_synthetic_fixture(monkeypatch, tmp_
     monkeypatch.setattr(Config, "ARTEFACT_DIR", artefact_dir)
     monkeypatch.setattr(Config, "STORE_DIR", store_dir)
     monkeypatch.setattr(Config, "store_path", lambda name: store_dir / name)
+
+    # The real notebook's extraction cell (cell ~19) has a
+    # skip-and-reuse-the-prior-manifest fallback that reads this CSV back
+    # from ARTEFACT_DIR rather than re-running Extract.run_extraction --
+    # pre-seed a stub here so the dry run (which starts from a fresh
+    # tmp_path, unlike a real restart where a prior run's manifest already
+    # exists on disk) exercises that fallback path successfully too.
+    artefact_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"year": [], "month": [], "is_pv": [], "chunk_index": [],
+                  "n_circuits": [], "n_rows": [], "path": []}).to_csv(
+        artefact_dir / "phase5_extraction_manifest.csv", index=False
+    )
 
     namespace = {"__name__": "__dry_run__", "display": lambda *a, **k: None}
     result = _run_notebook_cells(NOTEBOOK_PATH, namespace)

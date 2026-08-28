@@ -203,9 +203,10 @@ STORE_TABLES: dict[str, str] = {
     "ami_extract":   "ami_extract",          # circuit x interval, Hive-partitioned
     "ami_meta":      "ami_meta.parquet",     # circuit dimension, from meta_up23c
     "ami_provenance": "ami_provenance.parquet",  # per-chunk SQL, counts, timestamps
-    # Phase 5: the deliverable pair.
-    "ami_raw":       "ami_raw",              # site x interval, one col per signal
-    "ami_meter":     "ami_meter",            # site x AMI interval, net only
+    # Phase 5: the deliverable trio.
+    "ami_raw":              "ami_raw",              # site x interval, ground truth
+    "ami_meter":            "ami_meter",            # site x AMI interval, net only, per phase
+    "ami_raw_phaseseparate": "ami_raw_phaseseparate",  # per-phase ground truth, PV-allocated
 }
 
 PARTITIONED_TABLES = frozenset({"ami_extract", "ami_raw", "ami_meter"})
