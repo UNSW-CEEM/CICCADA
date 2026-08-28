@@ -47,7 +47,7 @@ from solar_analytics_workflow.trino.trino_connection_on_ec2 import (
     iceberg_exec,
 )
 
-EVM_TRINO_SITE_BATCH_SIZE = 10 # num sites queried at once
+EVM_TRINO_SITE_BATCH_SIZE = 10  # num sites queried at once
 
 # these are the columns for conformance results that will be pushed to trino
 # and utilised for grafana plotting

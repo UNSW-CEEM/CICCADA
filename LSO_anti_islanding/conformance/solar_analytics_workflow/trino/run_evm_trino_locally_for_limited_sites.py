@@ -397,13 +397,10 @@ with local_trino_engine(
     eligible_site_ids = pv_circuit_counts.filter(
         pl.col("pv_circuit_count").is_between(1, 3)
     )["site_id"]
-    selected_sites = (
-        site_data.filter(
-            pl.col("site_id").is_in(eligible_site_ids.implode())
-            & pl.col("site_id").is_in(assessed_site_ids.implode())
-        )
-        .sort("site_id")
-    )
+    selected_sites = site_data.filter(
+        pl.col("site_id").is_in(eligible_site_ids.implode())
+        & pl.col("site_id").is_in(assessed_site_ids.implode())
+    ).sort("site_id")
     if MAX_ASSESSED_SITES is not None:
         selected_sites = selected_sites.head(MAX_ASSESSED_SITES)
     print(f"Selected assessed sites: {selected_sites.height}", flush=True)

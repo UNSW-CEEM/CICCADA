@@ -68,6 +68,7 @@ iceberg_exec("""
     )
 """)
 
+
 def _iter_site_timeseries_batches(engine, assessed_sites, circuit_data):
     postcode_buckets = assessed_sites.get_column("postcode_bucket").unique(
         maintain_order=True
@@ -82,9 +83,7 @@ def _iter_site_timeseries_batches(engine, assessed_sites, circuit_data):
         )
 
         for batch_timezone in batch_timezones:
-            timezone_sites = bucket_sites.filter(
-                pl.col("timezone") == batch_timezone
-            )
+            timezone_sites = bucket_sites.filter(pl.col("timezone") == batch_timezone)
 
             for batch_start in range(
                 0,
@@ -115,9 +114,7 @@ def _iter_site_timeseries_batches(engine, assessed_sites, circuit_data):
                     maintain_order=True
                 )
 
-                circuit_ids = ", ".join(
-                    batch_circuit_ids.cast(pl.String).to_list()
-                )
+                circuit_ids = ", ".join(batch_circuit_ids.cast(pl.String).to_list())
                 postcodes = ", ".join(
                     batch_postcodes.cast(pl.Int64).cast(pl.String).to_list()
                 )
@@ -170,9 +167,7 @@ try:
         .cast(pl.Int64)
         .unique(maintain_order=True)
     )
-    assessed_site_ids_sql = ", ".join(
-        assessed_site_ids.cast(pl.String).to_list()
-    )
+    assessed_site_ids_sql = ", ".join(assessed_site_ids.cast(pl.String).to_list())
 
     site_query = f"""
     SELECT DISTINCT
@@ -197,13 +192,10 @@ try:
         AND c.is_pv = TRUE
     """
 
-    site_data = (
-        pl.read_database(query=site_query, connection=engine)
-        .unique(
-            subset=["site_id"],
-            keep="first",
-            maintain_order=True,
-        )
+    site_data = pl.read_database(query=site_query, connection=engine).unique(
+        subset=["site_id"],
+        keep="first",
+        maintain_order=True,
     )
     site_data = add_s_rated_capacity(site_data)
 
@@ -250,9 +242,7 @@ try:
         for site in batch_sites.iter_rows(named=True):
             site_idx += 1
             site_circuit_ids = (
-                batch_circuit_data.filter(
-                    pl.col("site_id") == site["site_id"]
-                )
+                batch_circuit_data.filter(pl.col("site_id") == site["site_id"])
                 .get_column("c_id")
                 .unique(maintain_order=True)
             )
@@ -332,9 +322,7 @@ try:
                     DAY_ANALYSIS_START,
                     DAY_END,
                 )
-                eligibility = summarize_solar_analytics_day_eligibility(
-                    analysis_day_df
-                )
+                eligibility = summarize_solar_analytics_day_eligibility(analysis_day_df)
 
                 if not eligibility["eligible"]:
                     continue
@@ -406,10 +394,7 @@ try:
                 .with_columns(
                     [
                         pl.col("event_day").dt.year().cast(pl.Int32).alias("year"),
-                        pl.col("event_day")
-                        .dt.month()
-                        .cast(pl.Int32)
-                        .alias("month"),
+                        pl.col("event_day").dt.month().cast(pl.Int32).alias("month"),
                         pl.col("event_day").dt.day().cast(pl.Int32).alias("day"),
                         pl.lit(PRIMARY_PHASE_B_METHOD).alias("method_key"),
                     ]
@@ -443,8 +428,7 @@ try:
                 engine_options={"chunksize": 250, "method": "multi"},
             )
             print(
-                "Uploaded daily conformance rows: "
-                f"{rows_written}",
+                "Uploaded daily conformance rows: " f"{rows_written}",
                 flush=True,
             )
 

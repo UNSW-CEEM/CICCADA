@@ -25,9 +25,7 @@ def add_s_rated_capacity(site_details):
         & (pl.col("ac_capacity_kw") > 0)
     )
     valid_s_99 = (
-        pl.col("s_99").is_not_null()
-        & pl.col("s_99").is_finite()
-        & (pl.col("s_99") > 0)
+        pl.col("s_99").is_not_null() & pl.col("s_99").is_finite() & (pl.col("s_99") > 0)
     )
     return site_details.with_columns(
         pl.when(valid_ac_capacity)

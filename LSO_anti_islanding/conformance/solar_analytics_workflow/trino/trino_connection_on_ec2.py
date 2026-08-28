@@ -5,7 +5,6 @@ from sqlalchemy import create_engine, text
 
 from .trino_config import TRINO_EC2_ICEBERG_URL
 
-
 engine = create_engine(
     TRINO_EC2_ICEBERG_URL,
     pool_pre_ping=True,

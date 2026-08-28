@@ -98,13 +98,15 @@ def _site_thresholds_from_records(
         records,
         "LOS",
         "v_los_recorded",
-        258.0, min_events=3,
+        258.0,
+        min_events=3,
     )
     ov1 = _mechanism_threshold_evidence(
         records,
         "OV1",
         "v_ov1_recorded",
-        265.0, min_events=3,
+        265.0,
+        min_events=3,
     )
 
     los_anchor = float(los["threshold"])

@@ -116,13 +116,8 @@ def write_method_conformance_final_table(site_conformance_summary):
         site_conformance_summary.group_by("method_key", maintain_order=True)
         .agg(
             [
-                pl.col("site_id")
-                .n_unique()
-                .alias("Eligible Sites After Filtering"),
-                pl.col("overall_pass")
-                .is_not_null()
-                .sum()
-                .alias("Sites Assessed"),
+                pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
+                pl.col("overall_pass").is_not_null().sum().alias("Sites Assessed"),
                 pl.col("overall_pass").is_null().sum().alias("Unassessed Sites"),
                 pl.col("overall_pass")
                 .eq(True)
@@ -137,11 +132,7 @@ def write_method_conformance_final_table(site_conformance_summary):
             ]
         )
         .with_columns(
-            (
-                pl.col("Conformant Sites")
-                / pl.col("Sites Assessed")
-                * 100.0
-            )
+            (pl.col("Conformant Sites") / pl.col("Sites Assessed") * 100.0)
             .round(2)
             .alias("Conformance Percentage (% of Assessed)")
         )

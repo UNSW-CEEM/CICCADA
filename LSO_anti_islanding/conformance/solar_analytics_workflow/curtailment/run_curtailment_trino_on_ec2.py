@@ -25,13 +25,13 @@ from solar_analytics_workflow.data_cleaning import (
     deduplicateMeasurements,
 )
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
+from solar_analytics_workflow.rated_capacity import add_s_rated_capacity
 from solar_analytics_workflow.site_preparation import (
     calculate_site_day_voltage_signals,
     extract_site_day,
     map_circuit_data_to_site,
     trim_site_day_analysis_window,
 )
-from solar_analytics_workflow.rated_capacity import add_s_rated_capacity
 from solar_analytics_workflow.trino.trino_connection_on_ec2 import (
     engine,
     iceberg_exec,
@@ -74,9 +74,7 @@ WITH (
 """)
 
 TRINO_SITE_BATCH_SIZE = 10
-CONFORMANCE_TABLE = (
-    "iceberg.solar_analytics_iceberg.lso_anti_islanding_conformance"
-)
+CONFORMANCE_TABLE = "iceberg.solar_analytics_iceberg.lso_anti_islanding_conformance"
 
 conformance_summary = pl.read_database(
     query=f"""
@@ -99,9 +97,7 @@ acceptable_site_ids = (
 if len(acceptable_site_ids) == 0:
     raise ValueError("No acceptable sites found in the conformance summary.")
 
-acceptable_site_ids_sql = ", ".join(
-    acceptable_site_ids.cast(pl.String).to_list()
-)
+acceptable_site_ids_sql = ", ".join(acceptable_site_ids.cast(pl.String).to_list())
 
 SITE_QUERY = f"""
 SELECT DISTINCT
@@ -140,9 +136,7 @@ def _iter_site_timeseries_batches(engine, acceptable_sites, circuit_data):
         )
 
         for batch_timezone in batch_timezones:
-            timezone_sites = bucket_sites.filter(
-                pl.col("timezone") == batch_timezone
-            )
+            timezone_sites = bucket_sites.filter(pl.col("timezone") == batch_timezone)
 
             for batch_start in range(
                 0,
@@ -236,7 +230,6 @@ try:
         on="site_id",
         how="inner",
     )
-    
 
     circuit_data = pl.read_database(
         query=CIRCUIT_QUERY,
@@ -299,9 +292,7 @@ try:
             for site in batch_sites.iter_rows(named=True):
                 site_idx += 1
                 site_circuit_ids = (
-                    batch_circuit_data.filter(
-                        pl.col("site_id") == site["site_id"]
-                    )
+                    batch_circuit_data.filter(pl.col("site_id") == site["site_id"])
                     .get_column("c_id")
                     .unique(maintain_order=True)
                 )
@@ -361,7 +352,9 @@ try:
                     batch_site_day_voltage_frames.append(site_day_voltage_signals)
 
             if batch_site_day_voltage_frames:
-                batch_signals = pl.concat(batch_site_day_voltage_frames, how="vertical").with_columns(
+                batch_signals = pl.concat(
+                    batch_site_day_voltage_frames, how="vertical"
+                ).with_columns(
                     pl.col("utc_tstamp").cast(
                         pl.Datetime(time_unit="us", time_zone="UTC")
                     )
@@ -419,16 +412,11 @@ try:
                         [
                             (
                                 (pl.col("v10m_avg") >= pl.col("los_threshold_used"))
-                                | (
-                                    pl.col("vinst_max")
-                                    >= pl.col("ov1_threshold_used")
-                                )
+                                | (pl.col("vinst_max") >= pl.col("ov1_threshold_used"))
                             )
                             .fill_null(False)
                             .alias("voltage_triggered"),
-                            (0.04 * pl.col("s_rated")).alias(
-                                "disconnect_limit_kw"
-                            ),
+                            (0.04 * pl.col("s_rated")).alias("disconnect_limit_kw"),
                         ]
                     )
                     .with_columns(
@@ -462,8 +450,14 @@ try:
                 batch_daily_curtailment = (
                     batch_curtailment.with_columns(
                         [
-                            pl.col("local_tstamp").dt.year().cast(pl.Int32).alias("year"),
-                            pl.col("local_tstamp").dt.month().cast(pl.Int32).alias("month"),
+                            pl.col("local_tstamp")
+                            .dt.year()
+                            .cast(pl.Int32)
+                            .alias("year"),
+                            pl.col("local_tstamp")
+                            .dt.month()
+                            .cast(pl.Int32)
+                            .alias("month"),
                             pl.col("local_tstamp").dt.day().cast(pl.Int32).alias("day"),
                         ]
                     )
@@ -479,9 +473,7 @@ try:
                             pl.col("uncurtailed_P")
                             .filter(pl.col("voltage_triggered"))
                             .sum()
-                            .alias(
-                                "uncurtailed_lso_anti_islanding_eligible_sum"
-                            ),
+                            .alias("uncurtailed_lso_anti_islanding_eligible_sum"),
                             (pl.col("curtailed_power_kw") > 0)
                             .sum()
                             .cast(pl.Int64)
@@ -489,9 +481,7 @@ try:
                             pl.col("voltage_triggered")
                             .sum()
                             .cast(pl.Int64)
-                            .alias(
-                                "curtailment_lso_anti_islanding_eligible_count"
-                            ),
+                            .alias("curtailment_lso_anti_islanding_eligible_count"),
                         ]
                     )
                     .select(
