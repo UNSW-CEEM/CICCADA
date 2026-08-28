@@ -27,7 +27,9 @@ Important difference from ``phase_b_timestamp_detail_tier_based.csv``:
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import polars as pl
 
@@ -35,31 +37,31 @@ CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from config import PRIMARY_PHASE_B_METHOD
-from core.check_pv_behaviour import CheckPVBehaviour
-from core.site_day_preparation import (
-    extract_site_day,
-    select_site_pv_data,
-    trim_site_day_analysis_window,
+from sapn2022_workflow.config import (
+    DAY_END,
+    DAY_EXTRACTION_START,
+    EVENT_DAYS,
+    EVENT_MONTH,
+    EVENT_YEAR,
+    LOCAL_TIMEZONE,
+    PRIMARY_PHASE_B_METHOD,
 )
-from core.site_day_preparation import (
-    map_circuit_data_to_site as mapCircuitDataToSite,
-)
-from reporting.outputs import SITE_CONFORMANCE_SUMMARY_NAME
-from sapn2022_workflow.adapter import (
-    SAPN2022_CONFORMANCE_CONFIG,
-)
-from sapn2022_workflow.adapter import (
-    load_cleaned_site_data as loadCleanedSiteData,
-)
+from sapn2022_workflow.loading import load_sapn_cleaned_data
+from sapn2022_workflow.reporting import SITE_CONFORMANCE_SUMMARY_NAME
 from sapn2022_workflow.sapn_paths import (
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
+    CONFORMANCE_OUTPUT_DIR,
+)
+from sapn2022_workflow.site_preparation import (
+    calculate_site_day_voltage_signals,
+    extract_site_day,
+    map_circuit_data_to_site,
+    select_site_pv_data,
+    trim_site_day_analysis_window,
 )
 
-SITE_CONFORMANCE_SUMMARY_PATH = (
-    SAPN2022_CONFORMANCE_CONFIG.output_dir / SITE_CONFORMANCE_SUMMARY_NAME
-)
+SITE_CONFORMANCE_SUMMARY_PATH = CONFORMANCE_OUTPUT_DIR / SITE_CONFORMANCE_SUMMARY_NAME
 CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH  # this is the cleaned circuit data parquet
 OUTPUT_DIR = (
     CONFORMANCE_DIR / "updated results" / "phase b info for curtailment" / "tier based"
@@ -67,57 +69,42 @@ OUTPUT_DIR = (
 TIMESTAMP_OUTPUT_PATH = OUTPUT_DIR / "tier_based_timestamp_flags.csv"
 BUCKET_OUTPUT_PATH = OUTPUT_DIR / "tier_based_5min_buckets.csv"
 
+TIMESTAMP_OUTPUT_SCHEMA = {
+    "site_id": pl.Int64,
+    "event_day": pl.Int64,
+    "local_tstamp": pl.Datetime(time_zone="Australia/Adelaide"),
+    "utc_tstamp": pl.Utf8,
+    "site_power_kw": pl.Float64,
+    "v10m_avg": pl.Float64,
+    "vinst_max": pl.Float64,
+    "los_or_ov1_flag": pl.Int8,
+}
 
-def _require_file(path: Path) -> None:
-    """Fail early when a required input file is missing."""
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing required input: {path}. Run conformance first to generate "
-            "the site summary."
-        )
-
-
-def _empty_timestamp_frame() -> pl.DataFrame:
-    """Return the empty timestamp output with the expected schema."""
-    return pl.DataFrame(
-        schema={
-            "site_id": pl.Int64,
-            "event_day": pl.Int64,
-            "local_tstamp": pl.Datetime(time_zone="Australia/Adelaide"),
-            "utc_tstamp": pl.Utf8,
-            "site_power_kw": pl.Float64,
-            "v10m_avg": pl.Float64,
-            "vinst_max": pl.Float64,
-            "los_or_ov1_flag": pl.Int8,
-        }
-    )
-
-
-def _empty_bucket_frame() -> pl.DataFrame:
-    """Return the empty 5-minute bucket output with the expected schema."""
-    return pl.DataFrame(
-        schema={
-            "site_id": pl.Int64,
-            "event_day": pl.Int64,
-            "bucket_5min_local": pl.Utf8,
-            "tod_bin": pl.Utf8,
-            "site_power_kw_min": pl.Float64,
-            "site_power_kw_avg": pl.Float64,
-            "site_power_kw_max": pl.Float64,
-            "v10m_avg_min": pl.Float64,
-            "v10m_avg_avg": pl.Float64,
-            "v10m_avg_max": pl.Float64,
-            "vinst_max_min": pl.Float64,
-            "vinst_max_avg": pl.Float64,
-            "vinst_max_max": pl.Float64,
-            "los_or_ov1_flag": pl.Int8,
-        }
-    )
+BUCKET_OUTPUT_SCHEMA = {
+    "site_id": pl.Int64,
+    "event_day": pl.Int64,
+    "bucket_5min_local": pl.Utf8,
+    "tod_bin": pl.Utf8,
+    "site_power_kw_min": pl.Float64,
+    "site_power_kw_avg": pl.Float64,
+    "site_power_kw_max": pl.Float64,
+    "v10m_avg_min": pl.Float64,
+    "v10m_avg_avg": pl.Float64,
+    "v10m_avg_max": pl.Float64,
+    "vinst_max_min": pl.Float64,
+    "vinst_max_avg": pl.Float64,
+    "vinst_max_max": pl.Float64,
+    "los_or_ov1_flag": pl.Int8,
+}
 
 
 def _load_assessed_sites() -> pl.DataFrame:
     """Load assessed sites plus the thresholds needed to rebuild curtailment flags."""
-    _require_file(SITE_CONFORMANCE_SUMMARY_PATH)
+    if not SITE_CONFORMANCE_SUMMARY_PATH.exists():
+        raise FileNotFoundError(
+            f"Missing required input: {SITE_CONFORMANCE_SUMMARY_PATH}. Run "
+            "conformance first to generate the site summary."
+        )
 
     summary_df = pl.read_csv(SITE_CONFORMANCE_SUMMARY_PATH, null_values=[""])
     required_columns = {
@@ -167,76 +154,32 @@ def _load_assessed_sites() -> pl.DataFrame:
     return assessed_sites
 
 
-def _prepare_inputs() -> tuple[pl.DataFrame, pl.LazyFrame]:
-    """Load the circuit metadata and cleaned metrology needed for site rebuilds."""
-    _require_file(CIRCUIT_DETAILS_PATH)
-    if not CLEANED_DATA_PATH.exists():
-        raise FileNotFoundError(
-            f"Missing cleaned site data at {CLEANED_DATA_PATH}. "
-            "Run run_sapn2022_preprocessing.py first."
-        )
-
-    circuit_details = pl.read_csv(CIRCUIT_DETAILS_PATH)
-    all_data = loadCleanedSiteData(CLEANED_DATA_PATH)
-
-    return circuit_details, all_data
-
-
-def _signal_columns(site_day_df: pl.DataFrame) -> tuple[list[str], list[str]]:
-    """Identify site-day power and voltage columns produced by ``mapCircuitDataToSite``."""
+def _build_day_flag_frame(
+    wide: pl.DataFrame,
+    *,
+    los_threshold_used: float,
+    ov1_threshold_used: float,
+) -> pl.DataFrame:
+    """Rebuild the timestamp-level tier-based curtailment flags for one site-day."""
+    # Identify site-day power and voltage columns produced by
+    # ``map_circuit_data_to_site``.
     power_cols = [
         col
-        for col in site_day_df.columns
+        for col in wide.columns
         if col.startswith("power")
         and not col.endswith("_next")
         and not col.endswith("_logic")
     ]
-    voltage_cols = [
-        col for col in site_day_df.columns if col.startswith("voltage_valid")
-    ]
-    return power_cols, voltage_cols
+    voltage_cols = [col for col in wide.columns if col.startswith("voltage_valid")]
+    if not power_cols or not voltage_cols:
+        return pl.DataFrame(schema=TIMESTAMP_OUTPUT_SCHEMA)
 
-
-def _add_rolling_voltage_metrics(
-    site_day_df: pl.DataFrame,
-    voltage_cols: list[str],
-) -> tuple[pl.DataFrame, list[str]]:
-    """Attach per-circuit 10-minute rolling means and return their column names."""
-    updated_df = site_day_df
-    for col in voltage_cols:
-        rolled_name = f"vmean_rolling_10m{col.replace('voltage_valid', '', 1)}"
-        rolled = (
-            updated_df.filter(pl.col(col).is_not_null())
-            .with_columns(
-                pl.col(col)
-                .rolling_mean_by(
-                    by="local_tstamp",
-                    window_size="10m",
-                    closed="right",
-                )
-                .alias(rolled_name)
-            )
-            .select(["local_tstamp", rolled_name])
-        )
-        updated_df = updated_df.join(rolled, on="local_tstamp", how="left")
-
-    vmean_cols = [
-        col for col in updated_df.columns if col.startswith("vmean_rolling_10m")
-    ]
-    return updated_df, vmean_cols
-
-
-def _add_site_level_metrics(
-    site_day_df: pl.DataFrame,
-    power_cols: list[str],
-    voltage_cols: list[str],
-    vmean_cols: list[str],
-) -> pl.DataFrame:
-    """Collapse per-circuit power and voltage into site-level signals."""
-    return site_day_df.with_columns(
+    site_day_df = calculate_site_day_voltage_signals(
+        wide,
+        voltage_prefix="voltage_valid",
+    )
+    site_day_df = site_day_df.with_columns(
         [
-            pl.mean_horizontal([pl.col(col) for col in vmean_cols]).alias("v10m_avg"),
-            pl.max_horizontal([pl.col(col) for col in voltage_cols]).alias("vinst_max"),
             pl.sum_horizontal(
                 [
                     # Negative PV power is clipped to zero so the site total reflects
@@ -252,16 +195,8 @@ def _add_site_level_metrics(
             ),
         ]
     )
-
-
-def _add_responsibility_flags(
-    site_day_df: pl.DataFrame,
-    *,
-    los_threshold_used: float,
-    ov1_threshold_used: float,
-) -> pl.DataFrame:
-    """Flag timestamps that sit above the site's final LOS or OV1 thresholds."""
-    with_keep_flags = site_day_df.with_columns(
+    site_day_df = trim_site_day_analysis_window(site_day_df)
+    site_day_df = site_day_df.with_columns(
         [
             # Keep only rows where we can compare site power against a valid 10-minute
             # voltage mean. Rows with power but no usable voltage stay out of the
@@ -273,9 +208,7 @@ def _add_responsibility_flags(
             .fill_null(False)
             .alias("_ov1_kicks_in"),
         ]
-    )
-
-    return with_keep_flags.with_columns(
+    ).with_columns(
         [
             # OV1 takes priority over LOS at the same timestamp, matching the Phase B
             # responsibility ordering.
@@ -283,25 +216,18 @@ def _add_responsibility_flags(
             (
                 pl.col("_keep_row")
                 & ~pl.col("_ov1_kicks_in")
-                & (pl.col("v10m_avg") > los_threshold_used)
+                & (pl.col("v10m_avg") >= los_threshold_used)
             )
             .fill_null(False)
             .alias("_los_responsible"),
         ]
     )
 
-
-def _select_timestamp_output(site_day_df: pl.DataFrame) -> pl.DataFrame:
-    """Select the timestamp-level columns written to the curtailment CSV."""
     timestamp_dtype = site_day_df.schema["local_tstamp"]
     if isinstance(timestamp_dtype, pl.Datetime) and timestamp_dtype.time_zone:
-        local_timestamp = pl.col("local_tstamp").dt.convert_time_zone(
-            "Australia/Adelaide"
-        )
+        local_timestamp = pl.col("local_tstamp").dt.convert_time_zone(LOCAL_TIMEZONE)
     else:
-        local_timestamp = pl.col("local_tstamp").dt.replace_time_zone(
-            "Australia/Adelaide"
-        )
+        local_timestamp = pl.col("local_tstamp").dt.replace_time_zone(LOCAL_TIMEZONE)
 
     return (
         site_day_df.filter(pl.col("_keep_row"))
@@ -323,43 +249,10 @@ def _select_timestamp_output(site_day_df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _build_day_flag_frame(
-    wide: pl.DataFrame,
-    *,
-    los_threshold_used: float,
-    ov1_threshold_used: float,
-) -> pl.DataFrame:
-    """Rebuild the timestamp-level tier-based curtailment flags for one site-day."""
-    behaviour = CheckPVBehaviour(wide, volCol="voltage_valid")
-    site_day_df = behaviour.circuitData.clone()
-
-    power_cols, voltage_cols = _signal_columns(site_day_df)
-    if not power_cols or not voltage_cols:
-        return _empty_timestamp_frame()
-
-    site_day_df, vmean_cols = _add_rolling_voltage_metrics(site_day_df, voltage_cols)
-    if not vmean_cols:
-        return _empty_timestamp_frame()
-
-    site_day_df = _add_site_level_metrics(
-        site_day_df,
-        power_cols,
-        voltage_cols,
-        vmean_cols,
-    )
-    site_day_df = trim_site_day_analysis_window(site_day_df)
-    site_day_df = _add_responsibility_flags(
-        site_day_df,
-        los_threshold_used=los_threshold_used,
-        ov1_threshold_used=ov1_threshold_used,
-    )
-    return _select_timestamp_output(site_day_df)
-
-
 def _build_bucket_frame(timestamp_df: pl.DataFrame) -> pl.DataFrame:
     """Summarise timestamp-level curtailment signals into 5-minute buckets."""
     if timestamp_df.is_empty():
-        return _empty_bucket_frame()
+        return pl.DataFrame(schema=BUCKET_OUTPUT_SCHEMA)
 
     return (
         timestamp_df.with_columns(
@@ -414,9 +307,23 @@ def _build_bucket_frame(timestamp_df: pl.DataFrame) -> pl.DataFrame:
 def main() -> None:
     """Build timestamp and 5-minute curtailment extracts for assessed tier-based sites."""
     assessed_sites = _load_assessed_sites()
-    circuit_details, all_data = _prepare_inputs()
+
+    # Load the circuit metadata and cleaned metrology needed for site rebuilds.
+    if not CIRCUIT_DETAILS_PATH.exists():
+        raise FileNotFoundError(
+            f"Missing required input: {CIRCUIT_DETAILS_PATH}. Run conformance first "
+            "to generate the site summary."
+        )
+    if not CLEANED_DATA_PATH.exists():
+        raise FileNotFoundError(
+            f"Missing cleaned site data at {CLEANED_DATA_PATH}. "
+            "Run run_sapn2022_preprocessing.py first."
+        )
+    circuit_details = pl.read_csv(CIRCUIT_DETAILS_PATH)
+    all_data = load_sapn_cleaned_data(CLEANED_DATA_PATH)
 
     timestamp_frames: list[pl.DataFrame] = []
+    event_timezone = ZoneInfo(LOCAL_TIMEZONE)
 
     for idx, site_row in enumerate(assessed_sites.iter_rows(named=True), start=1):
         site_id = int(site_row["site_id"])
@@ -425,9 +332,25 @@ def main() -> None:
         site_data = select_site_pv_data(all_data, circuit_details, site_id)
 
         site_day_frames: list[pl.DataFrame] = []
-        for _, start_day, end_day in SAPN2022_CONFORMANCE_CONFIG.day_provider(
-            site_data
-        ):
+        for event_day in EVENT_DAYS:
+            start_day = datetime(
+                EVENT_YEAR,
+                EVENT_MONTH,
+                event_day,
+                DAY_EXTRACTION_START.hour,
+                DAY_EXTRACTION_START.minute,
+                DAY_EXTRACTION_START.second,
+                tzinfo=event_timezone,
+            )
+            end_day = datetime(
+                EVENT_YEAR,
+                EVENT_MONTH,
+                event_day,
+                DAY_END.hour,
+                DAY_END.minute,
+                DAY_END.second,
+                tzinfo=event_timezone,
+            )
             site_day_long = extract_site_day(
                 site_data,
                 start_day,
@@ -435,7 +358,7 @@ def main() -> None:
             )
             if site_day_long.is_empty():
                 continue
-            wide = mapCircuitDataToSite(site_day_long, site_id)
+            wide = map_circuit_data_to_site(site_day_long, site_id)
 
             # Unlike ``main.py``, this script intentionally keeps any assessed
             # site-day that has raw mapped data. It does not remove days for
@@ -457,7 +380,7 @@ def main() -> None:
     timestamp_df = (
         pl.concat(timestamp_frames, how="vertical")
         if timestamp_frames
-        else _empty_timestamp_frame()
+        else pl.DataFrame(schema=TIMESTAMP_OUTPUT_SCHEMA)
     ).sort(["site_id", "event_day", "local_tstamp"])
     bucket_df = _build_bucket_frame(timestamp_df)
 

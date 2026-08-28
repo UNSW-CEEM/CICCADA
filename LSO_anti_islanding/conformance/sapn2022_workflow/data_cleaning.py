@@ -1,7 +1,7 @@
-"""Shared measurement-cleaning functions used by data adapters."""
+"""SAPN measurement-cleaning functions."""
 
 import polars as pl
-from config import (
+from sapn2022_workflow.config import (
     DEDUPLICATION_ABSOLUTE_TOLERANCE_KW,
     DEDUPLICATION_RELATIVE_TOLERANCE,
     LOCAL_TIMEZONE,

@@ -1,11 +1,11 @@
-"""SAPN-specific orchestration of shared measurement cleaning operations."""
+"""SAPN measurement preprocessing."""
 
 from pathlib import Path
 
 import polars as pl
 import pyarrow.parquet as pq
-from config import LOCAL_TIMEZONE
-from core.data_cleaning import (
+from sapn2022_workflow.config import LOCAL_TIMEZONE
+from sapn2022_workflow.data_cleaning import (
     addLocalTStamp,
     addPolarityToPower,
     addValidVoltage,
@@ -20,7 +20,7 @@ from sapn2022_workflow.sapn_paths import (
 )
 
 
-def build_cleaned_site_data(
+def write_cleaned_site_data(
     raw_path=RAW_SITE_DATA_PATH,
     circuit_details_path=CIRCUIT_DETAILS_PATH,
     cleaned_path=CLEANED_SITE_DATA_PATH,
@@ -28,7 +28,7 @@ def build_cleaned_site_data(
     deduplicate=True,
     num_buckets=128,
 ):
-    """Build cleaned SAPN metrology, deduplicating one circuit-bucket at a time.
+    """Write cleaned SAPN metrology, deduplicating one circuit-bucket at a time.
 
     Each bucket is selected directly from the raw parquet, passed through the
     established cleaning sequence, and appended to the same output parquet.

@@ -1,17 +1,17 @@
 """SAPN duration-based site-day eligibility policy."""
 
 import polars as pl
-from config import (
-    SAPN2022_DAY_COVERAGE_THRESHOLD,
-    SAPN2022_DAY_WINDOW_SECONDS,
+from sapn2022_workflow.config import (
+    DAY_COVERAGE_THRESHOLD,
+    DAY_WINDOW_SECONDS,
 )
 
 
 def summarize_nov2022_day_eligibility(
     site_day_long,
     prepared_day_df,
-    coverage_threshold=SAPN2022_DAY_COVERAGE_THRESHOLD,
-    window_seconds=SAPN2022_DAY_WINDOW_SECONDS,
+    coverage_threshold=DAY_COVERAGE_THRESHOLD,
+    window_seconds=DAY_WINDOW_SECONDS,
 ):
     required_columns = {"local_tstamp", "utc_tstamp", "duration", "power"}
     if site_day_long.is_empty() or not required_columns.issubset(site_day_long.columns):

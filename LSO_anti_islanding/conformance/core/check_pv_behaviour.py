@@ -3,7 +3,8 @@
 from typing import Any
 
 import polars as pl
-from config import MAX_DISCONNECT_EDGE_GAP_SECONDS
+
+MAX_DISCONNECT_EDGE_GAP_SECONDS = 300
 
 
 class CheckPVBehaviour:
@@ -473,7 +474,7 @@ class CheckPVBehaviour:
                 (
                     pl.col("eligible_los")
                     & (~pl.col("ov1_responsible"))
-                    & (pl.col("v10m_avg") > los_threshold)
+                    & (pl.col("v10m_avg") >= los_threshold)
                 ).alias("los_responsible"),
                 (
                     pl.col("is_disc").fill_null(False)

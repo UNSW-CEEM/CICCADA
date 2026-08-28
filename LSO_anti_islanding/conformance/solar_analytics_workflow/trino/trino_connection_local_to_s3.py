@@ -13,12 +13,10 @@ import polars as pl
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-AWS_PROFILE = "ciccada"
-AWS_REGION = "ap-southeast-2"
-SSM_INSTANCE_ID = "i-0f5bc0dd90f8a58d1"
-TRINO_HOST = "trino2.ciccada"
-TRINO_PORT = 8080
-LOCAL_PORT = 18080
+try:
+    from .trino_config import *
+except ImportError:
+    from trino_config import *
 
 
 @contextmanager
@@ -223,6 +221,22 @@ def trino_sql(
     # "SELECT * FROM sites LIMIT 10", catalog="hive", schema="solar_analytics",)
 
 
+def trino_exec(
+    query: str,
+    *,
+    catalog: str,
+    schema: str,
+) -> None:
+    """Execute a Trino statement that does not return a DataFrame."""
+    with local_trino_engine(catalog=catalog, schema=schema) as engine:
+        with engine.connect() as connection:
+            result = connection.execute(text(query))
+            if result.returns_rows:
+                result.fetchall()
+
+    print("Executed")
+
+
 # hive query
 def hive_sql(query: str, schema="solar_analytics"):
     return trino_sql(
@@ -235,3 +249,7 @@ def hive_sql(query: str, schema="solar_analytics"):
 # iceberg query
 def iceberg_sql(query: str, schema="solar_analytics_iceberg"):
     return trino_sql(query, catalog="iceberg", schema=schema)
+
+
+def iceberg_exec(query: str, schema="solar_analytics_iceberg") -> None:
+    trino_exec(query, catalog="iceberg", schema=schema)

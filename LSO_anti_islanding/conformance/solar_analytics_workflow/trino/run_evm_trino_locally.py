@@ -1,44 +1,52 @@
-# this script is to be run on the EC2 instance
-#  for conformance analysis on solA data already on S3
+# this script is to be run on the local machine
+# for conformance analysis on solA data already on S3
+# estanlishes connection from local machine to trino
+
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import polars as pl
-from sqlalchemy import create_engine
 
-CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
-REPOSITORY_DIR = Path(__file__).resolve().parents[3]
+CONFORMANCE_DIR = Path(__file__).resolve().parents[2]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
-if str(REPOSITORY_DIR) not in sys.path:
-    sys.path.insert(0, str(REPOSITORY_DIR))
 
-from config import (
+from core.check_pv_behaviour import CheckPVBehaviour
+from core.phase_a import run_phase_a_for_site
+from core.phase_b import run_phase_b_for_site
+from solar_analytics_workflow.config import (
+    DAY_ANALYSIS_START,
+    DAY_END,
+    DAY_EXTRACTION_START,
     LOCAL_TIMEZONE,
     PHASE_B_METHODS,
-    SITE_DAY_END,
-    SITE_DAY_EXTRACTION_START,
 )
-from core.check_pv_behaviour import CheckPVBehaviour
-from core.data_cleaning import (
+from solar_analytics_workflow.data_cleaning import (
     addLocalTStamp,
     addPolarityToPower,
     addValidVoltage,
     convertWToKw,
     deduplicateMeasurements,
 )
-from core.phase_a import run_phase_a_for_site
-from core.phase_b import run_phase_b_for_site
-from core.site_day_preparation import (
+from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
+from solar_analytics_workflow.rated_capacity import add_s_rated_capacity
+from solar_analytics_workflow.site_day_filtering import (
+    summarize_solar_analytics_day_eligibility,
+)
+from solar_analytics_workflow.site_preparation import (
     calculate_site_day_voltage_signals,
     extract_site_day,
     map_circuit_data_to_site,
     trim_site_day_analysis_window,
 )
-from solar_analytics_workflow.adapter import SOLAR_ANALYTICS_CONFORMANCE_CONFIG
-from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
+from solar_analytics_workflow.solar_paths import TRINO_OUTPUT_DIR
+from solar_analytics_workflow.trino.trino_connection_local_to_s3 import (
+    local_trino_engine,
+    read_query_via_parquet,
+)
 
-EVM_TRINO_SITE_BATCH_SIZE = 10
+EVM_TRINO_SITE_BATCH_SIZE = None
 
 # these are the columns for conformance results that will be pushed to trino
 # and utilised for grafana plotting
@@ -59,16 +67,17 @@ CONFORMANCE_SUMMARY_SCHEMA = {
 }
 conformance_summary_rows = []
 
-# Select the richer Hive site metadata. Only site-level
-# fields are selected, so DISTINCT collapses repeated inverter rows for a site.
+# Select distinct site-level metadata from the eligible inverter cohort.
 SITE_QUERY = """
 SELECT DISTINCT
-    site_id,
-    state,
-    postcode,
-    system.bucket(CAST(postcode AS INTEGER), 16) AS postcode_bucket,
-    ac_capacity_kw
-FROM hive.solar_analytics.sites
+    m.site_id,
+    m.state,
+    m.postcode,
+    system.bucket(CAST(m.postcode AS INTEGER), 16) AS postcode_bucket,
+    m.ac_capacity_kw,
+    m.s_99
+FROM iceberg.solar_analytics_iceberg.meta_up23c AS m
+WHERE m.inverter_count = 1
 -- LIMIT 10
 """
 
@@ -97,9 +106,14 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
         for batch_timezone in batch_timezones:
             timezone_sites = bucket_sites.filter(pl.col("timezone") == batch_timezone)
 
-            # Keep each Trino result small enough for the EC2 instance to hold
-            # one complete batch in memory while its sites are processed.
-            site_batch_size = EVM_TRINO_SITE_BATCH_SIZE
+            # Query the complete postcode-bucket/timezone group by default.
+            # Setting EVM_TRINO_SITE_BATCH_SIZE to a positive integer retains
+            # the option to split large groups into smaller queries.
+            site_batch_size = (
+                timezone_sites.height
+                if EVM_TRINO_SITE_BATCH_SIZE is None
+                else EVM_TRINO_SITE_BATCH_SIZE
+            )
             for batch_start in range(
                 0,
                 timezone_sites.height,
@@ -159,15 +173,15 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
                                 with_timezone(t_stamp, 'UTC'),
                                 '{batch_timezone}'
                             ) AS time
-                        ) BETWEEN TIME '{SITE_DAY_EXTRACTION_START.isoformat()}'
-                            AND TIME '{SITE_DAY_END.isoformat()}'
+                        ) BETWEEN TIME '{DAY_EXTRACTION_START.isoformat()}'
+                            AND TIME '{DAY_END.isoformat()}'
                 """
 
-                # Read this bounded batch directly from Trino. Trino handles
-                # access to the underlying Hive/Iceberg storage.
-                batch_timeseries_data = pl.read_database(
+                # Stage the large query result as Parquet so Polars can avoid
+                # Trino's slow row-oriented Python transfer path.
+                batch_timeseries_data = read_query_via_parquet(
+                    trino_engine=engine,
                     query=batch_query,
-                    connection=engine,
                 ).rename(
                     {
                         "circuit_id": "c_id",
@@ -181,17 +195,19 @@ def _iter_site_timeseries_batches(engine, eligible_sites, circuit_data):
                 yield batch_sites, batch_circuit_data, batch_timeseries_data
 
 
-# Connect directly to the Trino2 service already running for the EC2 instance.
-engine = create_engine(
-    "trino://ubuntu@trino2.ciccada:8080/iceberg/solar_analytics_iceberg",
-    pool_pre_ping=True,
-)
-try:
+# Keep one Trino connection open for the metadata and time-series queries
+with local_trino_engine(
+    catalog="iceberg",
+    schema="solar_analytics_iceberg",
+) as engine:
     # Select the site cohort before looking up its circuits.
     site_data = pl.read_database(query=SITE_QUERY, connection=engine)
-    site_data = site_data.with_columns(
-        pl.col("ac_capacity_kw").cast(pl.Float64, strict=False).alias("capacity_kw")
+    site_data = site_data.unique(
+        subset=["site_id"],
+        keep="first",
+        maintain_order=True,
     )
+    site_data = add_s_rated_capacity(site_data)
 
     # Match the selected site cohort to its PV circuits within Trino.
 
@@ -202,13 +218,14 @@ try:
             c.site_id,
             c.circuit_id,
             c.circuit_polarity
-        FROM hive.solar_analytics.circuits AS c
+        FROM iceberg.solar_analytics_iceberg.circuits AS c
         INNER JOIN (
             SELECT DISTINCT site_id
-            FROM hive.solar_analytics.sites
+            FROM iceberg.solar_analytics_iceberg.meta_up23c
+            WHERE inverter_count = 1
         ) AS selected_sites
             ON c.site_id = selected_sites.site_id
-        WHERE c.circuit_type = 'pv_site_net'
+        WHERE c.is_pv = TRUE
     """
     circuit_data = pl.read_database(
         query=circuit_query,
@@ -241,10 +258,10 @@ try:
     total_sites = eligible_sites.height
     print(f"Eligible sites to process: {total_sites}", flush=True)
 
-    conformance_output_dir = SOLAR_ANALYTICS_CONFORMANCE_CONFIG.output_dir
+    conformance_output_dir = TRINO_OUTPUT_DIR
     conformance_output_dir.mkdir(parents=True, exist_ok=True)
     conformance_output_path = (
-        conformance_output_dir / "solA_conformance_trino_summary.csv"
+        conformance_output_dir / "solA_conformance_trino_summary_local.csv"
     )
     pl.DataFrame(schema=CONFORMANCE_SUMMARY_SCHEMA).write_csv(conformance_output_path)
 
@@ -315,22 +332,21 @@ try:
                 ]
             ).collect(engine="streaming")
 
-            # Reproduce site-day preparation performed by core.workflow.collect_site_days
-            # shared functions & solar analytics policies are called in the same order as
-            # as workflow
-
-            # Build one CheckPVBehaviour object for each eligible local day. Phase A
-            # and Phase B both consume this shared day_behaviours structure.
+            # Build one CheckPVBehaviour object for each eligible local day.
             day_behaviours = []
-            # Reuse the Solar Analytics day provider used by prepare_site; it derives
-            # the configured extraction window for every local date in this site.
-            for (
-                day,
-                start_day,
-                end_day,
-            ) in SOLAR_ANALYTICS_CONFORMANCE_CONFIG.day_provider(
-                site_timeseries_data
-            ):  # day is the day, start_day, end_day: are start/end time of day for data extraction
+            local_dates = (
+                site_timeseries_data.select(
+                    pl.col("local_tstamp").dt.date().alias("local_date")
+                )
+                .drop_nulls()
+                .unique()
+                .sort("local_date")["local_date"]
+                .to_list()
+            )
+            for day in local_dates:
+                start_day = datetime.combine(day, DAY_EXTRACTION_START)
+                end_day = datetime.combine(day, DAY_END)
+
                 # Reuse the shared inclusive site-day extraction
                 # Extract all circuit measurements for this site and day in long format.
                 site_day_long = extract_site_day(
@@ -358,21 +374,16 @@ try:
                 )
                 # Apply the same configured analysis window to the long and wide
                 # forms before testing day eligibility.
-                analysis_day_long = trim_site_day_analysis_window(site_day_long)
-                analysis_day_df = trim_site_day_analysis_window(prepared_day_df)
-
-                # Reuse the Solar Analytics eligibility policy used by prepare_site.
-                # does not retain the eligibility reason/statistics for excluded days.
-                eligibility = SOLAR_ANALYTICS_CONFORMANCE_CONFIG.eligibility_function(
-                    analysis_day_long,
-                    analysis_day_df,
+                analysis_day_df = trim_site_day_analysis_window(
+                    prepared_day_df,
+                    DAY_ANALYSIS_START,
+                    DAY_END,
                 )
+                eligibility = summarize_solar_analytics_day_eligibility(analysis_day_df)
 
                 if not eligibility["eligible"]:
                     continue
 
-                # This dictionary shape and CheckPVBehaviour construction match the
-                # objects produced by core.workflow.collect_site_days.
                 day_behaviours.append(
                     {
                         "day": day,
@@ -383,32 +394,30 @@ try:
                     }
                 )
 
-            # Match prepare_site's no-eligible-days guard, although this inline path
-            # skips silently instead of recording a named skip reason.
             if not day_behaviours:
                 continue
 
-            # Use the SolA-specific rated-capacity policy configured by its adapter.
-            p_rated = SOLAR_ANALYTICS_CONFORMANCE_CONFIG.capacity_estimator(
-                site_data,
-                site["site_id"],
-                day_behaviours=day_behaviours,
-            )
-            # Run Phase A once per site exactly as core.pipeline.run_conformance does;
-            # it learns raw thresholds and confidence information for Phase B.
+            capacity_row = site_data.filter(
+                pl.col("site_id") == site["site_id"]
+            ).select("s_rated")
+            s_rated = None if capacity_row.is_empty() else capacity_row["s_rated"][0]
+            if s_rated is None:
+                print(
+                    f"No S_rated for site {site['site_id']}; skipping.",
+                    flush=True,
+                )
+                continue
+
             phase_a_result = run_phase_a_for_site(
                 site["site_id"],
                 day_behaviours,  # this has the CheckPVBehaviour obj
-                p_rated,
+                s_rated,
             )
-            # Reuse the configured Phase B method list and pass the same Phase A
-            # outputs used by run_conformance for every method.
-            # this is just test run as phase B is being over-written for each method
             for phase_b_method in PHASE_B_METHODS:
                 phase_b_result = run_phase_b_for_site(
                     site["site_id"],
                     day_behaviours,  # this has the CheckPVBehaviour obj
-                    p_rated,
+                    s_rated,
                     raw_thresholds=phase_a_result["raw_thresholds"],
                     confidence_info=phase_a_result["confidence_info"],
                     phase_b_method=phase_b_method,
@@ -462,6 +471,3 @@ try:
                     include_header=False,
                 )
             conformance_summary_rows.clear()
-
-finally:
-    engine.dispose()

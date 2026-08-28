@@ -1,14 +1,14 @@
-"""Shared circuit mapping and voltage preparation for one site-day."""
+"""Solar Analytics circuit mapping and voltage preparation for one site-day."""
 
 from datetime import time
 
 import polars as pl
-from config import (
-    SITE_DAY_ANALYSIS_START,
-    SITE_DAY_END,
+from solar_analytics_workflow.config import (
+    DAY_ANALYSIS_START,
+    DAY_END,
     VOLTAGE_ROLLING_WINDOW,
 )
-from core.data_cleaning import deduplicateMeasurements
+from solar_analytics_workflow.data_cleaning import deduplicateMeasurements
 
 
 def select_site_pv_data(all_data, circuit_details, site_number):
@@ -152,8 +152,8 @@ def calculate_site_day_voltage_signals(
 
 def trim_site_day_analysis_window(
     site_day_df,
-    start_time: time = SITE_DAY_ANALYSIS_START,
-    end_time: time = SITE_DAY_END,
+    start_time: time = DAY_ANALYSIS_START,
+    end_time: time = DAY_END,
 ):
     """Keep the inclusive local-time window used for eligibility and analysis."""
     return site_day_df.filter(

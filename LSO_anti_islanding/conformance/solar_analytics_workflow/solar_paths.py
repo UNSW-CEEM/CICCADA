@@ -1,5 +1,6 @@
 """Repository-relative paths for the Solar Analytics workflow."""
 
+import os
 from pathlib import Path
 
 CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
@@ -13,4 +14,21 @@ SITE_METADATA_PATH = SOLAR_ANALYTICS_DATA_DIR / "site_metadata.csv"
 
 CLEANED_DATA_PATH = SOLAR_ANALYTICS_DATA_DIR / "data_cleaned.parquet"
 
-CONFORMANCE_OUTPUT_DIR = CONFORMANCE_DIR / "updated results" / "solar_analytics"
+CONFORMANCE_OUTPUT_DIR = Path(
+    os.environ.get(
+        "SOLA_LOCAL_OUTPUT_DIR",
+        Path(__file__).resolve().parent / "results" / "local",
+    )
+)
+TRINO_OUTPUT_DIR = Path(
+    os.environ.get(
+        "SOLA_TRINO_OUTPUT_DIR",
+        Path(__file__).resolve().parent / "results" / "trino",
+    )
+)
+TRINO_LIMITED_OUTPUT_DIR = Path(
+    os.environ.get(
+        "SOLA_TRINO_LIMITED_OUTPUT_DIR",
+        Path(__file__).resolve().parent / "results" / "trino_limited",
+    )
+)
