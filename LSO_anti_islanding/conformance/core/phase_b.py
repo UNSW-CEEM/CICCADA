@@ -76,33 +76,32 @@ def evaluate_compliance_for_day(
 
 def aggregate_all_daily_compliance_for_site(site_id, evaluated_site_days):
     """Combine evaluated days into timestamp detail and one site counts row."""
+    detail_columns = [
+        "site_id",
+        "event_day",
+        "local_tstamp",
+        "utc_tstamp",
+        "v10m_avg",
+        "vinst_max",
+        "los_signals_available",
+        "ov1_signals_available",
+        "is_disc",
+        "is_disc_next",
+        "los_responsible",
+        "ov1_responsible",
+        "los_compliant",
+        "ov1_compliant",
+    ]
     daily_frames = [
         evaluated_day["frame"].with_columns(
             pl.lit(evaluated_day["event_day"]).alias("event_day")
-        )
+        ).select(detail_columns)
         for evaluated_day in evaluated_site_days
         if not evaluated_day["frame"].is_empty()
     ]
     site_compliance_timestamp_detail = pl.concat(
         daily_frames,
         how="vertical",
-    ).select(
-        [
-            "site_id",
-            "event_day",
-            "local_tstamp",
-            "utc_tstamp",
-            "v10m_avg",
-            "vinst_max",
-            "los_signals_available",
-            "ov1_signals_available",
-            "is_disc",
-            "is_disc_next",
-            "los_responsible",
-            "ov1_responsible",
-            "los_compliant",
-            "ov1_compliant",
-        ]
     )
     compliance_counts = site_compliance_timestamp_detail.select(
         [
