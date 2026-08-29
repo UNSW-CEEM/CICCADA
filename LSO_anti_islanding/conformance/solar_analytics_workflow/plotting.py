@@ -93,8 +93,7 @@ def plot_site_compliance_day(
     lso_threshold: float | None,
     ov1_threshold: float | None,
     overall_pass,
-    day_summary: dict | None = None,
-    plot_no_eligible_timestamp_days: bool = False,
+    plot_no_responsible_timestamp_days: bool = False,
     save_path: str | Path | None = None,
 ):
     """
@@ -113,12 +112,13 @@ def plot_site_compliance_day(
     if not power_cols:
         return
 
-    if day_summary is not None:
-        total_eligible = int(day_summary.get("los_eligible", 0) or 0) + int(
-            day_summary.get("ov1_eligible", 0) or 0
-        )
-        if total_eligible == 0 and not plot_no_eligible_timestamp_days:
-            return
+    los_responsible_count = int(df.get_column("los_responsible").sum() or 0)
+    los_compliant_count = int(df.get_column("los_compliant").sum() or 0)
+    ov1_responsible_count = int(df.get_column("ov1_responsible").sum() or 0)
+    ov1_compliant_count = int(df.get_column("ov1_compliant").sum() or 0)
+    total_responsible_count = los_responsible_count + ov1_responsible_count
+    if total_responsible_count == 0 and not plot_no_responsible_timestamp_days:
+        return
 
     plot_df = df.sort("local_tstamp")
     if "site_power" not in plot_df.columns:
@@ -146,7 +146,7 @@ def plot_site_compliance_day(
     is_single_phase = len(power_cols) == 1
 
     if is_single_phase:
-        fig, ax_main = plt.subplots(1, 1, figsize=(14, 5.5), sharex=True)
+        fig, ax_main = plt.subplots(1, 1, figsize=(14, 6), sharex=True)
         plot_power_axes = [ax_main]
         voltage_axes = [ax_main.twinx()]
         title_axis = ax_main
@@ -232,7 +232,7 @@ def plot_site_compliance_day(
     if lso_threshold is not None:
         thresholds_to_draw.append(
             (
-                f"LSO threshold: {float(lso_threshold):.1f} V",
+                f"LOS threshold: {float(lso_threshold):.1f} V",
                 lso_threshold,
                 PLOT_COLORS["threshold_lso"],
                 ":",
@@ -266,31 +266,27 @@ def plot_site_compliance_day(
         if overall_pass is False
         else "Unassessed"
     )
-    if day_summary is None:
-        day_label_text = "Day status unavailable"
+    total_compliant_count = los_compliant_count + ov1_compliant_count
+    if total_responsible_count == 0:
+        day_label_text = "No responsible timestamps"
     else:
-        lso_eligible = int(day_summary.get("los_eligible", 0) or 0)
-        lso_compliant = int(day_summary.get("los_compliant", 0) or 0)
-        ov1_eligible = int(day_summary.get("ov1_eligible", 0) or 0)
-        ov1_compliant = int(day_summary.get("ov1_compliant", 0) or 0)
-        total_eligible = lso_eligible + ov1_eligible
-        total_compliant = lso_compliant + ov1_compliant
-        if total_eligible == 0:
-            day_label_text = "No eligible timestamps"
-        else:
-            day_pct = (total_compliant / total_eligible) * 100.0
-            day_state = "Day pass" if day_pct >= 90.0 else "Day fail"
-            day_label_text = (
-                f"{day_state} {day_pct:.1f}% | LSO {lso_compliant}/{lso_eligible} | "
-                f"OV1 {ov1_compliant}/{ov1_eligible}"
-            )
+        day_pct = (total_compliant_count / total_responsible_count) * 100.0
+        day_state = "Day pass" if day_pct >= 90.0 else "Day fail"
+        day_label_text = (
+            f"{day_state} {day_pct:.1f}% | "
+            f"LOS {los_compliant_count}/{los_responsible_count} responsible | "
+            f"OV1 {ov1_compliant_count}/{ov1_responsible_count} responsible"
+        )
 
     plot_date = _format_plot_date(day_label, x)
     title = f"Site example | Date: {plot_date} | {overall_label}"
     if day_label_text:
         title = f"{title}\n{day_label_text}"
 
-    title_axis.set_title(title, pad=12)
+    if is_single_phase:
+        fig.suptitle(title, x=0.56, y=0.965)
+    else:
+        title_axis.set_title(title, pad=12)
     if is_single_phase:
         ax_main.set_ylabel("Power (kW)")
         ax_main.set_xlabel("Time")
@@ -350,8 +346,15 @@ def plot_site_compliance_day(
             v_lines = v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            v_labels = v_labels + ["Region exceeding thresholds"]
-        ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
+            v_labels = v_labels + ["Responsible timestamp"]
+        fig.legend(
+            lines + v_lines,
+            labels + v_labels,
+            loc="upper left",
+            bbox_to_anchor=(0.02, 0.975),
+            borderaxespad=0,
+            ncol=2,
+        )
     else:
         top_lines, top_labels = ax_top.get_legend_handles_labels()
         top_v_lines, top_v_labels = voltage_axes[0].get_legend_handles_labels()
@@ -359,7 +362,7 @@ def plot_site_compliance_day(
             top_v_lines = top_v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            top_v_labels = top_v_labels + ["Region exceeding thresholds"]
+            top_v_labels = top_v_labels + ["Responsible timestamp"]
         ax_top.legend(
             top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
         )
@@ -370,7 +373,7 @@ def plot_site_compliance_day(
             bottom_v_lines = bottom_v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            bottom_v_labels = bottom_v_labels + ["Region exceeding thresholds"]
+            bottom_v_labels = bottom_v_labels + ["Responsible timestamp"]
         ax_bottom.legend(
             bottom_lines + bottom_v_lines,
             bottom_labels + bottom_v_labels,
@@ -379,7 +382,10 @@ def plot_site_compliance_day(
         )
 
     fig.autofmt_xdate()
-    plt.tight_layout()
+    if is_single_phase:
+        plt.tight_layout(rect=(0, 0, 1, 0.90))
+    else:
+        plt.tight_layout()
 
     if save_path is not None:
         save_path = Path(save_path)
@@ -404,7 +410,7 @@ def plot_method_threshold_overlay_day(
     save_path: str | Path | None = None,
 ):
     """
-    Plot a site-day using the comparison overlay layout and multi-method LSO
+    Plot a site-day using the comparison overlay layout and multi-method LOS
     thresholds on the same voltage axis.
 
     Expected method_thresholds entries:
@@ -484,7 +490,7 @@ def plot_method_threshold_overlay_day(
         if event_spans:
             overlay_spans.append(
                 {
-                    "label": "Region exceeding thresholds",
+                    "label": "Responsible timestamp",
                     "color": PLOT_COLORS["shade"],
                     "alpha": 0.22,
                     "spans": event_spans,
@@ -577,7 +583,7 @@ def plot_method_threshold_overlay_day(
                 linewidth=1.4,
                 alpha=0.9,
                 zorder=1,
-                label=f'{method_info["label"]} LSO {threshold_value:.3f} V',
+                label=f'{method_info["label"]} LOS {threshold_value:.3f} V',
             )
 
     method_status_parts = []

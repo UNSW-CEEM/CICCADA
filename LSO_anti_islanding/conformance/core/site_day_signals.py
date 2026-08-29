@@ -130,10 +130,10 @@ def build_site_day_signals(
     return df.with_columns(
         [
             (pl.col("v10m_avg").is_not_null() & pl.col("_power_assessable")).alias(
-                "eligible_los"
+                "los_signals_available"
             ),
             (pl.col("vinst_max").is_not_null() & pl.col("_power_assessable")).alias(
-                "eligible_ov1"
+                "ov1_signals_available"
             ),
         ]
     )

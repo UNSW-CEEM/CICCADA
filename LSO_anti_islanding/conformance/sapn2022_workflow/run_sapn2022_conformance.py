@@ -11,8 +11,8 @@ CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from core.phase_a import run_phase_a_for_site
-from core.phase_b import run_phase_b_for_day, run_phase_b_for_site
+from core.phase_a import SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA, run_phase_a_for_site
+from core.phase_b import evaluate_compliance_for_day, run_phase_b_for_site
 from core.site_day_signals import build_site_day_signals
 from sapn2022_workflow.config import (
     DAY_ANALYSIS_START,
@@ -22,8 +22,9 @@ from sapn2022_workflow.config import (
     EVENT_DAYS,
     GENERATE_SITE_PLOTS,
     MAX_PV_SITE_NET_CIRCUITS,
-    PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS,
+    PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS,
     PRIMARY_PHASE_B_METHOD,
+    SAVE_SITE_LEVEL_VARIOUS_VOLTAGES,
 )
 from sapn2022_workflow.loading import (
     load_sapn_circuit_details,
@@ -33,10 +34,10 @@ from sapn2022_workflow.loading import (
 from sapn2022_workflow.plotting import plot_site_compliance_day
 from sapn2022_workflow.reporting import (
     CONFORMANCE_EXCLUSIONS_NAME,
-    SITE_CONFORMANCE_SUMMARY_NAME,
+    SITE_COMPLIANCE_NAME,
     build_sapn_conformance_exclusions,
-    build_sapn_site_conformance_summary,
-    write_method_conformance_final_table,
+    build_sapn_site_compliance,
+    write_method_compliance_final_table,
     write_sapn_threshold_distribution_plots,
 )
 from sapn2022_workflow.sapn_paths import (
@@ -106,11 +107,11 @@ capacity_derived = pl.read_csv(CAPACITY_DERIVED_PATH).select(
 )
 site_details = site_details.join(capacity_derived, on="site_id", how="left")
 
-threshold_rows = []
+site_threshold_rows = []
+site_level_various_voltage_rows = []
 phase_a_records = []
-bracket_rows = []
-phase_b_summary_rows = []
-phase_b_detail_rows = []
+site_compliance_rows = []
+site_compliance_timestamp_detail_rows = []
 excluded_day_rows = []
 skipped_sites = {
     "not_single_inverter": [],
@@ -245,45 +246,47 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
     ]
 
     phase_a = run_phase_a_for_site(site_id, prepared_site_days, rated_capacity)
+    site_threshold_rows.append(phase_a["site_thresholds"])
+    site_level_various_voltage_rows.append(
+        phase_a["site_level_various_voltages"]
+    )
     if not phase_a["records"].is_empty():
         phase_a_records.append(phase_a["records"])
-    if not phase_a["brackets"].is_empty():
-        bracket_rows.append(phase_a["brackets"])
 
     phase_b = run_phase_b_for_site(
         site_id,
         prepared_site_days,
-        raw_thresholds=phase_a["raw_thresholds"],
-        confidence_info=phase_a["confidence_info"],
-        phase_b_method=PRIMARY_PHASE_B_METHOD,
+        site_thresholds=phase_a["site_thresholds"],
+        threshold_method=PRIMARY_PHASE_B_METHOD,
     )
-    threshold_rows.append(phase_b["threshold_row"])
-    phase_b_summary_rows.append(phase_b["summary_row"])
-    if not phase_b["detail"].is_empty():
-        phase_b_detail_rows.append(phase_b["detail"])
+    site_compliance_rows.append(phase_b["site_compliance"])
+    if not phase_b["site_compliance_timestamp_detail"].is_empty():
+        site_compliance_timestamp_detail_rows.append(
+            phase_b["site_compliance_timestamp_detail"]
+        )
 
-    summary = phase_b["summary_row"].to_dicts()[0]
-    thresholds = phase_b["threshold_row"].to_dicts()[0]
-    if GENERATE_SITE_PLOTS and summary["overall_pass"] is not None:
+    compliance = phase_b["site_compliance"].to_dicts()[0]
+    if GENERATE_SITE_PLOTS and compliance["overall_pass"] is not None:
         plot_folder = (
-            "compliant" if summary["overall_pass"] is True else "non_compliant"
+            "compliant" if compliance["overall_pass"] is True else "non_compliant"
         )
         for day_info in prepared_site_days:
-            day_plot = run_phase_b_for_day(
+            evaluated_day = evaluate_compliance_for_day(
                 day_info["signal_frame"],
-                los_threshold=summary["los_threshold_used"],
-                ov1_work_threshold=thresholds["ov1_work_site"],
+                los_threshold=compliance["los_threshold_used"],
+                ov1_threshold=compliance["ov1_threshold_used"],
             )
             plot_site_compliance_day(
-                day_plot["frame"],
+                evaluated_day,
                 site_id,
                 day_info["analysis_date"],
                 p_rated=rated_capacity,
-                lso_threshold=summary["los_threshold_used"],
-                ov1_threshold=thresholds["ov1_test_site"],
-                overall_pass=summary["overall_pass"],
-                day_summary=day_plot["summary"],
-                plot_no_eligible_timestamp_days=PLOT_NO_ELIGIBLE_TIMESTAMP_DAYS,
+                lso_threshold=compliance["los_threshold_used"],
+                ov1_threshold=compliance["ov1_threshold_used"],
+                overall_pass=compliance["overall_pass"],
+                plot_no_responsible_timestamp_days=(
+                    PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS
+                ),
                 save_path=(
                     CONFORMANCE_OUTPUT_DIR
                     / "overall_site_plots"
@@ -295,30 +298,35 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
 
     print(
         f"[{site_index}/{len(candidate_site_ids)}] site {site_id} "
-        f"LOS={summary['los_compliance_pct']} "
-        f"OV1={summary['ov1_compliance_pct']} PASS={summary['overall_pass']}"
+        f"LOS={compliance['los_compliance_pct']} "
+        f"OV1={compliance['ov1_compliance_pct']} "
+        f"PASS={compliance['overall_pass']}"
     )
 
 results = {
     "site_thresholds": (
-        pl.concat(threshold_rows, how="vertical") if threshold_rows else pl.DataFrame()
+        pl.concat(site_threshold_rows, how="vertical")
+        if site_threshold_rows
+        else pl.DataFrame()
+    ),
+    "site_level_various_voltages": (
+        pl.concat(site_level_various_voltage_rows, how="vertical")
+        if site_level_various_voltage_rows
+        else pl.DataFrame(schema=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA)
     ),
     "phase_a_trip_attribution": (
         pl.concat(phase_a_records, how="vertical")
         if phase_a_records
         else pl.DataFrame()
     ),
-    "phase_a_brackets": (
-        pl.concat(bracket_rows, how="vertical") if bracket_rows else pl.DataFrame()
-    ),
-    "phase_b_site_summary": (
-        pl.concat(phase_b_summary_rows, how="vertical")
-        if phase_b_summary_rows
+    "site_compliance": (
+        pl.concat(site_compliance_rows, how="vertical")
+        if site_compliance_rows
         else pl.DataFrame()
     ),
-    "phase_b_timestamp_detail": (
-        pl.concat(phase_b_detail_rows, how="vertical")
-        if phase_b_detail_rows
+    "site_compliance_timestamp_detail": (
+        pl.concat(site_compliance_timestamp_detail_rows, how="vertical")
+        if site_compliance_timestamp_detail_rows
         else pl.DataFrame()
     ),
     "excluded_day_rows": excluded_day_rows,
@@ -326,12 +334,14 @@ results = {
 }
 
 CONFORMANCE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-site_conformance_summary = build_sapn_site_conformance_summary(results)
+site_compliance = build_sapn_site_compliance(results)
 conformance_exclusions = build_sapn_conformance_exclusions(results)
-site_conformance_summary.write_csv(
-    CONFORMANCE_OUTPUT_DIR / SITE_CONFORMANCE_SUMMARY_NAME
-)
-write_method_conformance_final_table(site_conformance_summary)
+site_compliance.write_csv(CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_NAME)
+if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+    results["site_level_various_voltages"].write_csv(
+        CONFORMANCE_OUTPUT_DIR / "site_level_various_voltages.csv"
+    )
+write_method_compliance_final_table(site_compliance)
 conformance_exclusions.write_csv(CONFORMANCE_OUTPUT_DIR / CONFORMANCE_EXCLUSIONS_NAME)
 write_sapn_threshold_distribution_plots(
     results["phase_a_trip_attribution"],
