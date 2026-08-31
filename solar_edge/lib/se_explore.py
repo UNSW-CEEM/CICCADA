@@ -3,7 +3,7 @@ Single-site exploration, with explicit sign provenance.
 =======================================================
 
 For interrogating individual sites and their daily curves, ported from
-``ausgrid_analysis/notebooks/voltvar_voltwatt_lib.plot_operational_ausgrid``.
+``dnsp_analysis/notebooks/voltvar_voltwatt_lib.plot_operational_ausgrid``.
 
 Sign provenance is the point of this module
 -------------------------------------------
@@ -1128,7 +1128,7 @@ def plot_operational(df_day, site_alias, capacity_kva, zoom_date,
     nc_kvarh = float(nc_kvar[capability_assessable].sum() * _A["INTERVAL_H"])
 
     vvar_active, vw_active = V.values > vv["V3"], V.values > vw["V1"]
-    # Palette matches ausgrid_analysis/notebooks/voltvar_voltwatt_lib.py exactly,
+    # Palette matches dnsp_analysis/notebooks/voltvar_voltwatt_lib.py exactly,
     # so the two studies' figures can sit side by side without recolouring.
     Cv, Cp, Cc, Cq, Cn = "#b45309", "#2e7d32", "#1a1a1a", "#1565c0", "#c62828"
     C_REF, C_VVAR, C_VW, C_GRID = "#f59e0b", "#7c3aed", "#4709b2", "#ebebeb"

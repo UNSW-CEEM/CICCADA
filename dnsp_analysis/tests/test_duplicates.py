@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import duckdb
 
-from ausgrid_analysis.duplicates import duplicate_audit_query
+from dnsp_analysis.duplicates import duplicate_audit_query
 
 
 def test_duplicate_classification() -> None:

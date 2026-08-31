@@ -3,12 +3,12 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from ausgrid_analysis.mechanism_config import MechanismAnalysisConfig
-from ausgrid_analysis.power_conventions import (
+from dnsp_analysis.mechanism_config import MechanismAnalysisConfig
+from dnsp_analysis.power_conventions import (
     q_generator_from_absorbing,
     q_generator_from_absorbing_sql,
 )
-from ausgrid_analysis.schemas import normalize_reactive_power
+from dnsp_analysis.schemas import normalize_reactive_power
 
 
 def test_named_q_conversion_matches_canonical_sign_contract() -> None:
@@ -63,11 +63,11 @@ def test_phase_scope_basis_is_restricted_and_defaults_der_inferred() -> None:
 
 
 def test_phase_scope_basis_namespaces_only_the_non_default_path(tmp_path) -> None:
-    from ausgrid_analysis.config import (
+    from dnsp_analysis.config import (
         AssumptionConfig, FoundationConfig, MetadataConfig, PathConfig,
         ProcessingConfig, QualityConfig, TelemetryConfig,
     )
-    from ausgrid_analysis.mechanism_paths import voltvar_results_path
+    from dnsp_analysis.mechanism_paths import voltvar_results_path
 
     config = FoundationConfig(
         paths=PathConfig(tmp_path / "raw.parquet", tmp_path / "meta.xlsx", tmp_path / "derived"),
@@ -123,11 +123,11 @@ def test_capacity_basis_proxies_are_restricted_and_default_s_rated_kva() -> None
 
 
 def test_capacity_basis_namespaces_independently_of_phase_scope_basis(tmp_path) -> None:
-    from ausgrid_analysis.config import (
+    from dnsp_analysis.config import (
         AssumptionConfig, FoundationConfig, MetadataConfig, PathConfig,
         ProcessingConfig, QualityConfig, TelemetryConfig,
     )
-    from ausgrid_analysis.mechanism_paths import capacity_proxy_path, voltvar_results_path
+    from dnsp_analysis.mechanism_paths import capacity_proxy_path, voltvar_results_path
 
     config = FoundationConfig(
         paths=PathConfig(tmp_path / "raw.parquet", tmp_path / "meta.xlsx", tmp_path / "derived"),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from ausgrid_analysis.as4777_curves import (
+from dnsp_analysis.as4777_curves import (
     VOLT_VAR,
     add_tolerance,
     classify_voltvar_interval,

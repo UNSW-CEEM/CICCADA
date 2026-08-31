@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 import duckdb
 import pandas as pd
 
-from ausgrid_analysis.analysis_cohort import site_eligibility_path
-from ausgrid_analysis.config import (
+from dnsp_analysis.analysis_cohort import site_eligibility_path
+from dnsp_analysis.config import (
     AssumptionConfig,
     FoundationConfig,
     MetadataConfig,
@@ -15,22 +15,22 @@ from ausgrid_analysis.config import (
     QualityConfig,
     TelemetryConfig,
 )
-from ausgrid_analysis.db import (
+from dnsp_analysis.db import (
     structured_phase_output_path,
     structured_site_output_path,
 )
-from ausgrid_analysis.mechanism_config import MechanismAnalysisConfig
-from ausgrid_analysis.mechanism_paths import (
+from dnsp_analysis.mechanism_config import MechanismAnalysisConfig
+from dnsp_analysis.mechanism_paths import (
     response_observability_path,
     voltvar_results_path,
     voltwatt_results_path,
 )
-from ausgrid_analysis.mechanism_results import (
+from dnsp_analysis.mechanism_results import (
     build_response_observability,
     build_voltvar_results,
     build_voltwatt_results,
 )
-from ausgrid_analysis.mechanism_validation import validate_mechanism_results
+from dnsp_analysis.mechanism_validation import validate_mechanism_results
 
 
 def _config(tmp_path) -> FoundationConfig:

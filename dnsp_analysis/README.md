@@ -36,7 +36,7 @@ Pandas is used only for the 1,282-row metadata workbook and small reports.
 Python 3.11 or newer is required.
 
 ```powershell
-cd path\to\ausgrid_analysis
+cd path\to\dnsp_analysis
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip

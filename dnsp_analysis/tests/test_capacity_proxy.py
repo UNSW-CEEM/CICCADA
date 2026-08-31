@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ausgrid_analysis.analysis_cohort import site_eligibility_path
-from ausgrid_analysis.capacity_proxy import build_capacity_proxy
-from ausgrid_analysis.config import (
+from dnsp_analysis.analysis_cohort import site_eligibility_path
+from dnsp_analysis.capacity_proxy import build_capacity_proxy
+from dnsp_analysis.config import (
     AssumptionConfig,
     FoundationConfig,
     MetadataConfig,
@@ -18,10 +18,10 @@ from ausgrid_analysis.config import (
     QualityConfig,
     TelemetryConfig,
 )
-from ausgrid_analysis.db import structured_phase_output_path, structured_site_output_path
-from ausgrid_analysis.mechanism_config import MechanismAnalysisConfig
-from ausgrid_analysis.mechanism_paths import capacity_proxy_path, voltvar_results_path
-from ausgrid_analysis.mechanism_results import build_voltvar_results
+from dnsp_analysis.db import structured_phase_output_path, structured_site_output_path
+from dnsp_analysis.mechanism_config import MechanismAnalysisConfig
+from dnsp_analysis.mechanism_paths import capacity_proxy_path, voltvar_results_path
+from dnsp_analysis.mechanism_results import build_voltvar_results
 
 
 def _config(tmp_path) -> FoundationConfig:

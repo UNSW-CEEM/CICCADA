@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ausgrid_analysis.irradiance_coverage import (
+from dnsp_analysis.irradiance_coverage import (
     GeographicBounds,
     bom_inventory_sql,
     bom_mapped_coverage_sql,

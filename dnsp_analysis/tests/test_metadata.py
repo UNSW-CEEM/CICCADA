@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from ausgrid_analysis.metadata import canonicalize_metadata_frame
+from dnsp_analysis.metadata import canonicalize_metadata_frame
 
 
 def _source() -> pd.DataFrame:

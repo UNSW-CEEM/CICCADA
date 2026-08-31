@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ausgrid_analysis.config import (
+from dnsp_analysis.config import (
     AssumptionConfig,
     StructuredTelemetryConfig,
     FoundationConfig,
@@ -14,7 +14,7 @@ from ausgrid_analysis.config import (
     QualityConfig,
     TelemetryConfig,
 )
-from ausgrid_analysis.telemetry_profiles import derive_site_profiles
+from dnsp_analysis.telemetry_profiles import derive_site_profiles
 
 
 def _config(tmp_path: Path) -> FoundationConfig:

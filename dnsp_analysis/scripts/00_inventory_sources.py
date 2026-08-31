@@ -7,8 +7,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from ausgrid_analysis.config import load_config  # noqa: E402
-from ausgrid_analysis.inventory import run_inventory  # noqa: E402
+from dnsp_analysis.config import load_config  # noqa: E402
+from dnsp_analysis.inventory import run_inventory  # noqa: E402
 
 
 def main() -> int:

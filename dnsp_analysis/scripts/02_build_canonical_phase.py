@@ -9,11 +9,11 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from ausgrid_analysis.canonical import build_canonical_phase  # noqa: E402
-from ausgrid_analysis.config import load_config  # noqa: E402
-from ausgrid_analysis.duplicates import run_duplicate_audit  # noqa: E402
-from ausgrid_analysis.metadata import metadata_output_path  # noqa: E402
-from ausgrid_analysis.validation import validate_canonical_phase  # noqa: E402
+from dnsp_analysis.canonical import build_canonical_phase  # noqa: E402
+from dnsp_analysis.config import load_config  # noqa: E402
+from dnsp_analysis.duplicates import run_duplicate_audit  # noqa: E402
+from dnsp_analysis.metadata import metadata_output_path  # noqa: E402
+from dnsp_analysis.validation import validate_canonical_phase  # noqa: E402
 
 
 def main() -> int:

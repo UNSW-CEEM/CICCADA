@@ -8,3 +8,6 @@ build/
 *.egg-info/
 analysis.toml
 
+/OBSOLETE
+
+/notebooks/draft.ipynb

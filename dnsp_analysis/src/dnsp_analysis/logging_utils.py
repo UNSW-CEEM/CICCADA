@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-LOGGER_NAME = "ausgrid_analysis"
+LOGGER_NAME = "dnsp_analysis"
 
 
 def get_logger() -> logging.Logger:

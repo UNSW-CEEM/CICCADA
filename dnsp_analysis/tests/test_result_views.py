@@ -6,9 +6,9 @@ import duckdb
 import pandas as pd
 import pytest
 
-from ausgrid_analysis import result_plots as rp
-from ausgrid_analysis import result_views as rv
-from ausgrid_analysis.config import (
+from dnsp_analysis import result_plots as rp
+from dnsp_analysis import result_views as rv
+from dnsp_analysis.config import (
     AssumptionConfig,
     FoundationConfig,
     MetadataConfig,
@@ -17,8 +17,8 @@ from ausgrid_analysis.config import (
     QualityConfig,
     TelemetryConfig,
 )
-from ausgrid_analysis.mechanism_config import MechanismAnalysisConfig
-from ausgrid_analysis.mechanism_paths import (
+from dnsp_analysis.mechanism_config import MechanismAnalysisConfig
+from dnsp_analysis.mechanism_paths import (
     response_observability_path,
     voltvar_results_path,
     voltwatt_results_path,

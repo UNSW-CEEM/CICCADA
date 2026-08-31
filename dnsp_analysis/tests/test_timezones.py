@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from ausgrid_analysis.schemas import utc_to_local
+from dnsp_analysis.schemas import utc_to_local
 
 
 def test_sydney_dst_is_applied_in_january() -> None:

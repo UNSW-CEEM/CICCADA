@@ -6,9 +6,9 @@ import duckdb
 import pandas as pd
 import pytest
 
-from ausgrid_analysis.analysis_cohort import site_eligibility_path
-from ausgrid_analysis.as4777_curves import Q_IMPACT_THRESHOLDS
-from ausgrid_analysis.config import (
+from dnsp_analysis.analysis_cohort import site_eligibility_path
+from dnsp_analysis.as4777_curves import Q_IMPACT_THRESHOLDS
+from dnsp_analysis.config import (
     AssumptionConfig,
     FoundationConfig,
     MetadataConfig,
@@ -18,19 +18,19 @@ from ausgrid_analysis.config import (
     StructuredTelemetryConfig,
     TelemetryConfig,
 )
-from ausgrid_analysis.db import (
+from dnsp_analysis.db import (
     prepare_output_file,
     site_phase_profile_path,
     structured_phase_output_path,
     structured_site_output_path,
 )
-from ausgrid_analysis.mechanism_config import MechanismAnalysisConfig
-from ausgrid_analysis.mechanism_paths import voltvar_results_path
-from ausgrid_analysis.mechanism_results import (
+from dnsp_analysis.mechanism_config import MechanismAnalysisConfig
+from dnsp_analysis.mechanism_paths import voltvar_results_path
+from dnsp_analysis.mechanism_results import (
     build_voltvar_results,
     voltvar_q_impact_histogram,
 )
-from ausgrid_analysis.sensitivity import (
+from dnsp_analysis.sensitivity import (
     capacity_percentile_sensitivity,
     phase_mapping_sensitivity,
     q_impact_bucket_sensitivity,

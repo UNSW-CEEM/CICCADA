@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ausgrid_analysis.config import SourceScope, load_config
+from dnsp_analysis.config import SourceScope, load_config
 
 
 def _toml(tmp_path: Path, active_sign: int = -1) -> str:

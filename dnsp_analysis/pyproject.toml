@@ -3,9 +3,9 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ausgrid-analysis"
+name = "dnsp-analysis"
 version = "0.1.0"
-description = "Local, auditable foundation pipeline for Ausgrid AMI DER telemetry."
+description = "Local, auditable foundation pipeline for AMI DER telemetry."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -27,8 +27,8 @@ notebook = [
 ]
 
 [project.scripts]
-ausgrid-foundation = "ausgrid_analysis.foundation:main"
-ausgrid-structured = "ausgrid_analysis.structured_pipeline:main"
+dnsp-foundation = "dnsp.foundation:main"
+dnsp-structured = "dnsp_analysis.structured_pipeline:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

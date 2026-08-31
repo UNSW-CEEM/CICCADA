@@ -5,8 +5,8 @@ from datetime import datetime
 import duckdb
 import pandas as pd
 
-from ausgrid_analysis.canonical import build_canonical_phase
-from ausgrid_analysis.config import (
+from dnsp_analysis.canonical import build_canonical_phase
+from dnsp_analysis.config import (
     AssumptionConfig,
     FoundationConfig,
     MetadataConfig,
@@ -16,10 +16,10 @@ from ausgrid_analysis.config import (
     SourceScope,
     TelemetryConfig,
 )
-from ausgrid_analysis.duplicates import run_duplicate_audit
-from ausgrid_analysis.inventory import run_inventory
-from ausgrid_analysis.metadata import prepare_metadata
-from ausgrid_analysis.validation import validate_canonical_phase
+from dnsp_analysis.duplicates import run_duplicate_audit
+from dnsp_analysis.inventory import run_inventory
+from dnsp_analysis.metadata import prepare_metadata
+from dnsp_analysis.validation import validate_canonical_phase
 
 
 def _config(tmp_path) -> FoundationConfig:

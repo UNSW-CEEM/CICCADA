@@ -47,8 +47,8 @@ def test_results_notebook_is_clean_staged_and_hard_gated() -> None:
 
     # Calls into result_views/result_plots exist -- this notebook is an
     # orchestrator over those modules, not a reimplementation.
-    assert "result_views" in code or "import ausgrid_analysis.result_views" in code
-    assert "result_plots" in code or "import ausgrid_analysis.result_plots" in code
+    assert "result_views" in code or "import dnsp_analysis.result_views" in code
+    assert "result_plots" in code or "import dnsp_analysis.result_plots" in code
     assert "rv." in code
     assert "rp." in code
 

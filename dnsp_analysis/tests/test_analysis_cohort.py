@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ausgrid_analysis.analysis_cohort import CohortRules, derive_site_eligibility
+from dnsp_analysis.analysis_cohort import CohortRules, derive_site_eligibility
 
 
 def _site_profiles() -> pd.DataFrame:

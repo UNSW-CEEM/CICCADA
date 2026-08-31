@@ -1,7 +1,7 @@
 # Notebook workflow
 
 The notebooks are the primary user-facing orchestrators. The Python modules in
-`src/ausgrid_analysis` contain the reusable pipeline logic; notebooks call
+`src/dnsp_analysis` contain the reusable pipeline logic; notebooks call
 those modules one stage at a time and expose validation outputs before the
 next stage.
 

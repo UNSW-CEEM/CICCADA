@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import duckdb
 import pandas as pd
 
-from ausgrid_analysis.config import (
+from dnsp_analysis.config import (
     AssumptionConfig,
     FoundationConfig,
     MetadataConfig,
@@ -15,18 +15,18 @@ from ausgrid_analysis.config import (
     SourceScope,
     TelemetryConfig,
 )
-from ausgrid_analysis.db import (
+from dnsp_analysis.db import (
     canonical_output_path,
     site_profile_path,
     structured_site_output_path,
 )
-from ausgrid_analysis.telemetry_profiles import build_site_profiles
-from ausgrid_analysis.structured_intervals import (
+from dnsp_analysis.telemetry_profiles import build_site_profiles
+from dnsp_analysis.structured_intervals import (
     build_structured_phase,
     build_structured_site,
 )
-from ausgrid_analysis.structured_validation import validate_structured_telemetry
-from ausgrid_analysis.metadata import metadata_output_path
+from dnsp_analysis.structured_validation import validate_structured_telemetry
+from dnsp_analysis.metadata import metadata_output_path
 
 
 def _config(tmp_path) -> FoundationConfig:

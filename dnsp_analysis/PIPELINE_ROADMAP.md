@@ -51,7 +51,7 @@ Notebook: `notebooks/05_analyse_mechanism_results.ipynb`
 
 Read and visualise Volt-VAr proxy results, Volt-Watt proxy results and response
 observability independently at fleet, site, phase, voltage, month and cohort
-levels, via `src/ausgrid_analysis/result_views.py` and `result_plots.py`. Does
+levels, via `src/dnsp_analysis/result_views.py` and `result_plots.py`. Does
 not blend conformance, observability or future counterfactual-supported
 curtailment into one score; curtailment is shown as an explicit `unavailable
 — methodology gate 7 unmet` panel. Inspects both `phase_scope_basis` tracks

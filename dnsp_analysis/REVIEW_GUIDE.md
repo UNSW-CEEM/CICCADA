@@ -20,10 +20,10 @@ resource limits and the location of generated outputs.
 
 Review:
 
-1. `src/ausgrid_analysis/config.py`
-2. `src/ausgrid_analysis/schemas.py`
-3. `src/ausgrid_analysis/inventory.py`
-4. `src/ausgrid_analysis/metadata.py`
+1. `src/dnsp_analysis/config.py`
+2. `src/dnsp_analysis/schemas.py`
+3. `src/dnsp_analysis/inventory.py`
+4. `src/dnsp_analysis/metadata.py`
 5. `scripts/00_inventory_sources.py`
 6. `scripts/01_prepare_metadata.py`
 
@@ -40,7 +40,7 @@ Expected outputs:
 Review:
 
 1. the duplicate section in `ARCHITECTURE.md`;
-2. `src/ausgrid_analysis/duplicates.py`;
+2. `src/dnsp_analysis/duplicates.py`;
 3. `tests/test_duplicates.py`.
 
 The key decision is intentionally conservative: identical repeated records are
@@ -51,8 +51,8 @@ averaged or selected arbitrarily.
 
 Review:
 
-1. `src/ausgrid_analysis/canonical.py`;
-2. `src/ausgrid_analysis/validation.py`;
+1. `src/dnsp_analysis/canonical.py`;
+2. `src/dnsp_analysis/validation.py`;
 3. `tests/test_sign_conventions.py`;
 4. `tests/test_timezones.py`;
 5. `tests/test_foundation_e2e.py`.
@@ -70,7 +70,7 @@ Focus on:
 Review:
 
 1. `notebooks/01_foundation_pipeline.ipynb`;
-2. `src/ausgrid_analysis/foundation.py`;
+2. `src/dnsp_analysis/foundation.py`;
 3. `scripts/run_foundation_pipeline.py`;
 4. `scripts/02_build_canonical_phase.py`.
 

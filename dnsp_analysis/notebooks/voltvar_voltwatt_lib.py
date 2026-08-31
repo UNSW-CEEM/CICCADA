@@ -49,7 +49,7 @@ SIGN CONVENTION
 Every function below uses GENERATOR convention (+Q = supplying/injecting,
 -Q = absorbing/consuming), matching `as4777_curves.py` and AS/NZS 4777.2
 Fig 3.2 directly -- the same convention this project settled on for
-`02c_explore_voltvar_voltwatt.ipynb`. `ausgrid_analysis`'s own derived
+`02c_explore_voltvar_voltwatt.ipynb`. `dnsp_analysis`'s own derived
 column is the opposite (`q_absorbing_var`: +Q = absorbing), so the notebook
 must negate it once when building the DataFrames passed in here
 (`q_generator = -q_absorbing`). This module does not do that negation
@@ -73,7 +73,7 @@ from matplotlib.patches import Patch
 # Copied verbatim from bms_sa_review/shared/ciccada_config.py (AS4777 dict).
 # Generator convention throughout: +Q = supplying, -Q = absorbing.
 # ---------------------------------------------------------------------------
-from ausgrid_analysis.as4777_curves import (
+from dnsp_analysis.as4777_curves import (
     Q_CAPABILITY,
     Q_IMPACT_THRESHOLDS,
     TOLERANCE_FRACTION,

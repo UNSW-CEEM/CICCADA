@@ -3,8 +3,8 @@
 The results-analysis increment (Delivery 5) is built and read-only:
 
 ```text
-src/ausgrid_analysis/result_views.py
-src/ausgrid_analysis/result_plots.py
+src/dnsp_analysis/result_views.py
+src/dnsp_analysis/result_plots.py
 notebooks/05_analyse_mechanism_results.ipynb
 tests/test_result_views.py
 tests/test_results_notebook_contract.py
