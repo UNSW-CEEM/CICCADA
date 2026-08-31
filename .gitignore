@@ -164,6 +164,7 @@ ciccada/
 
 *.csv
 *.png
-
-
 .tmp/
+
+## Local mapping:
+local_mapping/
