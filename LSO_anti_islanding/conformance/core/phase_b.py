@@ -7,7 +7,7 @@ def select_thresholds_for_compliance(
     site_thresholds,
     *,
     threshold_method="tier_based",
-    tau=0.3,
+    tau=0.0,
 ):
     """Select the LOS and effective OV1 thresholds used for compliance."""
     if threshold_method == "tier_based":
@@ -15,8 +15,14 @@ def select_thresholds_for_compliance(
             [
                 "site_id",
                 pl.lit(threshold_method, dtype=pl.Utf8).alias("threshold_method"),
-                pl.col("los_threshold").alias("los_threshold_used"),
-                (pl.col("ov1_threshold") - tau).alias("ov1_threshold_used"),
+                pl.min_horizontal(
+                    pl.col("los_threshold"),
+                    pl.lit(258.0, dtype=pl.Float64),
+                ).alias("los_threshold_used"),
+                pl.min_horizontal(
+                    pl.col("ov1_threshold") - tau,
+                    pl.lit(265.0, dtype=pl.Float64),
+                ).alias("ov1_threshold_used"),
             ]
         )
     if threshold_method == "default":
