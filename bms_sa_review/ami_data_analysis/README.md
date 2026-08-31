@@ -142,68 +142,75 @@ Any of these source columns can be absent from the underlying interval
 table (e.g. a circuit missing `current`); the corresponding output column
 is simply omitted, not an error.
 
-### `ami_raw_phaseseparate` — per-phase ground truth, PV-allocated
+### `ami_raw_phaseseparate` — per-circuit ground truth, load and PV alike
 
-One row per `(site_id, device_id, circuit_id, t_stamp)`, on the load side
-only — same grain as `ami_meter`, answering "what would the site-level
-ground truth look like broken out by phase."
+One row per `(site_id, device_id, circuit_id, t_stamp)`, for EVERY kept
+circuit — `ac_load_net` AND `pv_site_net` both get their own row, tagged
+by `circuit_type`. Deliberately a thin, circuit-preserving view: no
+allocation or splitting of PV across load phases happens here (an earlier
+version of this table did that — see "What changed" below).
 
 | column | type | derivation | unit |
 |---|---|---|---|
 | `site_id`, `device_id`, `circuit_id` | BIGINT | | |
+| `circuit_type` | STRING | `ac_load_net` or `pv_site_net` | |
 | `t_stamp` | TIMESTAMP | UTC | |
 | `year`, `month` | INT | | |
 | `V` | DOUBLE | this circuit's raw `voltage` — no polarity correction (voltage has no sign-convention ambiguity) | V |
-| `load_kw_signed` | DOUBLE | this circuit's `power`, **polarity-corrected** via `circuit_polarity` | kW |
-| `pv_allocation_kw` | DOUBLE | this phase's PV share — see allocation rule below | kW |
-| `gross_load_kw` | DOUBLE | `load_kw_signed + pv_allocation_kw` | kW |
-| `Q_kvar_signed` | DOUBLE | this circuit's `reactive_power`, **polarity-corrected** via `circuit_polarity` | kvar |
-| `pv_reactive_allocation_kvar` | DOUBLE | this phase's reactive PV share, same allocation rule as `pv_allocation_kw` | kvar |
-| `gross_reactive_load_kvar` | DOUBLE | `Q_kvar_signed + pv_reactive_allocation_kvar` | kvar |
-| `n_phases_at_site` | INT | number of kept load circuits at the site this month | |
-| `pv_allocation_method` | STRING | `direct_matched_circuit` / `equal_split_across_load_phases` / `no_pv_present` | |
+| `P_kw_signed` | DOUBLE | this circuit's own `power`, **polarity-corrected** via `circuit_polarity` | kW |
+| `Q_kvar_signed` | DOUBLE | this circuit's own `reactive_power`, **polarity-corrected** via `circuit_polarity` | kvar |
+| `n_phases_at_site` | INT | number of kept load circuits at the site this month — a per-site tag, copied onto every row (load or PV) for that site | |
+| `pv_allocation_method` | STRING | `direct_matched_circuit` / `equal_split_across_load_phases` / `no_pv_present` — a per-site topology tag, copied onto every row for that site (see below); carries no allocated Watts | |
 
-**`load_kw_signed`/`Q_kvar_signed` are deliberately not the same values as
-`ami_meter.P_kw`/`Q_kvar`.** They use the same polarity correction `ami_raw`'s
-own `gross_load`/`gross_reactive_load` reconstruction applies, specifically
-so that `sum(gross_load_kw)`/`sum(gross_reactive_load_kvar)` across a site's
-phases reconcile with `ami_raw.P_kw`/`ami_raw.Q_kvar` for that
-site/timestamp. `ami_meter.P_kw`/`Q_kvar` are the raw sensor readings;
-`ami_raw_phaseseparate` is a decomposition of the corrected ground truth.
-They answer different questions and are not meant to share a sign
+**What `P_kw_signed`/`Q_kvar_signed` mean depends on `circuit_type`.** On a
+load row, this is `ac_load_net`'s own reading — already net-of-solar as
+landed (see `ami_raw`'s section above), NOT a PV-independent gross load
+figure. On a PV row, this is that PV circuit's own generation reading,
+undivided — the same value regardless of how many load phases it serves.
+Neither is the same as `ami_meter.P_kw`/`Q_kvar`: those are raw,
+uncorrected sensor readings; these are polarity-corrected via
+`circuit_polarity`, the same correction `ami_raw`'s own
+`gross_load`/`gross_reactive_load` reconstruction applies. These two
+tables answer different questions and are not meant to share a sign
 convention.
 
-The reactive-power columns here reuse the SAME per-site allocation decision
-(direct-match vs. equal-split, and which PV circuit pairs with which load
-circuit) as the active-power columns — decided once from the active-power
-side's circuit counts, not re-derived separately for reactive power — and
-carry the same not-independently-validated caveat noted for `ami_raw.Q_kvar`
-above.
+**`n_phases_at_site`/`pv_allocation_method` are per-site descriptive tags,
+not derived quantities** — decided once per site from that month's kept
+circuit sets, then copied onto every row for that site, load or PV alike:
 
-**PV allocation rule**, decided once per site from that month's kept
-circuit sets, then applied to every timestamp for that site:
+- `direct_matched_circuit`: the number of kept `pv_site_net` circuits
+  equals the number of kept `ac_load_net` circuits at that site. A real,
+  unambiguous count match — but NOT a verified circuit-to-phase (A/B/C)
+  label (`meta_up23c` doesn't carry one for either side), so treat "circuit
+  N pairs with circuit N" as a plausible ordering, not a proven pairing,
+  if you go on to build your own per-phase matching from these rows.
+- `equal_split_across_load_phases`: circuit counts don't match (most
+  commonly one `pv_site_net` circuit serving a 2- or 3-phase load).
+- `no_pv_present`: no surviving PV circuit at the site at all — no PV rows
+  exist for that site this month.
 
-- If the number of kept `pv_site_net` circuits equals the number of kept
-  `ac_load_net` circuits, each load circuit is paired with one PV circuit
-  (sorted `circuit_id` order) and uses that PV circuit's own signed reading
-  directly — real per-circuit data, method `direct_matched_circuit`.
-- Otherwise (most commonly: one `pv_site_net` circuit serving a 2- or
-  3-phase load), the site's total signed PV is split evenly across load
-  phases — method `equal_split_across_load_phases`.
-- A site with no surviving PV circuit gets `no_pv_present` and a zero
-  allocation.
+**Want a PV-independent per-phase gross load?** Compute it explicitly from
+these raw rows yourself, e.g. matching load/PV circuits by sorted
+`circuit_id` when `pv_allocation_method == "direct_matched_circuit"`, or
+splitting the PV rows' total evenly across load rows when it's
+`equal_split_across_load_phases` — this table no longer computes or stores
+that reconciliation for you, so the matching choice you make is visible
+and yours, not baked in silently. For the SITE-level equivalent (a
+different, validated method, not this per-phase heuristic), use
+`ami_raw.P_kw`/`Q_kvar` directly.
 
-**Why direct matching is a heuristic, not a proven pairing:** even when PV
-circuit counts happen to match phase counts, `meta_up23c` carries no
-verified circuit-to-phase (A/B/C) label for either PV or load circuits —
-"3 circuits = 3 phases" is already an ordering assumption for load, and
-pairing PV circuit *N* with load circuit *N* by sorted `circuit_id` is one
-more assumption on top of that. It's physically plausible (checked against
-real fleet metadata: every one of the 14,353 clean sites has exactly one
-physical `inverter_count`, so multiple PV circuits at a site come from one
-inverter's separate phase outputs, not independent PV sources) but not a
-confirmed label. That's why every row carries its own `pv_allocation_method`
-— filter on it if the pairing assumption ever needs auditing or excluding.
+**What changed:** an earlier version of this table was load-rows-only and
+carried `pv_allocation_kw`/`gross_load_kw`/`pv_reactive_allocation_kvar`/
+`gross_reactive_load_kvar` columns, splitting PV across load phases and
+reconciling it into a "gross load per phase" figure. That was dropped:
+once PV circuits get their own rows, `pv_allocation_kw` on a load row was
+either an exact duplicate of a PV row already in the table
+(`direct_matched_circuit`) or a numeric column dressing up the
+`equal_split_across_load_phases` heuristic as if it were measured ground
+truth. If you have an export built before this change, `load_kw_signed`
+is renamed `P_kw_signed` (unchanged value, on load rows), and the four
+allocation/reconciliation columns are gone — see the note above for how to
+reconstruct the same thing explicitly, if you need it.
 
 ## How the three tables relate — a validation workflow
 
@@ -218,9 +225,10 @@ SELECT site_id, t_stamp, P_kw AS gross_load_kw, Q_kvar AS gross_reactive_load_kv
        P_kw_norm AS pv_generation_norm
 FROM ami_raw;
 
--- per-phase ground truth -- sums to ami_raw.P_kw / ami_raw.Q_kvar by construction
-SELECT site_id, t_stamp, sum(gross_load_kw) AS gross_load_kw,
-       sum(gross_reactive_load_kvar) AS gross_reactive_load_kvar
+-- per-circuit ground truth -- sums (load rows + PV rows) to ami_raw.P_kw /
+-- ami_raw.Q_kvar by construction, for a given site/timestamp
+SELECT site_id, t_stamp, sum(P_kw_signed) AS gross_load_kw,
+       sum(Q_kvar_signed) AS gross_reactive_load_kvar
 FROM ami_raw_phaseseparate GROUP BY site_id, t_stamp;
 ```
 
@@ -330,12 +338,16 @@ overwriting them.
 - `ami_raw_phaseseparate`'s `direct_matched_circuit` pairing is the
   best-available heuristic given real fleet evidence (single inverter per
   site), not a verified ground-truth pairing.
-- `Q_kvar`/`Q_kvar_norm` (`ami_raw`) and `Q_kvar_signed`/
-  `pv_reactive_allocation_kvar`/`gross_reactive_load_kvar`
-  (`ami_raw_phaseseparate`) reuse the same reconstruction formula and
-  allocation logic validated for active power, but reactive power itself has
-  no equivalent real-plot validation (see "The three tables" above) — treat
-  it as reasonable-by-construction, not independently confirmed.
+- `Q_kvar`/`Q_kvar_norm` (`ami_raw`) and `Q_kvar_signed` (`ami_raw_phaseseparate`)
+  reuse the same polarity-correction logic validated for active power, but
+  reactive power itself has no equivalent real-plot validation (see "The
+  three tables" above) — treat it as reasonable-by-construction, not
+  independently confirmed.
+- `ami_raw_phaseseparate` deliberately does not compute a per-phase gross
+  load — it hands you the raw, polarity-corrected load and PV circuit
+  readings and leaves any PV-to-phase attribution (trivial when
+  `direct_matched_circuit`, a real modeling choice when
+  `equal_split_across_load_phases`) to whoever consumes the table.
 - By default, `CATCH Power`-model circuits get their active power
   re-derived from a whole-Wh energy register (`apply_power_correction`,
   see its own section above) rather than trusting a raw `power` field

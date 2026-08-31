@@ -36,32 +36,42 @@ would show, polarity quirks and all. `energy_import_kwh`/`energy_export_kwh`
 are the real measured registers (not a derived W-clip split), matching a
 genuine smart meter's import/export accumulators.
 
-`ami_raw_phaseseparate` answers "what would the site-level ground truth
-look like broken out by phase" -- `load_kw_signed`/`Q_kvar_signed` are
-DELIBERATELY not the same values as `ami_meter.P_kw`/`Q_kvar`: they're
-polarity-corrected (via `circuit_polarity`), the same correction `ami_raw`'s
-own `gross_load`/`gross_reactive_load` reconstructions apply, so that
-`sum(gross_load_kw)`/`sum(gross_reactive_load_kvar)` across a site's phases
-reconcile with `ami_raw.P_kw`/`Q_kvar` for that site/timestamp. `V` is the
-raw per-circuit voltage (no polarity correction -- voltage has no sign
-ambiguity). `ami_meter`'s P/Q are deliberately the uncorrected sensor
-readings a real meter would show; these two tables answer different
-questions and are not meant to share a sign convention.
+`ami_raw_phaseseparate` answers "what would the raw circuit readings look
+like broken out by phase" -- one row per (site_id, device_id, circuit_id,
+t_stamp) for EVERY kept `ac_load_net`/`pv_site_net` circuit, load AND PV
+alike, tagged by `circuit_type`. `P_kw_signed`/`Q_kvar_signed` are
+polarity-corrected (via `circuit_polarity`, the same correction `ami_raw`'s
+own `gross_load`/`gross_reactive_load` reconstruction applies) but are
+DELIBERATELY not the same values as `ami_meter.P_kw`/`Q_kvar`, which are
+the raw, uncorrected sensor readings a real meter would show -- these two
+tables answer different questions and are not meant to share a sign
+convention. `V` is the raw per-circuit voltage (no polarity correction --
+voltage has no sign ambiguity). This table does NOT allocate or split PV
+across load phases, and does NOT compute a per-phase gross-load
+reconciliation -- an earlier version did both, but that baked a debatable
+per-site heuristic (splitting PV evenly across load phases whenever
+circuit counts don't match) into a numeric column that looked like
+measured ground truth. A load row's `P_kw_signed` is `ac_load_net`'s own
+net-of-PV reading (see `build_ami_raw`'s docstring); a PV row's
+`P_kw_signed` is that PV circuit's own undivided generation reading. Want
+a PV-independent per-phase gross load? Compute it explicitly from these
+raw rows, making your own matching choice for mismatched-count sites; for
+the SITE-level equivalent (a different, validated method, not this
+per-phase heuristic) use `ami_raw.P_kw`/`Q_kvar` directly.
 
-PV allocation, per site, based on that MONTH's kept circuit sets: if the
+`n_phases_at_site` (from the LOAD side's circuit count) and
+`pv_allocation_method` are kept as lightweight, per-site descriptive tags,
+decided once per site from that MONTH's kept circuit sets and copied onto
+EVERY row for that site -- load or PV alike -- since they describe the
+site's circuit topology, not a load-specific derived quantity: if the
 number of kept `pv_site_net` circuits equals the number of kept
-`ac_load_net` circuits, each load circuit is paired with one PV circuit
-(sorted circuit_id order) and uses that PV circuit's OWN signed reading
-directly (`pv_allocation_method = "direct_matched_circuit"`) -- real data,
-not an assumption. Otherwise (most commonly: one `pv_site_net` circuit
-serving a multi-phase load) the site's total signed PV is split evenly
-across load phases (`"equal_split_across_load_phases"`). A site with no
-surviving PV circuit gets `"no_pv_present"` and a zero allocation. See the
-project README for why: even where PV circuit counts happen to match phase
-counts, there is no verified circuit-to-phase (A/B/C) label in `meta_up23c`
-for either side -- direct matching is the best-available heuristic, not a
-proven pairing, which is exactly why every row carries its own
-`pv_allocation_method` for audit.
+`ac_load_net` circuits, the site gets `"direct_matched_circuit"` (real,
+unambiguous 1:1 circuit counts, though NOT a verified circuit-to-phase
+(A/B/C) label -- see the project README on why even a count match is a
+heuristic, not a proven pairing); otherwise (most commonly: one
+`pv_site_net` circuit serving a multi-phase load) `"equal_split_across_load_phases"`;
+a site with no surviving PV circuit gets `"no_pv_present"`. No Watts are
+allocated based on this tag any more -- it's audit metadata only.
 
 All three tables are built ONE LANDED MONTH AT A TIME (`run_build`,
 `run_phase_split_build`), mirroring `ami_extract`/`ami_revalidate`'s
@@ -346,22 +356,43 @@ def build_ami_raw_phaseseparate(
     pv_type: str = "pv_site_net",
 ) -> pd.DataFrame:
     """
-    One row per (site_id, device_id, circuit_id, t_stamp) on the LOAD side
-    only. `load_kw_signed`/`Q_kvar_signed` are polarity-corrected (see
-    module docstring for why this deliberately differs from
-    `ami_meter.P_kw`/`Q_kvar`). `V` is the raw per-circuit voltage (not
+    One row per (site_id, device_id, circuit_id, t_stamp), for EVERY kept
+    `load_type`/`pv_type` circuit -- load AND PV circuits both get their
+    own row, tagged by `circuit_type`. This is deliberately a thin,
+    circuit-preserving view: `P_kw_signed`/`Q_kvar_signed` are that
+    circuit's OWN reading, polarity-corrected (see module docstring for
+    why this deliberately differs from `ami_meter.P_kw`/`Q_kvar`, which
+    are raw/uncorrected). `V` is the raw per-circuit voltage (not
     polarity-corrected -- voltage has no sign-convention ambiguity).
-    `pv_allocation_kw`/`pv_reactive_allocation_kvar` and
-    `pv_allocation_method` follow the direct-match / equal-split / no-PV
-    rule described in the module docstring, decided ONCE per site (from
-    the active-power side's circuit counts) and reused for the reactive
-    allocation too -- not decided separately -- then applied uniformly
-    across every timestamp for that site within this month's frame.
+
+    On a `load_type` row, `P_kw_signed` is `ac_load_net`'s own reading --
+    already net-of-PV as landed (see `build_ami_raw`'s docstring), NOT a
+    PV-independent gross load figure. On a `pv_type` row, `P_kw_signed` is
+    that PV circuit's own generation reading, undivided. This table does
+    NOT allocate or split PV across load phases, and does NOT compute a
+    per-phase gross-load reconciliation -- earlier versions did both, but
+    that baked a debatable heuristic (`equal_split_across_load_phases`,
+    for the common case where PV/load circuit counts don't match) into a
+    numeric column that looked like measured ground truth. If you need a
+    PV-independent per-phase gross load, compute it explicitly yourself
+    from these raw load/PV rows, making your own matching choice for
+    mismatched-count sites; for the SITE-level equivalent (which uses a
+    different, validated method, not this per-phase heuristic), use
+    `ami_raw.P_kw`/`Q_kvar` directly.
+
+    `n_phases_at_site` (from the LOAD side's circuit count) and
+    `pv_allocation_method` (`direct_matched_circuit` when kept PV circuit
+    count equals kept load circuit count, `equal_split_across_load_phases`
+    when it doesn't, `no_pv_present` when there's no surviving PV circuit
+    at all) are kept as lightweight, per-site descriptive tags -- decided
+    once per site (same rule as before) and copied onto EVERY row for that
+    site, load or PV alike, since they describe the site's circuit
+    topology, not a load-specific derived quantity. They carry no
+    allocated Watts with them any more.
     """
     columns = [
-        site_column, device_column, circuit_column, time_column, "year", "month",
-        "V", "load_kw_signed", "pv_allocation_kw", "gross_load_kw",
-        "Q_kvar_signed", "pv_reactive_allocation_kvar", "gross_reactive_load_kvar",
+        site_column, device_column, circuit_column, type_column, time_column,
+        "year", "month", "V", "P_kw_signed", "Q_kvar_signed",
         "n_phases_at_site", "pv_allocation_method",
     ]
     if interval_table is None or not len(interval_table):
@@ -385,10 +416,8 @@ def build_ami_raw_phaseseparate(
     )
 
     site_plan_rows = []
-    pair_rows = []
     for site_id, load_ids in load_circuits_by_site.items():
-        load_ids_sorted = sorted(load_ids)
-        n_phases = len(load_ids_sorted)
+        n_phases = len(sorted(load_ids))
         pv_ids_sorted = (
             sorted(pv_circuits_by_site.loc[site_id])
             if site_id in getattr(pv_circuits_by_site, "index", []) else []
@@ -397,70 +426,21 @@ def build_ami_raw_phaseseparate(
             method = "no_pv_present"
         elif len(pv_ids_sorted) == n_phases:
             method = "direct_matched_circuit"
-            pair_rows.extend(
-                {circuit_column: lc, "matched_pv_circuit": pvc}
-                for lc, pvc in zip(load_ids_sorted, pv_ids_sorted)
-            )
         else:
             method = "equal_split_across_load_phases"
         site_plan_rows.append({
             site_column: site_id, "n_phases_at_site": n_phases, "pv_allocation_method": method,
         })
-
     site_plan = pd.DataFrame(site_plan_rows)
-    pairs = (
-        pd.DataFrame(pair_rows) if pair_rows
-        else pd.DataFrame(columns=[circuit_column, "matched_pv_circuit"])
-    )
 
-    pv_signed_totals = (
-        pv_side.groupby([site_column, time_column])[["power_signed", "reactive_power_signed"]].sum()
-        .reset_index().rename(columns={
-            "power_signed": "pv_signed_total", "reactive_power_signed": "pv_reactive_signed_total",
-        })
-        if len(pv_side) else pd.DataFrame({
-            site_column: pd.Series(dtype="int64"), time_column: pd.Series(dtype="datetime64[ns, UTC]"),
-            "pv_signed_total": pd.Series(dtype="float64"),
-            "pv_reactive_signed_total": pd.Series(dtype="float64"),
-        })
-    )
-    pv_by_circuit = pv_side[[circuit_column, time_column, "power_signed", "reactive_power_signed"]].rename(
-        columns={
-            "power_signed": "pv_signed_matched", "reactive_power_signed": "pv_reactive_signed_matched",
-            circuit_column: "matched_pv_circuit",
-        }
-    )
-
-    rows = load_side.copy()
-    rows["load_kw_signed"] = rows["power_signed"] / 1000.0
+    rows = pd.concat([load_side, pv_side], ignore_index=True) if len(pv_side) else load_side.copy()
+    rows["P_kw_signed"] = rows["power_signed"] / 1000.0
     rows["Q_kvar_signed"] = rows["reactive_power_signed"] / 1000.0
     if voltage_column in rows.columns:
         rows["V"] = rows[voltage_column]
     else:
         rows["V"] = np.nan
     rows = rows.merge(site_plan, on=site_column, how="left")
-    rows = rows.merge(pairs, on=circuit_column, how="left")
-    rows = rows.merge(pv_by_circuit, on=["matched_pv_circuit", time_column], how="left")
-    rows = rows.merge(pv_signed_totals, on=[site_column, time_column], how="left")
-
-    is_direct = rows["pv_allocation_method"] == "direct_matched_circuit"
-    is_split = rows["pv_allocation_method"] == "equal_split_across_load_phases"
-
-    direct_kw = (rows["pv_signed_matched"].astype("float64") / 1000.0).fillna(0.0)
-    split_kw = (
-        rows["pv_signed_total"].astype("float64") / 1000.0 / rows["n_phases_at_site"]
-    ).fillna(0.0)
-    rows["pv_allocation_kw"] = np.select([is_direct, is_split], [direct_kw, split_kw], default=0.0)
-    rows["gross_load_kw"] = rows["load_kw_signed"] + rows["pv_allocation_kw"]
-
-    direct_kvar = (rows["pv_reactive_signed_matched"].astype("float64") / 1000.0).fillna(0.0)
-    split_kvar = (
-        rows["pv_reactive_signed_total"].astype("float64") / 1000.0 / rows["n_phases_at_site"]
-    ).fillna(0.0)
-    rows["pv_reactive_allocation_kvar"] = np.select(
-        [is_direct, is_split], [direct_kvar, split_kvar], default=0.0
-    )
-    rows["gross_reactive_load_kvar"] = rows["Q_kvar_signed"] + rows["pv_reactive_allocation_kvar"]
 
     rows["year"], rows["month"] = _year_month(rows[time_column])
 
@@ -469,7 +449,6 @@ def build_ami_raw_phaseseparate(
         .sort_values([site_column, circuit_column, time_column])
         .reset_index(drop=True)
     )
-
 
 def write_month_table(
     frame: pd.DataFrame, store_dir, year: int, month: int, *,
