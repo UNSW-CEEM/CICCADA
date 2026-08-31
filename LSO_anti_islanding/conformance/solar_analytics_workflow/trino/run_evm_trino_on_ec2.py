@@ -13,15 +13,16 @@ if str(CONFORMANCE_DIR) not in sys.path:
 if str(REPOSITORY_DIR) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_DIR))
 
-from core.check_pv_behaviour import CheckPVBehaviour
-from core.phase_a import run_phase_a_for_site
+from core.phase_a import SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA, run_phase_a_for_site
 from core.phase_b import run_phase_b_for_site
+from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
     DAY_ANALYSIS_START,
     DAY_END,
     DAY_EXTRACTION_START,
     LOCAL_TIMEZONE,
     PHASE_B_METHODS,
+    SAVE_SITE_LEVEL_VARIOUS_VOLTAGES,
 )
 from solar_analytics_workflow.data_cleaning import (
     addLocalTStamp,
@@ -51,22 +52,24 @@ EVM_TRINO_SITE_BATCH_SIZE = 10  # num sites queried at once
 
 # these are the columns for conformance results that will be pushed to trino
 # and utilised for grafana plotting
-CONFORMANCE_SUMMARY_SCHEMA = {
+SITE_COMPLIANCE_SCHEMA = {
     "site_id": pl.Int64,
-    "method_key": pl.Utf8,
+    "threshold_method": pl.Utf8,
     "assessment_status": pl.Utf8,
     "overall_pass": pl.Boolean,
+    "los_responsible_count": pl.Int64,
+    "los_compliant_count": pl.Int64,
     "los_pass": pl.Boolean,
     "los_compliance_pct": pl.Float64,
     "los_threshold_used": pl.Float64,
+    "ov1_responsible_count": pl.Int64,
+    "ov1_compliant_count": pl.Int64,
     "ov1_pass": pl.Boolean,
     "ov1_compliance_pct": pl.Float64,
     "ov1_threshold_used": pl.Float64,
-    "pass_basis": pl.Utf8,
-    "threshold_selection_basis": pl.Utf8,
-    "threshold_confidence_tier": pl.Utf8,
 }
-conformance_summary_rows = []
+site_compliance_rows = []
+site_level_various_voltage_rows = []
 
 # Select distinct site-level metadata from the eligible inverter cohort.
 SITE_QUERY = """
@@ -255,7 +258,14 @@ try:
     conformance_output_path = (
         conformance_output_dir / "solA_conformance_trino_summary.csv"
     )
-    pl.DataFrame(schema=CONFORMANCE_SUMMARY_SCHEMA).write_csv(conformance_output_path)
+    pl.DataFrame(schema=SITE_COMPLIANCE_SCHEMA).write_csv(conformance_output_path)
+    site_level_various_voltages_path = (
+        conformance_output_dir / "site_level_various_voltages.csv"
+    )
+    if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+        pl.DataFrame(schema=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA).write_csv(
+            site_level_various_voltages_path
+        )
 
     site_idx = 0
     # Call the generator once for the complete cohort. Each iteration receives
@@ -324,8 +334,7 @@ try:
                 ]
             ).collect(engine="streaming")
 
-            # Build one CheckPVBehaviour object for each eligible local day.
-            day_behaviours = []
+            eligible_analysis_days = []
             local_dates = (
                 site_timeseries_data.select(
                     pl.col("local_tstamp").dt.date().alias("local_date")
@@ -376,17 +385,14 @@ try:
                 if not eligibility["eligible"]:
                     continue
 
-                day_behaviours.append(
+                eligible_analysis_days.append(
                     {
-                        "day": day,
-                        "behaviour": CheckPVBehaviour(
-                            analysis_day_df,
-                            volCol="voltage_valid",
-                        ),
+                        "analysis_date": day,
+                        "analysis_frame": analysis_day_df,
                     }
                 )
 
-            if not day_behaviours:
+            if not eligible_analysis_days:
                 continue
 
             capacity_row = site_data.filter(
@@ -400,49 +406,61 @@ try:
                 )
                 continue
 
+            prepared_site_days = [
+                {
+                    "analysis_date": day_info["analysis_date"],
+                    "signal_frame": build_site_day_signals(
+                        day_info["analysis_frame"], s_rated
+                    ),
+                }
+                for day_info in eligible_analysis_days
+            ]
+
             phase_a_result = run_phase_a_for_site(
                 site["site_id"],
-                day_behaviours,  # this has the CheckPVBehaviour obj
+                prepared_site_days,
                 s_rated,
             )
-            for phase_b_method in PHASE_B_METHODS:
+            if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+                site_level_various_voltage_rows.append(
+                    phase_a_result["site_level_various_voltages"]
+                )
+            for threshold_method in PHASE_B_METHODS:
                 phase_b_result = run_phase_b_for_site(
                     site["site_id"],
-                    day_behaviours,  # this has the CheckPVBehaviour obj
-                    s_rated,
-                    raw_thresholds=phase_a_result["raw_thresholds"],
-                    confidence_info=phase_a_result["confidence_info"],
-                    phase_b_method=phase_b_method,
+                    prepared_site_days,
+                    site_thresholds=phase_a_result["site_thresholds"],
+                    threshold_method=threshold_method,
                 )
                 # get columns to save results in csv later to be pushed on trino
-                phase_b_summary = phase_b_result["summary_row"].to_dicts()[0]
-                phase_b_thresholds = phase_b_result["threshold_row"].to_dicts()[0]
-                overall_pass = phase_b_summary["overall_pass"]
+                site_compliance = phase_b_result["site_compliance"].to_dicts()[0]
+                overall_pass = site_compliance["overall_pass"]
                 if overall_pass is None:
                     assessment_status = "unassessed"
                 elif overall_pass:
                     assessment_status = "conformant"
                 else:
                     assessment_status = "non-conformant"
-                conformance_summary_rows.append(
+                site_compliance_rows.append(
                     {
-                        "site_id": phase_b_summary["site_id"],
-                        "method_key": phase_b_method,
+                        "site_id": site_compliance["site_id"],
+                        "threshold_method": threshold_method,
                         "assessment_status": assessment_status,
                         "overall_pass": overall_pass,
-                        "los_pass": phase_b_summary["los_pass"],
-                        "los_compliance_pct": phase_b_summary["los_compliance_pct"],
-                        "los_threshold_used": phase_b_summary["los_threshold_used"],
-                        "ov1_pass": phase_b_summary["ov1_pass"],
-                        "ov1_compliance_pct": phase_b_summary["ov1_compliance_pct"],
-                        "ov1_threshold_used": phase_b_thresholds["ov1_test_site"],
-                        "pass_basis": phase_b_summary["pass_basis"],
-                        "threshold_selection_basis": phase_b_thresholds[
-                            "threshold_selection_basis"
+                        "los_responsible_count": site_compliance[
+                            "los_responsible_count"
                         ],
-                        "threshold_confidence_tier": phase_b_thresholds[
-                            "threshold_confidence_tier"
+                        "los_compliant_count": site_compliance["los_compliant_count"],
+                        "los_pass": site_compliance["los_pass"],
+                        "los_compliance_pct": site_compliance["los_compliance_pct"],
+                        "los_threshold_used": site_compliance["los_threshold_used"],
+                        "ov1_responsible_count": site_compliance[
+                            "ov1_responsible_count"
                         ],
+                        "ov1_compliant_count": site_compliance["ov1_compliant_count"],
+                        "ov1_pass": site_compliance["ov1_pass"],
+                        "ov1_compliance_pct": site_compliance["ov1_compliance_pct"],
+                        "ov1_threshold_used": site_compliance["ov1_threshold_used"],
                     }
                 )
                 # print("yo")
@@ -451,55 +469,101 @@ try:
 
             # save in table form back to trino
 
-        if conformance_summary_rows:
+        if site_compliance_rows:
             print("appending data to csv")
-            conformance_summary = pl.DataFrame(
-                conformance_summary_rows,
-                schema=CONFORMANCE_SUMMARY_SCHEMA,
+            site_compliance = pl.DataFrame(
+                site_compliance_rows,
+                schema=SITE_COMPLIANCE_SCHEMA,
             )
             with conformance_output_path.open("ab") as output_file:
-                conformance_summary.write_csv(
+                site_compliance.write_csv(
                     output_file,
                     include_header=False,
                 )
-            conformance_summary_rows.clear()
+            site_compliance_rows.clear()
+        if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES and site_level_various_voltage_rows:
+            site_level_various_voltages = pl.concat(
+                site_level_various_voltage_rows,
+                how="vertical",
+            )
+            with site_level_various_voltages_path.open("ab") as output_file:
+                site_level_various_voltages.write_csv(
+                    output_file,
+                    include_header=False,
+                )
+            site_level_various_voltage_rows.clear()
 
-    conformance_summary = pl.read_csv(
+    site_compliance = pl.read_csv(
         conformance_output_path,
-        schema_overrides=CONFORMANCE_SUMMARY_SCHEMA,
+        schema_overrides=SITE_COMPLIANCE_SCHEMA,
     )
 
     iceberg_exec("DROP TABLE IF EXISTS lso_anti_islanding_conformance")
     iceberg_exec("""
         CREATE TABLE lso_anti_islanding_conformance (
             site_id BIGINT,
-            method_key VARCHAR,
+            threshold_method VARCHAR,
             assessment_status VARCHAR,
             overall_pass BOOLEAN,
+            los_responsible_count BIGINT,
+            los_compliant_count BIGINT,
             los_pass BOOLEAN,
             los_compliance_pct DOUBLE,
             los_threshold_used DOUBLE,
+            ov1_responsible_count BIGINT,
+            ov1_compliant_count BIGINT,
             ov1_pass BOOLEAN,
             ov1_compliance_pct DOUBLE,
-            ov1_threshold_used DOUBLE,
-            pass_basis VARCHAR,
-            threshold_selection_basis VARCHAR,
-            threshold_confidence_tier VARCHAR
+            ov1_threshold_used DOUBLE
         )
         WITH (format = 'PARQUET')
     """)
 
-    rows_written = conformance_summary.write_database(
+    rows_written = site_compliance.write_database(
         table_name="lso_anti_islanding_conformance",
         connection=engine,
         if_table_exists="append",
         engine_options={"chunksize": 250, "method": "multi"},
     )
     print(
-        "Uploaded conformance summary to lso_anti_islanding_conformance: "
+        "Uploaded site compliance to lso_anti_islanding_conformance: "
         f"{rows_written} rows",
         flush=True,
     )
+
+    if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+        site_level_various_voltages = pl.read_csv(
+            site_level_various_voltages_path,
+            schema_overrides=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA,
+        )
+        iceberg_exec("DROP TABLE IF EXISTS lso_ov_site_level_various_voltages")
+        iceberg_exec("""
+            CREATE TABLE lso_ov_site_level_various_voltages (
+                site_id BIGINT,
+                los_threshold DOUBLE,
+                los_lowest_disconnect_voltage DOUBLE,
+                los_median_all_disconnect_voltages DOUBLE,
+                los_lowest_reconnect_voltage DOUBLE,
+                los_median_all_reconnect_voltages DOUBLE,
+                ov1_threshold DOUBLE,
+                ov1_lowest_disconnect_voltage DOUBLE,
+                ov1_median_all_disconnect_voltages DOUBLE,
+                ov1_lowest_reconnect_voltage DOUBLE,
+                ov1_median_all_reconnect_voltages DOUBLE
+            )
+            WITH (format = 'PARQUET')
+        """)
+        rows_written = site_level_various_voltages.write_database(
+            table_name="lso_ov_site_level_various_voltages",
+            connection=engine,
+            if_table_exists="append",
+            engine_options={"chunksize": 250, "method": "multi"},
+        )
+        print(
+            "Uploaded site voltages to lso_ov_site_level_various_voltages: "
+            f"{rows_written} rows",
+            flush=True,
+        )
 
 finally:
     engine.dispose()

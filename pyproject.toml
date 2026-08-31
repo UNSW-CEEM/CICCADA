@@ -19,6 +19,7 @@ dependencies = [
     "pyarrow>=24.0.0",
     "pytest-cov>=6.0.0",
     "pytest>=8.3.4",
+    "ruff>=0.16.5",
     "sqlalchemy>=2.0.52",
     "trino>=0.338.0",
     "xlsxwriter>=3.2.9",

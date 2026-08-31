@@ -13,9 +13,9 @@ if str(CONFORMANCE_DIR) not in sys.path:
 if str(REPOSITORY_DIR) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_DIR))
 
-from core.check_pv_behaviour import CheckPVBehaviour
 from core.phase_a import run_phase_a_for_site
 from core.phase_b import run_phase_b_for_site
+from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
     DAY_ANALYSIS_START,
     DAY_END,
@@ -55,10 +55,10 @@ iceberg_exec("""
         month INTEGER,
         day INTEGER,
         site_id BIGINT,
-        method_key VARCHAR,
-        los_eligible_count BIGINT,
+        threshold_method VARCHAR,
+        los_responsible_count BIGINT,
         los_compliant_count BIGINT,
-        ov1_eligible_count BIGINT,
+        ov1_responsible_count BIGINT,
         ov1_compliant_count BIGINT
     )
     WITH (
@@ -157,7 +157,7 @@ try:
     assessed_sites_query = f"""
     SELECT DISTINCT site_id
     FROM iceberg.solar_analytics_iceberg.lso_anti_islanding_conformance
-    WHERE method_key = '{PRIMARY_PHASE_B_METHOD}'
+    WHERE threshold_method = '{PRIMARY_PHASE_B_METHOD}'
         AND assessment_status IN ('conformant', 'non-conformant')
     """
 
@@ -286,7 +286,7 @@ try:
                 ]
             ).collect(engine="streaming")
 
-            day_behaviours = []
+            eligible_analysis_days = []
             local_dates = (
                 site_timeseries_data.select(
                     pl.col("local_tstamp").dt.date().alias("local_date")
@@ -327,17 +327,14 @@ try:
                 if not eligibility["eligible"]:
                     continue
 
-                day_behaviours.append(
+                eligible_analysis_days.append(
                     {
-                        "day": day,
-                        "behaviour": CheckPVBehaviour(
-                            analysis_day_df,
-                            volCol="voltage_valid",
-                        ),
+                        "analysis_date": day,
+                        "analysis_frame": analysis_day_df,
                     }
                 )
 
-            if not day_behaviours:
+            if not eligible_analysis_days:
                 continue
 
             capacity_row = site_data.filter(
@@ -351,32 +348,42 @@ try:
                 )
                 continue
 
+            prepared_site_days = [
+                {
+                    "analysis_date": day_info["analysis_date"],
+                    "signal_frame": build_site_day_signals(
+                        day_info["analysis_frame"], s_rated
+                    ),
+                }
+                for day_info in eligible_analysis_days
+            ]
+
             phase_a_result = run_phase_a_for_site(
                 site["site_id"],
-                day_behaviours,
+                prepared_site_days,
                 s_rated,
             )
             phase_b_result = run_phase_b_for_site(
                 site["site_id"],
-                day_behaviours,
-                s_rated,
-                raw_thresholds=phase_a_result["raw_thresholds"],
-                confidence_info=phase_a_result["confidence_info"],
-                phase_b_method=PRIMARY_PHASE_B_METHOD,
+                prepared_site_days,
+                site_thresholds=phase_a_result["site_thresholds"],
+                threshold_method=PRIMARY_PHASE_B_METHOD,
             )
 
-            phase_b_detail = phase_b_result["detail"]
-            if phase_b_detail.is_empty():
+            site_compliance_timestamp_detail = phase_b_result[
+                "site_compliance_timestamp_detail"
+            ]
+            if site_compliance_timestamp_detail.is_empty():
                 continue
 
             daily_conformance = (
-                phase_b_detail.group_by(["event_day", "site_id"])
+                site_compliance_timestamp_detail.group_by(["event_day", "site_id"])
                 .agg(
                     [
                         pl.col("los_responsible")
                         .sum()
                         .cast(pl.Int64)
-                        .alias("los_eligible_count"),
+                        .alias("los_responsible_count"),
                         pl.col("los_compliant")
                         .sum()
                         .cast(pl.Int64)
@@ -384,7 +391,7 @@ try:
                         pl.col("ov1_responsible")
                         .sum()
                         .cast(pl.Int64)
-                        .alias("ov1_eligible_count"),
+                        .alias("ov1_responsible_count"),
                         pl.col("ov1_compliant")
                         .sum()
                         .cast(pl.Int64)
@@ -396,7 +403,7 @@ try:
                         pl.col("event_day").dt.year().cast(pl.Int32).alias("year"),
                         pl.col("event_day").dt.month().cast(pl.Int32).alias("month"),
                         pl.col("event_day").dt.day().cast(pl.Int32).alias("day"),
-                        pl.lit(PRIMARY_PHASE_B_METHOD).alias("method_key"),
+                        pl.lit(PRIMARY_PHASE_B_METHOD).alias("threshold_method"),
                     ]
                 )
                 .select(
@@ -405,10 +412,10 @@ try:
                         "month",
                         "day",
                         "site_id",
-                        "method_key",
-                        "los_eligible_count",
+                        "threshold_method",
+                        "los_responsible_count",
                         "los_compliant_count",
-                        "ov1_eligible_count",
+                        "ov1_responsible_count",
                         "ov1_compliant_count",
                     ]
                 )
