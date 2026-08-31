@@ -1,5 +1,3 @@
-"""Run the read-only source inventory stage."""
-
 from __future__ import annotations
 
 import argparse
