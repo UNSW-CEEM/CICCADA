@@ -138,11 +138,16 @@ def plot_site_compliance_day(
         else [None] * plot_df.height
     )
     event_active = None
+    disconnected_below_lso_ov1_threshold_mask = None
     if {"los_responsible", "ov1_responsible"}.issubset(set(plot_df.columns)):
         event_active = (
             plot_df["los_responsible"].fill_null(False).cast(pl.Boolean)
             | plot_df["ov1_responsible"].fill_null(False).cast(pl.Boolean)
         ).to_numpy()
+        disconnected_below_lso_ov1_threshold_mask = (
+            plot_df["is_disc"].fill_null(False).cast(pl.Boolean).to_numpy()
+            & ~event_active
+        )
     is_single_phase = len(power_cols) == 1
 
     if is_single_phase:
@@ -161,6 +166,20 @@ def plot_site_compliance_day(
 
     for axis in plot_power_axes:
         axis.set_facecolor("white")
+        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
+            np.any(disconnected_below_lso_ov1_threshold_mask)
+        ):
+            axis.fill_between(
+                x,
+                0,
+                1,
+                where=disconnected_below_lso_ov1_threshold_mask,
+                transform=axis.get_xaxis_transform(),
+                color="#9ca3af",
+                alpha=0.22,
+                zorder=0,
+                linewidth=0,
+            )
         if event_active is not None and bool(np.any(event_active)):
             axis.fill_between(
                 x,
@@ -344,6 +363,13 @@ def plot_site_compliance_day(
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
             v_labels = v_labels + ["Responsible timestamp"]
+        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
+            np.any(disconnected_below_lso_ov1_threshold_mask)
+        ):
+            v_lines = v_lines + [
+                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
+            ]
+            v_labels = v_labels + ["Disconnected below threshold"]
         ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
     else:
         top_lines, top_labels = ax_top.get_legend_handles_labels()
@@ -353,6 +379,13 @@ def plot_site_compliance_day(
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
             top_v_labels = top_v_labels + ["Responsible timestamp"]
+        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
+            np.any(disconnected_below_lso_ov1_threshold_mask)
+        ):
+            top_v_lines = top_v_lines + [
+                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
+            ]
+            top_v_labels = top_v_labels + ["Disconnected below threshold"]
         ax_top.legend(
             top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
         )
@@ -364,6 +397,13 @@ def plot_site_compliance_day(
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
             bottom_v_labels = bottom_v_labels + ["Responsible timestamp"]
+        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
+            np.any(disconnected_below_lso_ov1_threshold_mask)
+        ):
+            bottom_v_lines = bottom_v_lines + [
+                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
+            ]
+            bottom_v_labels = bottom_v_labels + ["Disconnected below threshold"]
         ax_bottom.legend(
             bottom_lines + bottom_v_lines,
             bottom_labels + bottom_v_labels,
