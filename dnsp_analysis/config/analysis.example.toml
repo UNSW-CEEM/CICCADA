@@ -1,7 +1,7 @@
 [paths]
-telemetry_parquet = 'C:\Users\z3553082\OneDrive - UNSW\Documents\CICCADA - Data\Ausgrid\ausgrid_pv_combined.parquet'
-metadata_workbook = 'C:\Users\z3553082\OneDrive - UNSW\Documents\CICCADA - Data\Ausgrid\ausgrid_meta.xlsx'
-derived_root = 'C:\Users\z3553082\OneDrive - UNSW\Documents\CICCADA - Data\Ausgrid\derived'
+telemetry_parquet = 'C:\path\to\your\data\dnsp_a\telemetry_combined.parquet'
+metadata_workbook = 'C:\path\to\your\data\dnsp_a\metadata.xlsx'
+derived_root = 'C:\path\to\your\data\dnsp_a\derived'
 
 [metadata]
 sheet_name = "Cust_DER_Network Data"
