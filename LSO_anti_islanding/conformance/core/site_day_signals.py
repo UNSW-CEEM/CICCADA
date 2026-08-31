@@ -63,9 +63,7 @@ def build_site_day_signals(
                 .alias(logic_next_name)
             )
         else:
-            df = df.with_columns(
-                pl.lit(None, dtype=pl.Float64).alias(logic_next_name)
-            )
+            df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias(logic_next_name))
         logic_next.append(logic_next_name)
 
     df = df.with_columns(

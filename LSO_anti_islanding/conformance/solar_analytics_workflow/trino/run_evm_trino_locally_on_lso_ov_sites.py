@@ -128,8 +128,7 @@ def _threshold_stats(phase_a_records, mechanism, voltage_column):
     """Return per-site Phase A threshold statistics for one mechanism."""
     return (
         phase_a_records.filter(
-            (pl.col("mechanism") == mechanism)
-            & pl.col(voltage_column).is_not_null()
+            (pl.col("mechanism") == mechanism) & pl.col(voltage_column).is_not_null()
         )
         .group_by("site_id")
         .agg(

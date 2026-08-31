@@ -200,18 +200,14 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
     prepared_site_days = [
         {
             "analysis_date": day_info["analysis_date"],
-            "signal_frame": build_site_day_signals(
-                day_info["analysis_frame"], s_rated
-            ),
+            "signal_frame": build_site_day_signals(day_info["analysis_frame"], s_rated),
         }
         for day_info in eligible_analysis_days
     ]
 
     phase_a = run_phase_a_for_site(site_id, prepared_site_days, s_rated)
     site_threshold_rows.append(phase_a["site_thresholds"])
-    site_level_various_voltage_rows.append(
-        phase_a["site_level_various_voltages"]
-    )
+    site_level_various_voltage_rows.append(phase_a["site_level_various_voltages"])
     if not phase_a["records"].is_empty():
         phase_a_records.append(phase_a["records"])
 
@@ -246,9 +242,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
                 lso_threshold=compliance["los_threshold_used"],
                 ov1_threshold=compliance["ov1_threshold_used"],
                 overall_pass=compliance["overall_pass"],
-                plot_no_responsible_timestamp_days=(
-                    PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS
-                ),
+                plot_no_responsible_timestamp_days=(PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS),
                 save_path=(
                     CONFORMANCE_OUTPUT_DIR
                     / "overall_site_plots"

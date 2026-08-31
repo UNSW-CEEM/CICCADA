@@ -458,18 +458,14 @@ with local_trino_engine(
                         "los_responsible_count": site_compliance[
                             "los_responsible_count"
                         ],
-                        "los_compliant_count": site_compliance[
-                            "los_compliant_count"
-                        ],
+                        "los_compliant_count": site_compliance["los_compliant_count"],
                         "los_pass": site_compliance["los_pass"],
                         "los_compliance_pct": site_compliance["los_compliance_pct"],
                         "los_threshold_used": site_compliance["los_threshold_used"],
                         "ov1_responsible_count": site_compliance[
                             "ov1_responsible_count"
                         ],
-                        "ov1_compliant_count": site_compliance[
-                            "ov1_compliant_count"
-                        ],
+                        "ov1_compliant_count": site_compliance["ov1_compliant_count"],
                         "ov1_pass": site_compliance["ov1_pass"],
                         "ov1_compliance_pct": site_compliance["ov1_compliance_pct"],
                         "ov1_threshold_used": site_compliance["ov1_threshold_used"],

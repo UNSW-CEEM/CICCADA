@@ -31,9 +31,7 @@ def select_thresholds_for_compliance(
                 "site_id",
                 pl.lit(threshold_method, dtype=pl.Utf8).alias("threshold_method"),
                 pl.lit(258.0, dtype=pl.Float64).alias("los_threshold_used"),
-                pl.lit(265.0 - tau, dtype=pl.Float64).alias(
-                    "ov1_threshold_used"
-                ),
+                pl.lit(265.0 - tau, dtype=pl.Float64).alias("ov1_threshold_used"),
             ]
         )
     raise KeyError(
@@ -54,8 +52,7 @@ def evaluate_compliance_for_day(
 
     frame = signal_frame.with_columns(
         (
-            pl.col("ov1_signals_available")
-            & (pl.col("vinst_max") >= ov1_threshold)
+            pl.col("ov1_signals_available") & (pl.col("vinst_max") >= ov1_threshold)
         ).alias("ov1_responsible")
     )
     frame = frame.with_columns(
@@ -99,9 +96,9 @@ def aggregate_all_daily_compliance_for_site(site_id, evaluated_site_days):
         "ov1_compliant",
     ]
     daily_frames = [
-        evaluated_day["frame"].with_columns(
-            pl.lit(evaluated_day["event_day"]).alias("event_day")
-        ).select(detail_columns)
+        evaluated_day["frame"]
+        .with_columns(pl.lit(evaluated_day["event_day"]).alias("event_day"))
+        .select(detail_columns)
         for evaluated_day in evaluated_site_days
         if not evaluated_day["frame"].is_empty()
     ]
@@ -116,18 +113,12 @@ def aggregate_all_daily_compliance_for_site(site_id, evaluated_site_days):
             .sum()
             .cast(pl.Int64)
             .alias("los_responsible_count"),
-            pl.col("los_compliant")
-            .sum()
-            .cast(pl.Int64)
-            .alias("los_compliant_count"),
+            pl.col("los_compliant").sum().cast(pl.Int64).alias("los_compliant_count"),
             pl.col("ov1_responsible")
             .sum()
             .cast(pl.Int64)
             .alias("ov1_responsible_count"),
-            pl.col("ov1_compliant")
-            .sum()
-            .cast(pl.Int64)
-            .alias("ov1_compliant_count"),
+            pl.col("ov1_compliant").sum().cast(pl.Int64).alias("ov1_compliant_count"),
         ]
     )
     return site_compliance_timestamp_detail, compliance_counts
@@ -149,17 +140,13 @@ def score_site_compliance(
             pl.when(pl.col("los_responsible_count") == 0)
             .then(pl.lit(None, dtype=pl.Float64))
             .otherwise(
-                pl.col("los_compliant_count")
-                / pl.col("los_responsible_count")
-                * 100.0
+                pl.col("los_compliant_count") / pl.col("los_responsible_count") * 100.0
             )
             .alias("los_compliance_pct"),
             pl.when(pl.col("ov1_responsible_count") == 0)
             .then(pl.lit(None, dtype=pl.Float64))
             .otherwise(
-                pl.col("ov1_compliant_count")
-                / pl.col("ov1_responsible_count")
-                * 100.0
+                pl.col("ov1_compliant_count") / pl.col("ov1_responsible_count") * 100.0
             )
             .alias("ov1_compliance_pct"),
         ]
@@ -180,8 +167,7 @@ def score_site_compliance(
         pl.when(pl.col("los_pass").is_null() & pl.col("ov1_pass").is_null())
         .then(pl.lit(None, dtype=pl.Boolean))
         .otherwise(
-            pl.col("los_pass").fill_null(True)
-            & pl.col("ov1_pass").fill_null(True)
+            pl.col("los_pass").fill_null(True) & pl.col("ov1_pass").fill_null(True)
         )
         .alias("overall_pass")
     ).select(
@@ -218,12 +204,8 @@ def run_phase_b_for_site(
         threshold_method=threshold_method,
         tau=tau,
     )
-    los_threshold_used = selected_thresholds.get_column(
-        "los_threshold_used"
-    ).item()
-    ov1_threshold_used = selected_thresholds.get_column(
-        "ov1_threshold_used"
-    ).item()
+    los_threshold_used = selected_thresholds.get_column("los_threshold_used").item()
+    ov1_threshold_used = selected_thresholds.get_column("ov1_threshold_used").item()
     evaluated_site_days = [
         {
             "event_day": prepared_day["analysis_date"],

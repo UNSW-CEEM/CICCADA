@@ -4,7 +4,6 @@ from typing import Any
 
 import polars as pl
 
-
 MAX_DISCONNECT_EDGE_GAP_SECONDS = 300
 
 SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
@@ -39,10 +38,7 @@ def detect_edges(signal_frame: pl.DataFrame, PRated):
                 & pl.col("is_disc")
                 & (pl.col("site_power_drop") >= p_step_strict)
                 & (pl.col("dt_next_s").shift(1) > 0)
-                & (
-                    pl.col("dt_next_s").shift(1)
-                    <= MAX_DISCONNECT_EDGE_GAP_SECONDS
-                )
+                & (pl.col("dt_next_s").shift(1) <= MAX_DISCONNECT_EDGE_GAP_SECONDS)
             )
             .fill_null(False)
             .alias("disconnect_edge"),
@@ -165,9 +161,7 @@ def classify_disconnects_as_los_or_ov1(
         reconnect_voltage = None
         if reconnect is not None:
             reconnect_voltage = (
-                reconnect["v10m_avg"]
-                if mechanism == "LOS"
-                else reconnect["vinst_max"]
+                reconnect["v10m_avg"] if mechanism == "LOS" else reconnect["vinst_max"]
             )
 
         records.append(
@@ -227,8 +221,7 @@ def learn_site_thresholds(records: pl.DataFrame):
                 winning_median = winning_values[middle_index]
             else:
                 winning_median = (
-                    winning_values[middle_index - 1]
-                    + winning_values[middle_index]
+                    winning_values[middle_index - 1] + winning_values[middle_index]
                 ) / 2.0
 
         all_disconnect_median = None
@@ -248,8 +241,7 @@ def learn_site_thresholds(records: pl.DataFrame):
                 all_reconnect_median = reconnect_values[middle_index]
             else:
                 all_reconnect_median = (
-                    reconnect_values[middle_index - 1]
-                    + reconnect_values[middle_index]
+                    reconnect_values[middle_index - 1] + reconnect_values[middle_index]
                 ) / 2.0
 
         learned = (
