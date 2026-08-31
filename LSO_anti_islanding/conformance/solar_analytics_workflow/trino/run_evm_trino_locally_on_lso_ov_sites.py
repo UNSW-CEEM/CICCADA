@@ -12,6 +12,7 @@ from core.phase_a import SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA, run_phase_a_for_sit
 from core.phase_b import evaluate_compliance_for_day, run_phase_b_for_site
 from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
+    CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
     DAY_ANALYSIS_START,
     DAY_END,
     DAY_EXTRACTION_START,
@@ -79,6 +80,26 @@ SITE_COMPLIANCE_SCHEMA = {
     "ov1_pass": pl.Boolean,
     "ov1_compliance_pct": pl.Float64,
     "ov1_threshold_used": pl.Float64,
+    "los_lowest_disconnect_voltage": pl.Float64,
+    "los_extra_responsible_count": pl.Int64,
+    "los_total_responsible_count": pl.Int64,
+    "los_total_compliant_count": pl.Int64,
+    "los_total_compliance_pct": pl.Float64,
+    "los_total_pass": pl.Boolean,
+    "ov1_lowest_disconnect_voltage": pl.Float64,
+    "ov1_extra_responsible_count": pl.Int64,
+    "ov1_total_responsible_count": pl.Int64,
+    "ov1_total_compliant_count": pl.Int64,
+    "ov1_total_compliance_pct": pl.Float64,
+    "ov1_total_pass": pl.Boolean,
+    "overall_responsible_count": pl.Int64,
+    "overall_compliant_count": pl.Int64,
+    "overall_compliance_pct": pl.Float64,
+    "overall_total_responsible_count": pl.Int64,
+    "overall_total_compliant_count": pl.Int64,
+    "overall_total_compliance_pct": pl.Float64,
+    "overall_total_pass": pl.Boolean,
+    "consider_lowest_threshold_at_disconnect": pl.Boolean,
 }
 
 LIMITED_OUTPUT_DIR = TRINO_LIMITED_OUTPUT_DIR
@@ -98,7 +119,7 @@ def _site_compliance_report_row(site_result):
         raise ValueError("Expected exactly one primary Phase B result per site.")
 
     compliance = site_compliance.to_dicts()[0]
-    overall_pass = compliance["overall_pass"]
+    overall_pass = compliance["overall_total_pass"]
     if overall_pass is None:
         assessment_status = "unassessed"
     elif overall_pass:
@@ -106,22 +127,7 @@ def _site_compliance_report_row(site_result):
     else:
         assessment_status = "non-conformant"
 
-    return {
-        "site_id": compliance["site_id"],
-        "threshold_method": compliance["threshold_method"],
-        "assessment_status": assessment_status,
-        "overall_pass": overall_pass,
-        "los_responsible_count": compliance["los_responsible_count"],
-        "los_compliant_count": compliance["los_compliant_count"],
-        "los_pass": compliance["los_pass"],
-        "los_compliance_pct": compliance["los_compliance_pct"],
-        "los_threshold_used": compliance["los_threshold_used"],
-        "ov1_responsible_count": compliance["ov1_responsible_count"],
-        "ov1_compliant_count": compliance["ov1_compliant_count"],
-        "ov1_pass": compliance["ov1_pass"],
-        "ov1_compliance_pct": compliance["ov1_compliance_pct"],
-        "ov1_threshold_used": compliance["ov1_threshold_used"],
-    }
+    return {**compliance, "assessment_status": assessment_status}
 
 
 def _threshold_stats(phase_a_records, mechanism, voltage_column):
@@ -539,16 +545,18 @@ with local_trino_engine(
                 prepared_site_days,
                 site_thresholds=phase_a_result["site_thresholds"],
                 threshold_method=PRIMARY_PHASE_B_METHOD,
+                consider_lowest_threshold_at_disconnect=
+                    CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
             )
             site_result = {
                 "site_compliance": phase_b_result["site_compliance"],
             }
 
             compliance = phase_b_result["site_compliance"].to_dicts()[0]
-            if GENERATE_SITE_PLOTS and compliance["overall_pass"] is not None:
+            if GENERATE_SITE_PLOTS and compliance["overall_total_pass"] is not None:
                 plot_folder = (
                     "compliant"
-                    if compliance["overall_pass"] is True
+                    if compliance["overall_total_pass"] is True
                     else "non_compliant"
                 )
                 for day_info in prepared_site_days:
@@ -556,6 +564,14 @@ with local_trino_engine(
                         day_info["signal_frame"],
                         los_threshold=compliance["los_threshold_used"],
                         ov1_threshold=compliance["ov1_threshold_used"],
+                        los_lowest_disconnect_voltage=compliance[
+                            "los_lowest_disconnect_voltage"
+                        ],
+                        ov1_lowest_disconnect_voltage=compliance[
+                            "ov1_lowest_disconnect_voltage"
+                        ],
+                        consider_lowest_threshold_at_disconnect=
+                            CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
                     )
                     plot_site_compliance_day(
                         evaluated_day,
@@ -564,7 +580,7 @@ with local_trino_engine(
                         p_rated=s_rated,
                         lso_threshold=compliance["los_threshold_used"],
                         ov1_threshold=compliance["ov1_threshold_used"],
-                        overall_pass=compliance["overall_pass"],
+                        overall_pass=compliance["overall_total_pass"],
                         plot_no_responsible_timestamp_days=(
                             PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS
                         ),

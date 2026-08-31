@@ -14,6 +14,7 @@ from core.phase_a import SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA, run_phase_a_for_sit
 from core.phase_b import evaluate_compliance_for_day, run_phase_b_for_site
 from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
+    CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
     DAY_ANALYSIS_START,
     DAY_COVERAGE_THRESHOLD,
     DAY_END,
@@ -216,6 +217,8 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         prepared_site_days,
         site_thresholds=phase_a["site_thresholds"],
         threshold_method=PRIMARY_PHASE_B_METHOD,
+        consider_lowest_threshold_at_disconnect=
+            CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
     )
     site_compliance_rows.append(phase_b["site_compliance"])
     if not phase_b["site_compliance_timestamp_detail"].is_empty():
@@ -224,15 +227,25 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         )
 
     compliance = phase_b["site_compliance"].to_dicts()[0]
-    if GENERATE_SITE_PLOTS and compliance["overall_pass"] is not None:
+    if GENERATE_SITE_PLOTS and compliance["overall_total_pass"] is not None:
         plot_folder = (
-            "compliant" if compliance["overall_pass"] is True else "non_compliant"
+            "compliant"
+            if compliance["overall_total_pass"] is True
+            else "non_compliant"
         )
         for day_info in prepared_site_days:
             evaluated_day = evaluate_compliance_for_day(
                 day_info["signal_frame"],
                 los_threshold=compliance["los_threshold_used"],
                 ov1_threshold=compliance["ov1_threshold_used"],
+                los_lowest_disconnect_voltage=compliance[
+                    "los_lowest_disconnect_voltage"
+                ],
+                ov1_lowest_disconnect_voltage=compliance[
+                    "ov1_lowest_disconnect_voltage"
+                ],
+                consider_lowest_threshold_at_disconnect=
+                    CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
             )
             plot_site_compliance_day(
                 evaluated_day,
@@ -241,8 +254,10 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
                 p_rated=s_rated,
                 lso_threshold=compliance["los_threshold_used"],
                 ov1_threshold=compliance["ov1_threshold_used"],
-                overall_pass=compliance["overall_pass"],
-                plot_no_responsible_timestamp_days=(PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS),
+                overall_pass=compliance["overall_total_pass"],
+                plot_no_responsible_timestamp_days=(
+                    PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS
+                ),
                 save_path=(
                     CONFORMANCE_OUTPUT_DIR
                     / "overall_site_plots"
@@ -254,9 +269,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
 
     print(
         f"[{site_index}/{len(candidate_site_ids)}] site {site_id} "
-        f"LOS={compliance['los_compliance_pct']} "
-        f"OV1={compliance['ov1_compliance_pct']} "
-        f"PASS={compliance['overall_pass']}"
+        f"LOS={compliance['los_total_compliance_pct']} "
+        f"OV1={compliance['ov1_total_compliance_pct']} "
+        f"PASS={compliance['overall_total_pass']}"
     )
 
 results = {

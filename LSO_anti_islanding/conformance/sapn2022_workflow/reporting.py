@@ -19,12 +19,32 @@ SITE_COMPLIANCE_SCHEMA = {
     "los_compliance_pct": pl.Float64,
     "los_pass": pl.Boolean,
     "los_threshold_used": pl.Float64,
+    "los_lowest_disconnect_voltage": pl.Float64,
+    "los_extra_responsible_count": pl.Int64,
+    "los_total_responsible_count": pl.Int64,
+    "los_total_compliant_count": pl.Int64,
+    "los_total_compliance_pct": pl.Float64,
+    "los_total_pass": pl.Boolean,
     "ov1_responsible_count": pl.Int64,
     "ov1_compliant_count": pl.Int64,
     "ov1_compliance_pct": pl.Float64,
     "ov1_pass": pl.Boolean,
     "ov1_threshold_used": pl.Float64,
+    "ov1_lowest_disconnect_voltage": pl.Float64,
+    "ov1_extra_responsible_count": pl.Int64,
+    "ov1_total_responsible_count": pl.Int64,
+    "ov1_total_compliant_count": pl.Int64,
+    "ov1_total_compliance_pct": pl.Float64,
+    "ov1_total_pass": pl.Boolean,
+    "overall_responsible_count": pl.Int64,
+    "overall_compliant_count": pl.Int64,
+    "overall_compliance_pct": pl.Float64,
     "overall_pass": pl.Boolean,
+    "overall_total_responsible_count": pl.Int64,
+    "overall_total_compliant_count": pl.Int64,
+    "overall_total_compliance_pct": pl.Float64,
+    "overall_total_pass": pl.Boolean,
+    "consider_lowest_threshold_at_disconnect": pl.Boolean,
 }
 
 CONFORMANCE_EXCLUSIONS_SCHEMA = {
@@ -80,14 +100,17 @@ def write_method_compliance_final_table(site_compliance):
         .agg(
             [
                 pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
-                pl.col("overall_pass").is_not_null().sum().alias("Sites Assessed"),
-                pl.col("overall_pass").is_null().sum().alias("Unassessed Sites"),
-                pl.col("overall_pass")
+                pl.col("overall_total_pass")
+                .is_not_null()
+                .sum()
+                .alias("Sites Assessed"),
+                pl.col("overall_total_pass").is_null().sum().alias("Unassessed Sites"),
+                pl.col("overall_total_pass")
                 .eq(True)
                 .fill_null(False)
                 .sum()
                 .alias("Conformant Sites"),
-                pl.col("overall_pass")
+                pl.col("overall_total_pass")
                 .eq(False)
                 .fill_null(False)
                 .sum()

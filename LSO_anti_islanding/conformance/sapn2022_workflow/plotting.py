@@ -114,9 +114,25 @@ def plot_site_compliance_day(
 
     los_responsible_count = int(df.get_column("los_responsible").sum() or 0)
     los_compliant_count = int(df.get_column("los_compliant").sum() or 0)
+    los_extra_responsible_count = int(
+        df.get_column("extra_los_responsible").sum() or 0
+    )
     ov1_responsible_count = int(df.get_column("ov1_responsible").sum() or 0)
     ov1_compliant_count = int(df.get_column("ov1_compliant").sum() or 0)
-    total_responsible_count = los_responsible_count + ov1_responsible_count
+    ov1_extra_responsible_count = int(
+        df.get_column("extra_ov1_responsible").sum() or 0
+    )
+    los_total_responsible_count = (
+        los_responsible_count + los_extra_responsible_count
+    )
+    los_total_compliant_count = los_compliant_count + los_extra_responsible_count
+    ov1_total_responsible_count = (
+        ov1_responsible_count + ov1_extra_responsible_count
+    )
+    ov1_total_compliant_count = ov1_compliant_count + ov1_extra_responsible_count
+    total_responsible_count = (
+        los_total_responsible_count + ov1_total_responsible_count
+    )
     if total_responsible_count == 0 and not plot_no_responsible_timestamp_days:
         return
 
@@ -143,6 +159,8 @@ def plot_site_compliance_day(
         event_active = (
             plot_df["los_responsible"].fill_null(False).cast(pl.Boolean)
             | plot_df["ov1_responsible"].fill_null(False).cast(pl.Boolean)
+            | plot_df["extra_los_responsible"].fill_null(False).cast(pl.Boolean)
+            | plot_df["extra_ov1_responsible"].fill_null(False).cast(pl.Boolean)
         ).to_numpy()
         disconnected_below_lso_ov1_threshold_mask = (
             plot_df["is_disc"].fill_null(False).cast(pl.Boolean).to_numpy()
@@ -285,7 +303,9 @@ def plot_site_compliance_day(
         if overall_pass is False
         else "Unassessed"
     )
-    total_compliant_count = los_compliant_count + ov1_compliant_count
+    total_compliant_count = (
+        los_total_compliant_count + ov1_total_compliant_count
+    )
     if total_responsible_count == 0:
         day_label_text = "No responsible timestamps"
     else:
@@ -293,8 +313,10 @@ def plot_site_compliance_day(
         day_state = "Day pass" if day_pct >= 90.0 else "Day fail"
         day_label_text = (
             f"{day_state} {day_pct:.1f}% | "
-            f"LOS {los_compliant_count}/{los_responsible_count} responsible | "
-            f"OV1 {ov1_compliant_count}/{ov1_responsible_count} responsible"
+            f"LOS {los_total_compliant_count}/{los_total_responsible_count} "
+            "responsible | "
+            f"OV1 {ov1_total_compliant_count}/{ov1_total_responsible_count} "
+            "responsible"
         )
 
     plot_date = _format_plot_date(day_label, x)

@@ -16,6 +16,7 @@ from core.phase_a import SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA, run_phase_a_for_sit
 from core.phase_b import run_phase_b_for_site
 from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
+    CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
     DAY_ANALYSIS_START,
     DAY_END,
     DAY_EXTRACTION_START,
@@ -66,6 +67,26 @@ SITE_COMPLIANCE_SCHEMA = {
     "ov1_pass": pl.Boolean,
     "ov1_compliance_pct": pl.Float64,
     "ov1_threshold_used": pl.Float64,
+    "los_lowest_disconnect_voltage": pl.Float64,
+    "los_extra_responsible_count": pl.Int64,
+    "los_total_responsible_count": pl.Int64,
+    "los_total_compliant_count": pl.Int64,
+    "los_total_compliance_pct": pl.Float64,
+    "los_total_pass": pl.Boolean,
+    "ov1_lowest_disconnect_voltage": pl.Float64,
+    "ov1_extra_responsible_count": pl.Int64,
+    "ov1_total_responsible_count": pl.Int64,
+    "ov1_total_compliant_count": pl.Int64,
+    "ov1_total_compliance_pct": pl.Float64,
+    "ov1_total_pass": pl.Boolean,
+    "overall_responsible_count": pl.Int64,
+    "overall_compliant_count": pl.Int64,
+    "overall_compliance_pct": pl.Float64,
+    "overall_total_responsible_count": pl.Int64,
+    "overall_total_compliant_count": pl.Int64,
+    "overall_total_compliance_pct": pl.Float64,
+    "overall_total_pass": pl.Boolean,
+    "consider_lowest_threshold_at_disconnect": pl.Boolean,
 }
 site_compliance_rows = []
 site_level_various_voltage_rows = []
@@ -439,10 +460,12 @@ with local_trino_engine(
                     prepared_site_days,
                     site_thresholds=phase_a_result["site_thresholds"],
                     threshold_method=threshold_method,
+                    consider_lowest_threshold_at_disconnect=
+                        CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
                 )
                 # get columns to save results in csv later to be pushed on trino
                 site_compliance = phase_b_result["site_compliance"].to_dicts()[0]
-                overall_pass = site_compliance["overall_pass"]
+                overall_pass = site_compliance["overall_total_pass"]
                 if overall_pass is None:
                     assessment_status = "unassessed"
                 elif overall_pass:
@@ -450,26 +473,7 @@ with local_trino_engine(
                 else:
                     assessment_status = "non-conformant"
                 site_compliance_rows.append(
-                    {
-                        "site_id": site_compliance["site_id"],
-                        "threshold_method": threshold_method,
-                        "assessment_status": assessment_status,
-                        "overall_pass": overall_pass,
-                        "los_responsible_count": site_compliance[
-                            "los_responsible_count"
-                        ],
-                        "los_compliant_count": site_compliance["los_compliant_count"],
-                        "los_pass": site_compliance["los_pass"],
-                        "los_compliance_pct": site_compliance["los_compliance_pct"],
-                        "los_threshold_used": site_compliance["los_threshold_used"],
-                        "ov1_responsible_count": site_compliance[
-                            "ov1_responsible_count"
-                        ],
-                        "ov1_compliant_count": site_compliance["ov1_compliant_count"],
-                        "ov1_pass": site_compliance["ov1_pass"],
-                        "ov1_compliance_pct": site_compliance["ov1_compliance_pct"],
-                        "ov1_threshold_used": site_compliance["ov1_threshold_used"],
-                    }
+                    {**site_compliance, "assessment_status": assessment_status}
                 )
                 # print("yo")
 

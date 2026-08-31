@@ -291,7 +291,13 @@ def run_phase_a_for_site(site_id, prepared_site_days, PRated):
 
     return {
         "site_thresholds": site_level_various_voltages.select(
-            ["site_id", "los_threshold", "ov1_threshold"]
+            [
+                "site_id",
+                "los_threshold",
+                "ov1_threshold",
+                "los_lowest_disconnect_voltage",
+                "ov1_lowest_disconnect_voltage",
+            ]
         ),
         "site_level_various_voltages": site_level_various_voltages,
         "records": site_records,
