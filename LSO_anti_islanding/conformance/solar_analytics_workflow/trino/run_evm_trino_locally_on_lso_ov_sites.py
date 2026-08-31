@@ -455,8 +455,7 @@ with local_trino_engine(
                 continue
 
             print(
-                f"Cleaned site {site['site_id']}: "
-                f"{site_timeseries_data.height} rows",
+                f"Cleaned site {site['site_id']}: {site_timeseries_data.height} rows",
                 flush=True,
             )
             processed_sites += 1

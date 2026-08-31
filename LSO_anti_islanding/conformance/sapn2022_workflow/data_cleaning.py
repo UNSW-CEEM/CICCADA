@@ -114,7 +114,7 @@ def _utc_datetime_expression(data):
             return utc_expression.dt.replace_time_zone("UTC")
         return utc_expression.dt.convert_time_zone("UTC")
     raise TypeError(
-        "utc_tstamp must be a string or datetime column, " f"not {utc_dtype!r}."
+        f"utc_tstamp must be a string or datetime column, not {utc_dtype!r}."
     )
 
 
