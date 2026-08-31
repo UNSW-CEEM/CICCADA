@@ -1,4 +1,4 @@
-"""Typed configuration for the Ausgrid foundation pipeline."""
+"""Typed configuration for the DNSP foundation pipeline."""
 
 from __future__ import annotations
 

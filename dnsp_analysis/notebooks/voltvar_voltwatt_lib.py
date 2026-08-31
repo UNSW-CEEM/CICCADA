@@ -31,7 +31,7 @@ WHAT IS DELIBERATELY OUT OF SCOPE
 --------------------------------------------------------------------------
 - `S_99` / `empirical_limit_basis` and the Method A curtailment-energy
   estimate (`curtailment_voltvar`, `curtailment_eligible`). Both need an
-  uncurtailed-PV counterfactual, which the Ausgrid pipeline has not built
+  uncurtailed-PV counterfactual, which the DNSP pipeline has not built
   yet (METHODOLOGY_GATES.md gate 7: "Delivery 3 must estimate counterfactual
   PV ... Not estimated in Delivery 2"). Only the Q_impact/capability
   classification against the *required* curve is reproduced here.
@@ -181,7 +181,7 @@ def classify_voltvar_interval(
 #    explore_plots.py::plot_vvar_month_scatter, recoloured by the full
 #    classify_voltvar_interval() status instead of a simple in/out-of-band flag.
 # ===========================================================================
-def plot_vvar_month_scatter_ausgrid(scatter_df, 
+def plot_vvar_month_scatter(scatter_df, 
                                     serial, 
                                     capacity_kw, 
                                     period_label,
@@ -269,7 +269,7 @@ def plot_vvar_month_scatter_ausgrid(scatter_df,
 #    the source exactly; capability clamping is only applied in the monthly
 #    scatter above, not here).
 # ===========================================================================
-def plot_operational_ausgrid(df_day, serial, capacity_kw, zoom_date, manufacturer="", figsize=(13, 13.5)):
+def plot_operational_dnsp(df_day, serial, capacity_kw, zoom_date, manufacturer="", figsize=(13, 13.5)):
     """5-panel daily plot for Volt-Watt + Volt-Var, ported from explore_plots.plot_operational.
 
     df_day needs columns: timestamp_local (tz-naive local datetime), voltage,

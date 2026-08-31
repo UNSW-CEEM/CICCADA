@@ -1,4 +1,4 @@
-"""Convenience wrapper around the installed `ausgrid-foundation` command."""
+"""Convenience wrapper around the installed `dnsp-foundation` command."""
 
 from __future__ import annotations
 

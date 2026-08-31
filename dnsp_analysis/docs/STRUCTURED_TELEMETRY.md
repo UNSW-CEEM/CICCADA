@@ -11,7 +11,7 @@
 7. Only then type the exact full-run confirmation.
 
 Your existing `analysis.toml` remains valid. The optional `[structured_telemetry]` section in
-`analysis.example.toml` exposes the phase-profile thresholds. Because Ausgrid has
+`analysis.example.toml` exposes the phase-profile thresholds. Because DNSP has
 confirmed the voltage is at the revenue meter, setting
 `measurement_location = "revenue_meter"` is recommended.
 

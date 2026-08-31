@@ -27,7 +27,7 @@ from .validation import validate_canonical_phase
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Build and validate the Ausgrid Delivery 1 foundation layer."
+        description="Build and validate the DNSP Delivery 1 foundation layer."
     )
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--month", help="Optional YYYY-MM source month")

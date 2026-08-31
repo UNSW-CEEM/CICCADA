@@ -3,18 +3,18 @@
 ## Why this stage starts with gates
 
 The previous `bms_sa` GHI model was trained on dedicated PV-circuit power
-(`ts.is_pv = true`). Ausgrid supplies revenue-meter net P/Q:
+(`ts.is_pv = true`). DNSP supplies revenue-meter net P/Q:
 
 ```text
 net meter export = PV generation - household demand
 ```
 
-Therefore the old model cannot be applied directly to Ausgrid net export and
+Therefore the old model cannot be applied directly to DNSP net export and
 called uncurtailed PV. The safe sequence is:
 
 1. Build a transparent site-eligibility table.
 2. Verify BOM/NCI temporal coverage.
-3. Map Ausgrid substation coordinates to BOM grid points and quantify distance.
+3. Map DNSP substation coordinates to BOM grid points and quantify distance.
 4. Confirm what the BOM `quality_mask` values mean.
 5. Only then compare candidate load–PV decomposition methods.
 6. Validate decomposition uncertainty before estimating uncurtailed PV.
@@ -51,7 +51,7 @@ derived/irradiance/site_to_bom_grid.parquet
 derived/irradiance/bom_monthly_coverage.parquet
 ```
 
-Ausgrid coordinates are labelled `substation_metadata`. They are not customer
+DNSP coordinates are labelled `substation_metadata`. They are not customer
 coordinates. A short distance to a BOM grid point does not prove that the
 irradiance represents roof-plane irradiance at the customer.
 

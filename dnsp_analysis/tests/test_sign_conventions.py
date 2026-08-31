@@ -91,7 +91,7 @@ def _config(tmp_path) -> FoundationConfig:
 def _write_telemetry(config: FoundationConfig) -> None:
     frame = pd.DataFrame(
         [
-            # Raw ActivePow=800 (importing, per Ausgrid's documented load
+            # Raw ActivePow=800 (importing, per DNSP's documented load
             # convention) with ReactPow=300 (absorbing).
             [101, datetime(2025, 4, 2, 0, 0), "A", 250.0, 2.0, 300.0, 800.0, "2025-04", "one"],
             # Raw ActivePow=-1200 (exporting) with ReactPow=-450 (supplying).

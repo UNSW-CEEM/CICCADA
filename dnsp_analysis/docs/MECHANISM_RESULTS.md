@@ -20,7 +20,7 @@ validated, uncertainty-aware load–PV decomposition and uncurtailed-PV estimate
 
 - P sign and Q sign have separate review states.
 - The current raw-to-derived signs remain hypotheses until the sign notebook
-  stage is reviewed and Ausgrid confirms the provider convention.
+  stage is reviewed and DNSP confirms the provider convention.
 - Curve Q uses generator convention: `+Q` supplying, `-Q` absorbing.
 - Site Q is converted once from persisted positive-absorbing Q by
   `power_conventions.q_generator_from_absorbing*`.

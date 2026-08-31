@@ -27,7 +27,7 @@ notebook = [
 ]
 
 [project.scripts]
-dnsp-foundation = "dnsp.foundation:main"
+dnsp-foundation = "dnsp_analysis.foundation:main"
 dnsp-structured = "dnsp_analysis.structured_pipeline:main"
 
 [tool.setuptools]

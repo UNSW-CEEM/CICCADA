@@ -1,6 +1,6 @@
 # Delivery 1 foundation pipeline
 
-This package builds an auditable local foundation for the Ausgrid AMI DER
+This package builds an auditable local foundation for the DNSP AMI DER
 dataset. It does **not** calculate Volt‑VAr or Volt‑Watt conformance yet.
 
 The primary user interface is
@@ -49,7 +49,7 @@ Copy the example configuration:
 Copy-Item config\analysis.example.toml analysis.toml
 ```
 
-Review `analysis.toml`. Its default paths match the supplied Ausgrid files.
+Review `analysis.toml`. Its default paths match the supplied DNSP files.
 
 ## Working assumptions
 
@@ -94,19 +94,19 @@ The full-run section is locked until the notebook variable
 After validating the notebook flow, the same sample can be run non-interactively:
 
 ```powershell
-ausgrid-foundation --config analysis.toml --month 2025-04 --site-bucket 0
+dnsp-foundation --config analysis.toml --month 2025-04 --site-bucket 0
 ```
 
 Run all buckets for one month:
 
 ```powershell
-ausgrid-foundation --config analysis.toml --month 2025-04
+dnsp-foundation --config analysis.toml --month 2025-04
 ```
 
 Only after scoped results pass validation, run the full dataset explicitly:
 
 ```powershell
-ausgrid-foundation --config analysis.toml --full
+dnsp-foundation --config analysis.toml --full
 ```
 
 The orchestrator refuses an unscoped run unless `--full` is present.
@@ -116,7 +116,7 @@ The orchestrator refuses an unscoped run unless `--full` is present.
 Existing canonical output directories are not replaced by default:
 
 ```powershell
-ausgrid-foundation --config analysis.toml --month 2025-04 --site-bucket 0 --overwrite
+dnsp-foundation --config analysis.toml --month 2025-04 --site-bucket 0 --overwrite
 ```
 
 `--overwrite` is restricted to the configured derived-data directory.
@@ -136,7 +136,7 @@ pytest
 ```
 
 The tests use small synthetic tables. They do not read or modify the full
-Ausgrid dataset.
+DNSP dataset.
 
 ## Important output fields
 

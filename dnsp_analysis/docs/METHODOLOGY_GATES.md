@@ -7,7 +7,7 @@ measurements. A later delivery may change a gate only with recorded evidence.
 |---|---|---|---|
 | 1 | How are household load and PV separated? | No decomposition. P and Q are labelled `net_meter`. | Estimate load, PV and uncertainty before curve comparison. |
 | 2 | How are battery sites handled? | Identified from metadata and excluded from the primary solar-only cohort. They remain available for exploratory plots. | Develop and validate battery separation, or retain exclusion. |
-| 3 | Is the P/Q sign convention verified? | Working configuration is retained, but labelled unverified. Raw P/Q are retained. | Obtain Ausgrid confirmation and run empirical day/night checks. |
+| 3 | Is the P/Q sign convention verified? | Working configuration is retained, but labelled unverified. Raw P/Q are retained. | Obtain DNSP confirmation and run empirical day/night checks. |
 | 4 | Which telemetry phase contains the inverter? | Candidate phases are inferred from power availability and a local day/night export signature, with a method and confidence. | Review mappings; low/unknown mappings are not assessable. |
 | 5 | Are GMT timestamps converted before time logic? | UTC and `Australia/Sydney` local time are both retained. Local date/hour and UTC offset are materialised. | Validation must show only +10:00/+11:00 offsets. |
 | 6 | Is voltage at the inverter terminals? | No. It is labelled `revenue_meter`; zero/invalid readings are excluded from voltage summaries. No line-drop correction is invented. | Treat results as meter-observed evidence, or validate a terminal-voltage model. |
