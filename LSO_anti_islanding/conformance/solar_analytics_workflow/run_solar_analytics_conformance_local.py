@@ -254,6 +254,14 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
                 p_rated=s_rated,
                 lso_threshold=compliance["los_threshold_used"],
                 ov1_threshold=compliance["ov1_threshold_used"],
+                los_lowest_disconnect_voltage=compliance[
+                    "los_lowest_disconnect_voltage"
+                ],
+                ov1_lowest_disconnect_voltage=compliance[
+                    "ov1_lowest_disconnect_voltage"
+                ],
+                consider_lowest_threshold_at_disconnect=
+                    CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
                 overall_pass=compliance["overall_total_pass"],
                 plot_no_responsible_timestamp_days=(
                     PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS

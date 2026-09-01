@@ -20,6 +20,7 @@ PLOT_COLORS = {
     "grid": "#ebebeb",
     "shade": "#7c3aed",
     "shade_extra": "#0891b2",
+    "shade_missing_voltage": "#bfdbfe",
 }
 
 
@@ -94,6 +95,9 @@ def plot_site_compliance_day(
     lso_threshold: float | None,
     ov1_threshold: float | None,
     overall_pass,
+    los_lowest_disconnect_voltage: float | None = None,
+    ov1_lowest_disconnect_voltage: float | None = None,
+    consider_lowest_threshold_at_disconnect: bool = False,
     plot_no_responsible_timestamp_days: bool = False,
     save_path: str | Path | None = None,
 ):
@@ -156,7 +160,8 @@ def plot_site_compliance_day(
     )
     base_responsible_mask = None
     additional_responsible_mask = None
-    disconnected_below_lso_ov1_threshold_mask = None
+    disconnected_missing_voltage_mask = None
+    disconnected_below_threshold_mask = None
     if {"los_responsible", "ov1_responsible"}.issubset(set(plot_df.columns)):
         base_responsible_mask = (
             plot_df["los_responsible"].fill_null(False).cast(pl.Boolean)
@@ -166,9 +171,27 @@ def plot_site_compliance_day(
             plot_df["extra_los_responsible"].fill_null(False).cast(pl.Boolean)
             | plot_df["extra_ov1_responsible"].fill_null(False).cast(pl.Boolean)
         ).to_numpy()
-        disconnected_below_lso_ov1_threshold_mask = (
+        los_signals_available_mask = (
+            plot_df["los_signals_available"].fill_null(False).cast(pl.Boolean).to_numpy()
+            if "los_signals_available" in plot_df.columns
+            else np.zeros(plot_df.height, dtype=bool)
+        )
+        ov1_signals_available_mask = (
+            plot_df["ov1_signals_available"].fill_null(False).cast(pl.Boolean).to_numpy()
+            if "ov1_signals_available" in plot_df.columns
+            else np.zeros(plot_df.height, dtype=bool)
+        )
+        non_responsible_disconnected_mask = (
             plot_df["is_disc"].fill_null(False).cast(pl.Boolean).to_numpy()
             & ~(base_responsible_mask | additional_responsible_mask)
+        )
+        disconnected_missing_voltage_mask = (
+            non_responsible_disconnected_mask
+            & ~los_signals_available_mask
+            & ~ov1_signals_available_mask
+        )
+        disconnected_below_threshold_mask = (
+            non_responsible_disconnected_mask & ~disconnected_missing_voltage_mask
         )
     is_single_phase = len(power_cols) == 1
 
@@ -188,16 +211,30 @@ def plot_site_compliance_day(
 
     for axis in plot_power_axes:
         axis.set_facecolor("white")
-        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
-            np.any(disconnected_below_lso_ov1_threshold_mask)
+        if disconnected_below_threshold_mask is not None and bool(
+            np.any(disconnected_below_threshold_mask)
         ):
             axis.fill_between(
                 x,
                 0,
                 1,
-                where=disconnected_below_lso_ov1_threshold_mask,
+                where=disconnected_below_threshold_mask,
                 transform=axis.get_xaxis_transform(),
                 color="#9ca3af",
+                alpha=0.22,
+                zorder=0,
+                linewidth=0,
+            )
+        if disconnected_missing_voltage_mask is not None and bool(
+            np.any(disconnected_missing_voltage_mask)
+        ):
+            axis.fill_between(
+                x,
+                0,
+                1,
+                where=disconnected_missing_voltage_mask,
+                transform=axis.get_xaxis_transform(),
+                color=PLOT_COLORS["shade_missing_voltage"],
                 alpha=0.22,
                 zorder=0,
                 linewidth=0,
@@ -293,6 +330,7 @@ def plot_site_compliance_day(
                 lso_threshold,
                 PLOT_COLORS["threshold_lso"],
                 ":",
+                1.5,
             )
         )
     if ov1_threshold is not None:
@@ -302,16 +340,43 @@ def plot_site_compliance_day(
                 ov1_threshold,
                 PLOT_COLORS["threshold_ov1"],
                 "-.",
+                1.5,
+            )
+        )
+    if (
+        consider_lowest_threshold_at_disconnect
+        and los_lowest_disconnect_voltage is not None
+    ):
+        thresholds_to_draw.append(
+            (
+                f"LOS lowest: {float(los_lowest_disconnect_voltage):.1f} V",
+                los_lowest_disconnect_voltage,
+                PLOT_COLORS["threshold_lso"],
+                "--",
+                1.1,
+            )
+        )
+    if (
+        consider_lowest_threshold_at_disconnect
+        and ov1_lowest_disconnect_voltage is not None
+    ):
+        thresholds_to_draw.append(
+            (
+                f"OV1 lowest: {float(ov1_lowest_disconnect_voltage):.1f} V",
+                ov1_lowest_disconnect_voltage,
+                PLOT_COLORS["threshold_ov1"],
+                "--",
+                1.1,
             )
         )
 
     for v_ax in voltage_axes:
-        for label, value, color, style in thresholds_to_draw:
+        for label, value, color, style, linewidth in thresholds_to_draw:
             v_ax.axhline(
                 value,
                 color=color,
                 linestyle=style,
-                linewidth=1.5,
+                linewidth=linewidth,
                 alpha=0.95,
                 label=label,
             )
@@ -354,7 +419,7 @@ def plot_site_compliance_day(
     if day_breakdown_text:
         title = f"{title}\n{day_breakdown_text}"
 
-    title_axis.set_title(title, pad=12)
+    fig.suptitle(title, x=0.5, y=0.985, ha="center")
     if is_single_phase:
         ax_main.set_ylabel("Power (kW)")
         ax_main.set_xlabel("Time")
@@ -370,7 +435,7 @@ def plot_site_compliance_day(
         p_ax.spines["right"].set_visible(False)
 
     all_voltage_vals = [v for v in [*v10m_vals, *vinst_vals] if v is not None]
-    for _, value, _, _ in thresholds_to_draw:
+    for _, value, _, _, _ in thresholds_to_draw:
         if value is not None:
             all_voltage_vals.append(value)
     if all_voltage_vals:
@@ -407,113 +472,57 @@ def plot_site_compliance_day(
         mdates.DateFormatter("%H:%M", tz=plot_timezone)
     )
 
+    legend_entries = {}
     if is_single_phase:
-        lines, labels = ax_main.get_legend_handles_labels()
-        v_lines, v_labels = voltage_axes[0].get_legend_handles_labels()
-        if base_responsible_mask is not None and bool(
-            np.any(base_responsible_mask)
-        ):
-            v_lines = v_lines + [
-                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
-            ]
-            v_labels = v_labels + ["EVM event"]
-        if additional_responsible_mask is not None and bool(
-            np.any(additional_responsible_mask)
-        ):
-            v_lines = v_lines + [
-                Patch(
-                    facecolor=PLOT_COLORS["shade_extra"],
-                    alpha=0.18,
-                    edgecolor="none",
-                )
-            ]
-            v_labels = v_labels + [
-                "Additional responsible (lowest-disconnect criterion)"
-            ]
-        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
-            np.any(disconnected_below_lso_ov1_threshold_mask)
-        ):
-            v_lines = v_lines + [
-                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
-            ]
-            v_labels = v_labels + ["Disconnected below responsibility criteria"]
-        ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
+        for axis in (ax_main, voltage_axes[0]):
+            axis_lines, axis_labels = axis.get_legend_handles_labels()
+            for handle, label in zip(axis_lines, axis_labels, strict=True):
+                if label not in legend_entries:
+                    legend_entries[label] = handle
     else:
-        top_lines, top_labels = ax_top.get_legend_handles_labels()
-        top_v_lines, top_v_labels = voltage_axes[0].get_legend_handles_labels()
-        if base_responsible_mask is not None and bool(
-            np.any(base_responsible_mask)
-        ):
-            top_v_lines = top_v_lines + [
-                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
-            ]
-            top_v_labels = top_v_labels + ["EVM event"]
-        if additional_responsible_mask is not None and bool(
-            np.any(additional_responsible_mask)
-        ):
-            top_v_lines = top_v_lines + [
-                Patch(
-                    facecolor=PLOT_COLORS["shade_extra"],
-                    alpha=0.18,
-                    edgecolor="none",
-                )
-            ]
-            top_v_labels = top_v_labels + [
-                "Additional responsible (lowest-disconnect criterion)"
-            ]
-        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
-            np.any(disconnected_below_lso_ov1_threshold_mask)
-        ):
-            top_v_lines = top_v_lines + [
-                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
-            ]
-            top_v_labels = top_v_labels + [
-                "Disconnected below responsibility criteria"
-            ]
-        ax_top.legend(
-            top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
+        for axis in (ax_top, ax_bottom, voltage_axes[0]):
+            axis_lines, axis_labels = axis.get_legend_handles_labels()
+            for handle, label in zip(axis_lines, axis_labels, strict=True):
+                if label not in legend_entries:
+                    legend_entries[label] = handle
+
+    if base_responsible_mask is not None and bool(np.any(base_responsible_mask)):
+        legend_entries["EVM event"] = Patch(
+            facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none"
+        )
+    if additional_responsible_mask is not None and bool(
+        np.any(additional_responsible_mask)
+    ):
+        legend_entries["Additional responsible (lowest-disconnect criterion)"] = Patch(
+            facecolor=PLOT_COLORS["shade_extra"], alpha=0.18, edgecolor="none"
+        )
+    if disconnected_below_threshold_mask is not None and bool(
+        np.any(disconnected_below_threshold_mask)
+    ):
+        legend_entries["Disconnected (below threshold)"] = Patch(
+            facecolor="#9ca3af", alpha=0.22, edgecolor="none"
+        )
+    if disconnected_missing_voltage_mask is not None and bool(
+        np.any(disconnected_missing_voltage_mask)
+    ):
+        legend_entries["Disconnected (missing voltage)"] = Patch(
+            facecolor=PLOT_COLORS["shade_missing_voltage"],
+            alpha=0.22,
+            edgecolor="none",
         )
 
-        bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
-        bottom_v_lines, bottom_v_labels = voltage_axes[1].get_legend_handles_labels()
-        if base_responsible_mask is not None and bool(
-            np.any(base_responsible_mask)
-        ):
-            bottom_v_lines = bottom_v_lines + [
-                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
-            ]
-            bottom_v_labels = bottom_v_labels + ["EVM event"]
-        if additional_responsible_mask is not None and bool(
-            np.any(additional_responsible_mask)
-        ):
-            bottom_v_lines = bottom_v_lines + [
-                Patch(
-                    facecolor=PLOT_COLORS["shade_extra"],
-                    alpha=0.18,
-                    edgecolor="none",
-                )
-            ]
-            bottom_v_labels = bottom_v_labels + [
-                "Additional responsible (lowest-disconnect criterion)"
-            ]
-        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
-            np.any(disconnected_below_lso_ov1_threshold_mask)
-        ):
-            bottom_v_lines = bottom_v_lines + [
-                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
-            ]
-            bottom_v_labels = bottom_v_labels + [
-                "Disconnected below responsibility criteria"
-            ]
-        ax_bottom.legend(
-            bottom_lines + bottom_v_lines,
-            bottom_labels + bottom_v_labels,
-            loc="upper left",
-            ncol=2,
-        )
+    fig.legend(
+        list(legend_entries.values()),
+        list(legend_entries.keys()),
+        loc="upper left",
+        bbox_to_anchor=(0.02, 0.885 if is_single_phase else 0.925),
+        borderaxespad=0,
+        frameon=False,
+        ncol=4 if len(legend_entries) > 8 else 3,
+    )
 
     fig.autofmt_xdate()
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0, 1, 0.80 if is_single_phase else 0.88))
 
     if save_path is not None:
         save_path = Path(save_path)
