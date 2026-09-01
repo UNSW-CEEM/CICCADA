@@ -19,6 +19,7 @@ PLOT_COLORS = {
     "threshold_ov1": "#c62828",
     "grid": "#ebebeb",
     "shade": "#7c3aed",
+    "shade_extra": "#0891b2",
 }
 
 
@@ -153,18 +154,21 @@ def plot_site_compliance_day(
         if "vinst_max" in plot_df.columns
         else [None] * plot_df.height
     )
-    event_active = None
+    base_responsible_mask = None
+    additional_responsible_mask = None
     disconnected_below_lso_ov1_threshold_mask = None
     if {"los_responsible", "ov1_responsible"}.issubset(set(plot_df.columns)):
-        event_active = (
+        base_responsible_mask = (
             plot_df["los_responsible"].fill_null(False).cast(pl.Boolean)
             | plot_df["ov1_responsible"].fill_null(False).cast(pl.Boolean)
-            | plot_df["extra_los_responsible"].fill_null(False).cast(pl.Boolean)
+        ).to_numpy()
+        additional_responsible_mask = (
+            plot_df["extra_los_responsible"].fill_null(False).cast(pl.Boolean)
             | plot_df["extra_ov1_responsible"].fill_null(False).cast(pl.Boolean)
         ).to_numpy()
         disconnected_below_lso_ov1_threshold_mask = (
             plot_df["is_disc"].fill_null(False).cast(pl.Boolean).to_numpy()
-            & ~event_active
+            & ~(base_responsible_mask | additional_responsible_mask)
         )
     is_single_phase = len(power_cols) == 1
 
@@ -198,14 +202,30 @@ def plot_site_compliance_day(
                 zorder=0,
                 linewidth=0,
             )
-        if event_active is not None and bool(np.any(event_active)):
+        if base_responsible_mask is not None and bool(
+            np.any(base_responsible_mask)
+        ):
             axis.fill_between(
                 x,
                 0,
                 1,
-                where=event_active,
+                where=base_responsible_mask,
                 transform=axis.get_xaxis_transform(),
                 color=PLOT_COLORS["shade"],
+                alpha=0.18,
+                zorder=0,
+                linewidth=0,
+            )
+        if additional_responsible_mask is not None and bool(
+            np.any(additional_responsible_mask)
+        ):
+            axis.fill_between(
+                x,
+                0,
+                1,
+                where=additional_responsible_mask,
+                transform=axis.get_xaxis_transform(),
+                color=PLOT_COLORS["shade_extra"],
                 alpha=0.18,
                 zorder=0,
                 linewidth=0,
@@ -307,22 +327,32 @@ def plot_site_compliance_day(
         los_total_compliant_count + ov1_total_compliant_count
     )
     if total_responsible_count == 0:
-        day_label_text = "No responsible timestamps"
+        day_label_text = "Day total: No responsible timestamps"
+        day_breakdown_text = None
     else:
         day_pct = (total_compliant_count / total_responsible_count) * 100.0
-        day_state = "Day pass" if day_pct >= 90.0 else "Day fail"
+        day_state = "Pass" if day_pct >= 90.0 else "Fail"
         day_label_text = (
-            f"{day_state} {day_pct:.1f}% | "
-            f"LOS {los_total_compliant_count}/{los_total_responsible_count} "
-            "responsible | "
-            f"OV1 {ov1_total_compliant_count}/{ov1_total_responsible_count} "
-            "responsible"
+            f"Day total: {day_state} {day_pct:.1f}% "
+            f"({total_compliant_count}/{total_responsible_count})"
         )
+        day_breakdown_text = (
+            f"Base: LOS {los_compliant_count}/{los_responsible_count}, "
+            f"OV1 {ov1_compliant_count}/{ov1_responsible_count}"
+        )
+        if los_extra_responsible_count or ov1_extra_responsible_count:
+            day_breakdown_text = (
+                f"{day_breakdown_text} | Additional compliant: "
+                f"LOS {los_extra_responsible_count}, "
+                f"OV1 {ov1_extra_responsible_count}"
+            )
 
     plot_date = _format_plot_date(day_label, x)
-    title = f"Site example | Date: {plot_date} | {overall_label}"
+    title = f"Site example | Date: {plot_date} | Site: {overall_label}"
     if day_label_text:
         title = f"{title}\n{day_label_text}"
+    if day_breakdown_text:
+        title = f"{title}\n{day_breakdown_text}"
 
     if is_single_phase:
         fig.suptitle(title, x=0.56, y=0.965)
@@ -383,18 +413,33 @@ def plot_site_compliance_day(
     if is_single_phase:
         lines, labels = ax_main.get_legend_handles_labels()
         v_lines, v_labels = voltage_axes[0].get_legend_handles_labels()
-        if event_active is not None and bool(np.any(event_active)):
+        if base_responsible_mask is not None and bool(
+            np.any(base_responsible_mask)
+        ):
             v_lines = v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            v_labels = v_labels + ["Responsible timestamp"]
+            v_labels = v_labels + ["Region exceeding thresholds"]
+        if additional_responsible_mask is not None and bool(
+            np.any(additional_responsible_mask)
+        ):
+            v_lines = v_lines + [
+                Patch(
+                    facecolor=PLOT_COLORS["shade_extra"],
+                    alpha=0.18,
+                    edgecolor="none",
+                )
+            ]
+            v_labels = v_labels + [
+                "Additional responsible (lowest-disconnect criterion)"
+            ]
         if disconnected_below_lso_ov1_threshold_mask is not None and bool(
             np.any(disconnected_below_lso_ov1_threshold_mask)
         ):
             v_lines = v_lines + [
                 Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
             ]
-            v_labels = v_labels + ["Disconnected below threshold"]
+            v_labels = v_labels + ["Disconnected below responsibility criteria"]
         fig.legend(
             lines + v_lines,
             labels + v_labels,
@@ -406,36 +451,70 @@ def plot_site_compliance_day(
     else:
         top_lines, top_labels = ax_top.get_legend_handles_labels()
         top_v_lines, top_v_labels = voltage_axes[0].get_legend_handles_labels()
-        if event_active is not None and bool(np.any(event_active)):
+        if base_responsible_mask is not None and bool(
+            np.any(base_responsible_mask)
+        ):
             top_v_lines = top_v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            top_v_labels = top_v_labels + ["Responsible timestamp"]
+            top_v_labels = top_v_labels + ["Region exceeding thresholds"]
+        if additional_responsible_mask is not None and bool(
+            np.any(additional_responsible_mask)
+        ):
+            top_v_lines = top_v_lines + [
+                Patch(
+                    facecolor=PLOT_COLORS["shade_extra"],
+                    alpha=0.18,
+                    edgecolor="none",
+                )
+            ]
+            top_v_labels = top_v_labels + [
+                "Additional responsible (lowest-disconnect criterion)"
+            ]
         if disconnected_below_lso_ov1_threshold_mask is not None and bool(
             np.any(disconnected_below_lso_ov1_threshold_mask)
         ):
             top_v_lines = top_v_lines + [
                 Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
             ]
-            top_v_labels = top_v_labels + ["Disconnected below threshold"]
+            top_v_labels = top_v_labels + [
+                "Disconnected below responsibility criteria"
+            ]
         ax_top.legend(
             top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
         )
 
         bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
         bottom_v_lines, bottom_v_labels = voltage_axes[1].get_legend_handles_labels()
-        if event_active is not None and bool(np.any(event_active)):
+        if base_responsible_mask is not None and bool(
+            np.any(base_responsible_mask)
+        ):
             bottom_v_lines = bottom_v_lines + [
                 Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
             ]
-            bottom_v_labels = bottom_v_labels + ["Responsible timestamp"]
+            bottom_v_labels = bottom_v_labels + ["Region exceeding thresholds"]
+        if additional_responsible_mask is not None and bool(
+            np.any(additional_responsible_mask)
+        ):
+            bottom_v_lines = bottom_v_lines + [
+                Patch(
+                    facecolor=PLOT_COLORS["shade_extra"],
+                    alpha=0.18,
+                    edgecolor="none",
+                )
+            ]
+            bottom_v_labels = bottom_v_labels + [
+                "Additional responsible (lowest-disconnect criterion)"
+            ]
         if disconnected_below_lso_ov1_threshold_mask is not None and bool(
             np.any(disconnected_below_lso_ov1_threshold_mask)
         ):
             bottom_v_lines = bottom_v_lines + [
                 Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
             ]
-            bottom_v_labels = bottom_v_labels + ["Disconnected below threshold"]
+            bottom_v_labels = bottom_v_labels + [
+                "Disconnected below responsibility criteria"
+            ]
         ax_bottom.legend(
             bottom_lines + bottom_v_lines,
             bottom_labels + bottom_v_labels,
@@ -552,7 +631,7 @@ def plot_method_threshold_overlay_day(
         if event_spans:
             overlay_spans.append(
                 {
-                    "label": "Responsible timestamp",
+                    "label": "Region exceeding thresholds",
                     "color": PLOT_COLORS["shade"],
                     "alpha": 0.22,
                     "spans": event_spans,
