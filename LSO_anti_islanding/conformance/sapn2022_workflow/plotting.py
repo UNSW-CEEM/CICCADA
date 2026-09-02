@@ -97,7 +97,6 @@ def plot_site_compliance_day(
     overall_pass,
     los_lowest_disconnect_voltage: float | None = None,
     ov1_lowest_disconnect_voltage: float | None = None,
-    consider_lowest_threshold_at_disconnect: bool = False,
     plot_no_responsible_timestamp_days: bool = False,
     save_path: str | Path | None = None,
 ):
@@ -119,26 +118,34 @@ def plot_site_compliance_day(
 
     los_responsible_count = int(df.get_column("los_responsible").sum() or 0)
     los_compliant_count = int(df.get_column("los_compliant").sum() or 0)
-    los_extra_responsible_count = int(
-        df.get_column("extra_los_responsible").sum() or 0
+    los_disconnect_support_added_count = int(
+        df.get_column("los_disconnect_support_added").sum() or 0
     )
     ov1_responsible_count = int(df.get_column("ov1_responsible").sum() or 0)
     ov1_compliant_count = int(df.get_column("ov1_compliant").sum() or 0)
-    ov1_extra_responsible_count = int(
-        df.get_column("extra_ov1_responsible").sum() or 0
+    ov1_disconnect_support_added_count = int(
+        df.get_column("ov1_disconnect_support_added").sum() or 0
     )
-    los_total_responsible_count = (
-        los_responsible_count + los_extra_responsible_count
+    los_disconnect_supported_responsible_count = (
+        los_responsible_count + los_disconnect_support_added_count
     )
-    los_total_compliant_count = los_compliant_count + los_extra_responsible_count
-    ov1_total_responsible_count = (
-        ov1_responsible_count + ov1_extra_responsible_count
+    los_disconnect_supported_compliant_count = (
+        los_compliant_count + los_disconnect_support_added_count
     )
-    ov1_total_compliant_count = ov1_compliant_count + ov1_extra_responsible_count
-    total_responsible_count = (
-        los_total_responsible_count + ov1_total_responsible_count
+    ov1_disconnect_supported_responsible_count = (
+        ov1_responsible_count + ov1_disconnect_support_added_count
     )
-    if total_responsible_count == 0 and not plot_no_responsible_timestamp_days:
+    ov1_disconnect_supported_compliant_count = (
+        ov1_compliant_count + ov1_disconnect_support_added_count
+    )
+    disconnect_supported_responsible_count = (
+        los_disconnect_supported_responsible_count
+        + ov1_disconnect_supported_responsible_count
+    )
+    if (
+        disconnect_supported_responsible_count == 0
+        and not plot_no_responsible_timestamp_days
+    ):
         return
 
     plot_df = df.sort("local_tstamp")
@@ -168,30 +175,20 @@ def plot_site_compliance_day(
             | plot_df["ov1_responsible"].fill_null(False).cast(pl.Boolean)
         ).to_numpy()
         additional_responsible_mask = (
-            plot_df["extra_los_responsible"].fill_null(False).cast(pl.Boolean)
-            | plot_df["extra_ov1_responsible"].fill_null(False).cast(pl.Boolean)
+            plot_df["los_disconnect_support_added"].fill_null(False).cast(pl.Boolean)
+            | plot_df["ov1_disconnect_support_added"].fill_null(False).cast(pl.Boolean)
         ).to_numpy()
-        los_signals_available_mask = (
-            plot_df["los_signals_available"].fill_null(False).cast(pl.Boolean).to_numpy()
-            if "los_signals_available" in plot_df.columns
-            else np.zeros(plot_df.height, dtype=bool)
-        )
-        ov1_signals_available_mask = (
-            plot_df["ov1_signals_available"].fill_null(False).cast(pl.Boolean).to_numpy()
-            if "ov1_signals_available" in plot_df.columns
-            else np.zeros(plot_df.height, dtype=bool)
-        )
-        non_responsible_disconnected_mask = (
-            plot_df["is_disc"].fill_null(False).cast(pl.Boolean).to_numpy()
-            & ~(base_responsible_mask | additional_responsible_mask)
-        )
         disconnected_missing_voltage_mask = (
-            non_responsible_disconnected_mask
-            & ~los_signals_available_mask
-            & ~ov1_signals_available_mask
+            plot_df["disconnected_unknown_voltage"]
+            .fill_null(False)
+            .cast(pl.Boolean)
+            .to_numpy()
         )
         disconnected_below_threshold_mask = (
-            non_responsible_disconnected_mask & ~disconnected_missing_voltage_mask
+            plot_df["disconnected_below_threshold"]
+            .fill_null(False)
+            .cast(pl.Boolean)
+            .to_numpy()
         )
     is_single_phase = len(power_cols) == 1
 
@@ -343,10 +340,7 @@ def plot_site_compliance_day(
                 1.5,
             )
         )
-    if (
-        consider_lowest_threshold_at_disconnect
-        and los_lowest_disconnect_voltage is not None
-    ):
+    if los_lowest_disconnect_voltage is not None:
         thresholds_to_draw.append(
             (
                 f"LOS lowest: {float(los_lowest_disconnect_voltage):.1f} V",
@@ -356,10 +350,7 @@ def plot_site_compliance_day(
                 1.1,
             )
         )
-    if (
-        consider_lowest_threshold_at_disconnect
-        and ov1_lowest_disconnect_voltage is not None
-    ):
+    if ov1_lowest_disconnect_voltage is not None:
         thresholds_to_draw.append(
             (
                 f"OV1 lowest: {float(ov1_lowest_disconnect_voltage):.1f} V",
@@ -388,28 +379,33 @@ def plot_site_compliance_day(
         if overall_pass is False
         else "Unassessed"
     )
-    total_compliant_count = (
-        los_total_compliant_count + ov1_total_compliant_count
+    disconnect_supported_compliant_count = (
+        los_disconnect_supported_compliant_count
+        + ov1_disconnect_supported_compliant_count
     )
-    if total_responsible_count == 0:
+    if disconnect_supported_responsible_count == 0:
         day_label_text = "Day total: No responsible timestamps"
         day_breakdown_text = None
     else:
-        day_pct = (total_compliant_count / total_responsible_count) * 100.0
+        day_pct = (
+            disconnect_supported_compliant_count
+            / disconnect_supported_responsible_count
+        ) * 100.0
         day_state = "Pass" if day_pct >= 90.0 else "Fail"
         day_label_text = (
             f"Day total: {day_state} {day_pct:.1f}% "
-            f"({total_compliant_count}/{total_responsible_count})"
+            f"({disconnect_supported_compliant_count}/"
+            f"{disconnect_supported_responsible_count})"
         )
         day_breakdown_text = (
             f"Base: LOS {los_compliant_count}/{los_responsible_count}, "
             f"OV1 {ov1_compliant_count}/{ov1_responsible_count}"
         )
-        if los_extra_responsible_count or ov1_extra_responsible_count:
+        if los_disconnect_support_added_count or ov1_disconnect_support_added_count:
             day_breakdown_text = (
                 f"{day_breakdown_text} | Additional compliant: "
-                f"LOS {los_extra_responsible_count}, "
-                f"OV1 {ov1_extra_responsible_count}"
+                f"LOS {los_disconnect_support_added_count}, "
+                f"OV1 {ov1_disconnect_support_added_count}"
             )
 
     plot_date = _format_plot_date(day_label, x)

@@ -80,10 +80,10 @@ site_compliance = pl.read_database(
     query=f"""
         SELECT
             site_id,
-            los_threshold_used,
-            ov1_threshold_used
+            los_calculated_threshold_used AS los_threshold_used,
+            ov1_calculated_threshold_used AS ov1_threshold_used
         FROM {CONFORMANCE_TABLE}
-        WHERE assessment_status <> 'unassessed'
+        WHERE disconnect_supported_assessment_status <> 'unassessed'
     """,
     connection=engine,
 )

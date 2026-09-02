@@ -9,42 +9,70 @@ from solar_analytics_workflow.plotting import (
 )
 
 SITE_COMPLIANCE_NAME = "site_compliance.csv"
+SITE_COMPLIANCE_FINAL_TABLE_NAME = "site_compliance_final_table.csv"
+SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME = "site_compliance_time_distribution.csv"
 CONFORMANCE_EXCLUSIONS_NAME = "conformance_exclusions.csv"
 
 SITE_COMPLIANCE_SCHEMA = {
     "site_id": pl.Int64,
     "threshold_method": pl.Utf8,
-    "los_responsible_count": pl.Int64,
-    "los_compliant_count": pl.Int64,
-    "los_compliance_pct": pl.Float64,
-    "los_pass": pl.Boolean,
-    "los_threshold_used": pl.Float64,
+    "los_calculated_threshold_used": pl.Float64,
+    "ov1_calculated_threshold_used": pl.Float64,
     "los_lowest_disconnect_voltage": pl.Float64,
-    "los_extra_responsible_count": pl.Int64,
-    "los_total_responsible_count": pl.Int64,
-    "los_total_compliant_count": pl.Int64,
-    "los_total_compliance_pct": pl.Float64,
-    "los_total_pass": pl.Boolean,
-    "ov1_responsible_count": pl.Int64,
-    "ov1_compliant_count": pl.Int64,
-    "ov1_compliance_pct": pl.Float64,
-    "ov1_pass": pl.Boolean,
-    "ov1_threshold_used": pl.Float64,
     "ov1_lowest_disconnect_voltage": pl.Float64,
-    "ov1_extra_responsible_count": pl.Int64,
-    "ov1_total_responsible_count": pl.Int64,
-    "ov1_total_compliant_count": pl.Int64,
-    "ov1_total_compliance_pct": pl.Float64,
-    "ov1_total_pass": pl.Boolean,
-    "overall_responsible_count": pl.Int64,
-    "overall_compliant_count": pl.Int64,
-    "overall_compliance_pct": pl.Float64,
-    "overall_pass": pl.Boolean,
-    "overall_total_responsible_count": pl.Int64,
-    "overall_total_compliant_count": pl.Int64,
-    "overall_total_compliance_pct": pl.Float64,
-    "overall_total_pass": pl.Boolean,
-    "consider_lowest_threshold_at_disconnect": pl.Boolean,
+    "los_lowest_disconnect_threshold_used": pl.Float64,
+    "ov1_lowest_disconnect_threshold_used": pl.Float64,
+    "los_calculated_responsible_count": pl.Int64,
+    "los_calculated_compliant_count": pl.Int64,
+    "los_calculated_compliance_pct": pl.Float64,
+    "los_calculated_pass": pl.Boolean,
+    "ov1_calculated_responsible_count": pl.Int64,
+    "ov1_calculated_compliant_count": pl.Int64,
+    "ov1_calculated_compliance_pct": pl.Float64,
+    "ov1_calculated_pass": pl.Boolean,
+    "overall_calculated_responsible_count": pl.Int64,
+    "overall_calculated_compliant_count": pl.Int64,
+    "overall_calculated_compliance_pct": pl.Float64,
+    "overall_calculated_pass": pl.Boolean,
+    "los_disconnect_support_added_count": pl.Int64,
+    "ov1_disconnect_support_added_count": pl.Int64,
+    "los_disconnect_supported_responsible_count": pl.Int64,
+    "los_disconnect_supported_compliant_count": pl.Int64,
+    "los_disconnect_supported_compliance_pct": pl.Float64,
+    "los_disconnect_supported_pass": pl.Boolean,
+    "ov1_disconnect_supported_responsible_count": pl.Int64,
+    "ov1_disconnect_supported_compliant_count": pl.Int64,
+    "ov1_disconnect_supported_compliance_pct": pl.Float64,
+    "ov1_disconnect_supported_pass": pl.Boolean,
+    "overall_disconnect_supported_responsible_count": pl.Int64,
+    "overall_disconnect_supported_compliant_count": pl.Int64,
+    "overall_disconnect_supported_compliance_pct": pl.Float64,
+    "overall_disconnect_supported_pass": pl.Boolean,
+    "los_lowest_disconnect_responsible_count": pl.Int64,
+    "los_lowest_disconnect_compliant_count": pl.Int64,
+    "los_lowest_disconnect_compliance_pct": pl.Float64,
+    "los_lowest_disconnect_pass": pl.Boolean,
+    "ov1_lowest_disconnect_responsible_count": pl.Int64,
+    "ov1_lowest_disconnect_compliant_count": pl.Int64,
+    "ov1_lowest_disconnect_compliance_pct": pl.Float64,
+    "ov1_lowest_disconnect_pass": pl.Boolean,
+    "overall_lowest_disconnect_responsible_count": pl.Int64,
+    "overall_lowest_disconnect_compliant_count": pl.Int64,
+    "overall_lowest_disconnect_compliance_pct": pl.Float64,
+    "overall_lowest_disconnect_pass": pl.Boolean,
+}
+
+SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA = {
+    "site_id": pl.Int64,
+    "threshold_method": pl.Utf8,
+    "case": pl.Utf8,
+    "eligible_timestamp_count": pl.Int64,
+    "compliant_timestamp_count": pl.Int64,
+    "non_compliant_timestamp_count": pl.Int64,
+    "compliant_pct": pl.Float64,
+    "non_compliant_pct": pl.Float64,
+    "disconnected_below_threshold_count": pl.Int64,
+    "disconnected_unknown_voltage_count": pl.Int64,
 }
 
 CONFORMANCE_EXCLUSIONS_SCHEMA = {
@@ -92,6 +120,112 @@ def build_sola_site_compliance(results):
         .cast(SITE_COMPLIANCE_SCHEMA, strict=False)
         .sort("site_id")
     )
+
+
+def write_method_compliance_final_table(site_compliance, output_path):
+    calculated = (
+        site_compliance.group_by("threshold_method", maintain_order=True)
+        .agg(
+            [
+                pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
+                pl.col("overall_calculated_pass")
+                .is_not_null()
+                .sum()
+                .alias("Sites Assessed"),
+                pl.col("overall_calculated_pass")
+                .is_null()
+                .sum()
+                .alias("Unassessed Sites"),
+                pl.col("overall_calculated_pass")
+                .eq(True)
+                .fill_null(False)
+                .sum()
+                .alias("Conformant Sites"),
+                pl.col("overall_calculated_pass")
+                .eq(False)
+                .fill_null(False)
+                .sum()
+                .alias("Non-Conformant Sites"),
+            ]
+        )
+        .with_columns(pl.lit("calculated").alias("Case"))
+    )
+    disconnect_supported = (
+        site_compliance.group_by("threshold_method", maintain_order=True)
+        .agg(
+            [
+                pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
+                pl.col("overall_disconnect_supported_pass")
+                .is_not_null()
+                .sum()
+                .alias("Sites Assessed"),
+                pl.col("overall_disconnect_supported_pass")
+                .is_null()
+                .sum()
+                .alias("Unassessed Sites"),
+                pl.col("overall_disconnect_supported_pass")
+                .eq(True)
+                .fill_null(False)
+                .sum()
+                .alias("Conformant Sites"),
+                pl.col("overall_disconnect_supported_pass")
+                .eq(False)
+                .fill_null(False)
+                .sum()
+                .alias("Non-Conformant Sites"),
+            ]
+        )
+        .with_columns(pl.lit("disconnect_supported").alias("Case"))
+    )
+    lowest_disconnect = (
+        site_compliance.group_by("threshold_method", maintain_order=True)
+        .agg(
+            [
+                pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
+                pl.col("overall_lowest_disconnect_pass")
+                .is_not_null()
+                .sum()
+                .alias("Sites Assessed"),
+                pl.col("overall_lowest_disconnect_pass")
+                .is_null()
+                .sum()
+                .alias("Unassessed Sites"),
+                pl.col("overall_lowest_disconnect_pass")
+                .eq(True)
+                .fill_null(False)
+                .sum()
+                .alias("Conformant Sites"),
+                pl.col("overall_lowest_disconnect_pass")
+                .eq(False)
+                .fill_null(False)
+                .sum()
+                .alias("Non-Conformant Sites"),
+            ]
+        )
+        .with_columns(pl.lit("lowest_disconnect").alias("Case"))
+    )
+    final_table = (
+        pl.concat([calculated, disconnect_supported, lowest_disconnect])
+        .with_columns(
+            (pl.col("Conformant Sites") / pl.col("Sites Assessed") * 100.0)
+            .round(2)
+            .alias("Conformance Percentage (% of Assessed)")
+        )
+        .rename({"threshold_method": "Method Used"})
+        .select(
+            [
+                "Method Used",
+                "Case",
+                "Eligible Sites After Filtering",
+                "Sites Assessed",
+                "Unassessed Sites",
+                "Conformant Sites",
+                "Non-Conformant Sites",
+                "Conformance Percentage (% of Assessed)",
+            ]
+        )
+    )
+    final_table.write_csv(output_path)
 
 
 def build_sola_conformance_exclusions(results):

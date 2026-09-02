@@ -17,7 +17,6 @@ from core.phase_a import SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA, run_phase_a_for_sit
 from core.phase_b import run_phase_b_for_site
 from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
-    CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
     DAY_ANALYSIS_START,
     DAY_END,
     DAY_EXTRACTION_START,
@@ -34,6 +33,13 @@ from solar_analytics_workflow.data_cleaning import (
 )
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
 from solar_analytics_workflow.rated_capacity import add_s_rated_capacity
+from solar_analytics_workflow.reporting import (
+    SITE_COMPLIANCE_SCHEMA as REPORTING_SITE_COMPLIANCE_SCHEMA,
+)
+from solar_analytics_workflow.reporting import (
+    SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
+    write_method_compliance_final_table,
+)
 from solar_analytics_workflow.site_day_filtering import (
     summarize_solar_analytics_day_eligibility,
 )
@@ -54,42 +60,11 @@ EVM_TRINO_SITE_BATCH_SIZE = 10  # num sites queried at once
 # these are the columns for conformance results that will be pushed to trino
 # and utilised for grafana plotting
 SITE_COMPLIANCE_SCHEMA = {
-    "site_id": pl.Int64,
-    "threshold_method": pl.Utf8,
-    "assessment_status": pl.Utf8,
-    "overall_pass": pl.Boolean,
-    "los_responsible_count": pl.Int64,
-    "los_compliant_count": pl.Int64,
-    "los_pass": pl.Boolean,
-    "los_compliance_pct": pl.Float64,
-    "los_threshold_used": pl.Float64,
-    "ov1_responsible_count": pl.Int64,
-    "ov1_compliant_count": pl.Int64,
-    "ov1_pass": pl.Boolean,
-    "ov1_compliance_pct": pl.Float64,
-    "ov1_threshold_used": pl.Float64,
-    "los_lowest_disconnect_voltage": pl.Float64,
-    "los_extra_responsible_count": pl.Int64,
-    "los_total_responsible_count": pl.Int64,
-    "los_total_compliant_count": pl.Int64,
-    "los_total_compliance_pct": pl.Float64,
-    "los_total_pass": pl.Boolean,
-    "ov1_lowest_disconnect_voltage": pl.Float64,
-    "ov1_extra_responsible_count": pl.Int64,
-    "ov1_total_responsible_count": pl.Int64,
-    "ov1_total_compliant_count": pl.Int64,
-    "ov1_total_compliance_pct": pl.Float64,
-    "ov1_total_pass": pl.Boolean,
-    "overall_responsible_count": pl.Int64,
-    "overall_compliant_count": pl.Int64,
-    "overall_compliance_pct": pl.Float64,
-    "overall_total_responsible_count": pl.Int64,
-    "overall_total_compliant_count": pl.Int64,
-    "overall_total_compliance_pct": pl.Float64,
-    "overall_total_pass": pl.Boolean,
-    "consider_lowest_threshold_at_disconnect": pl.Boolean,
+    **REPORTING_SITE_COMPLIANCE_SCHEMA,
+    "disconnect_supported_assessment_status": pl.Utf8,
 }
 site_compliance_rows = []
+site_compliance_time_distribution_rows = []
 site_level_various_voltage_rows = []
 
 # Select distinct site-level metadata from the eligible inverter cohort.
@@ -280,6 +255,12 @@ try:
         conformance_output_dir / "solA_conformance_trino_summary.csv"
     )
     pl.DataFrame(schema=SITE_COMPLIANCE_SCHEMA).write_csv(conformance_output_path)
+    time_distribution_output_path = (
+        conformance_output_dir / "solA_conformance_trino_time_distribution.csv"
+    )
+    pl.DataFrame(schema=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA).write_csv(
+        time_distribution_output_path
+    )
     site_level_various_voltages_path = (
         conformance_output_dir / "site_level_various_voltages.csv"
     )
@@ -447,17 +428,147 @@ try:
                     phase_a_result["site_level_various_voltages"]
                 )
             for threshold_method in PHASE_B_METHODS:
-                phase_b_result = run_phase_b_for_site(
+                phase_b_calculated = run_phase_b_for_site(
                     site["site_id"],
                     prepared_site_days,
                     site_thresholds=phase_a_result["site_thresholds"],
                     threshold_method=threshold_method,
-                    consider_lowest_threshold_at_disconnect=
-                        CONSIDER_LOWEST_THRESHOLD_AT_DISCONNECT,
+                    threshold_source="calculated",
+                    disconnect_support=False,
+                    tau=0.0,
                 )
-                # get columns to save results in csv later to be pushed on trino
-                site_compliance = phase_b_result["site_compliance"].to_dicts()[0]
-                overall_pass = site_compliance["overall_total_pass"]
+                phase_b_disconnect_supported = run_phase_b_for_site(
+                    site["site_id"],
+                    prepared_site_days,
+                    site_thresholds=phase_a_result["site_thresholds"],
+                    threshold_method=threshold_method,
+                    threshold_source="calculated",
+                    disconnect_support=True,
+                    tau=0.0,
+                )
+                phase_b_lowest_disconnect = run_phase_b_for_site(
+                    site["site_id"],
+                    prepared_site_days,
+                    site_thresholds=phase_a_result["site_thresholds"],
+                    threshold_method=threshold_method,
+                    threshold_source="lowest_disconnect",
+                    disconnect_support=False,
+                    tau=0.0,
+                )
+
+                calculated_compliance = (
+                    phase_b_calculated["site_compliance"]
+                    .select(
+                        [
+                            "site_id",
+                            "threshold_method",
+                            "los_threshold_used",
+                            "ov1_threshold_used",
+                            "los_lowest_disconnect_voltage",
+                            "ov1_lowest_disconnect_voltage",
+                            "los_responsible_count",
+                            "los_compliant_count",
+                            "los_compliance_pct",
+                            "los_pass",
+                            "ov1_responsible_count",
+                            "ov1_compliant_count",
+                            "ov1_compliance_pct",
+                            "ov1_pass",
+                            "overall_responsible_count",
+                            "overall_compliant_count",
+                            "overall_compliance_pct",
+                            "overall_pass",
+                        ]
+                    )
+                    .rename(
+                        {
+                            "los_threshold_used": "los_calculated_threshold_used",
+                            "ov1_threshold_used": "ov1_calculated_threshold_used",
+                            "los_responsible_count": "los_calculated_responsible_count",
+                            "los_compliant_count": "los_calculated_compliant_count",
+                            "los_compliance_pct": "los_calculated_compliance_pct",
+                            "los_pass": "los_calculated_pass",
+                            "ov1_responsible_count": "ov1_calculated_responsible_count",
+                            "ov1_compliant_count": "ov1_calculated_compliant_count",
+                            "ov1_compliance_pct": "ov1_calculated_compliance_pct",
+                            "ov1_pass": "ov1_calculated_pass",
+                            "overall_responsible_count": "overall_calculated_responsible_count",
+                            "overall_compliant_count": "overall_calculated_compliant_count",
+                            "overall_compliance_pct": "overall_calculated_compliance_pct",
+                            "overall_pass": "overall_calculated_pass",
+                        }
+                    )
+                )
+                disconnect_supported_compliance = (
+                    phase_b_disconnect_supported["site_compliance"]
+                    .select(
+                        [
+                            "los_disconnect_support_added_count",
+                            "ov1_disconnect_support_added_count",
+                            "los_disconnect_supported_responsible_count",
+                            "los_disconnect_supported_compliant_count",
+                            "los_disconnect_supported_compliance_pct",
+                            "los_disconnect_supported_pass",
+                            "ov1_disconnect_supported_responsible_count",
+                            "ov1_disconnect_supported_compliant_count",
+                            "ov1_disconnect_supported_compliance_pct",
+                            "ov1_disconnect_supported_pass",
+                            "overall_disconnect_supported_responsible_count",
+                            "overall_disconnect_supported_compliant_count",
+                            "overall_disconnect_supported_compliance_pct",
+                            "overall_disconnect_supported_pass",
+                        ]
+                    )
+                )
+                lowest_disconnect_compliance = (
+                    phase_b_lowest_disconnect["site_compliance"]
+                    .select(
+                        [
+                            "los_threshold_used",
+                            "ov1_threshold_used",
+                            "los_responsible_count",
+                            "los_compliant_count",
+                            "los_compliance_pct",
+                            "los_pass",
+                            "ov1_responsible_count",
+                            "ov1_compliant_count",
+                            "ov1_compliance_pct",
+                            "ov1_pass",
+                            "overall_responsible_count",
+                            "overall_compliant_count",
+                            "overall_compliance_pct",
+                            "overall_pass",
+                        ]
+                    )
+                    .rename(
+                        {
+                            "los_threshold_used": "los_lowest_disconnect_threshold_used",
+                            "ov1_threshold_used": "ov1_lowest_disconnect_threshold_used",
+                            "los_responsible_count": "los_lowest_disconnect_responsible_count",
+                            "los_compliant_count": "los_lowest_disconnect_compliant_count",
+                            "los_compliance_pct": "los_lowest_disconnect_compliance_pct",
+                            "los_pass": "los_lowest_disconnect_pass",
+                            "ov1_responsible_count": "ov1_lowest_disconnect_responsible_count",
+                            "ov1_compliant_count": "ov1_lowest_disconnect_compliant_count",
+                            "ov1_compliance_pct": "ov1_lowest_disconnect_compliance_pct",
+                            "ov1_pass": "ov1_lowest_disconnect_pass",
+                            "overall_responsible_count": "overall_lowest_disconnect_responsible_count",
+                            "overall_compliant_count": "overall_lowest_disconnect_compliant_count",
+                            "overall_compliance_pct": "overall_lowest_disconnect_compliance_pct",
+                            "overall_pass": "overall_lowest_disconnect_pass",
+                        }
+                    )
+                )
+                site_compliance_frame = pl.concat(
+                    [
+                        calculated_compliance,
+                        disconnect_supported_compliance,
+                        lowest_disconnect_compliance,
+                    ],
+                    how="horizontal",
+                )
+                site_compliance = site_compliance_frame.to_dicts()[0]
+                overall_pass = site_compliance["overall_disconnect_supported_pass"]
                 if overall_pass is None:
                     assessment_status = "unassessed"
                 elif overall_pass:
@@ -465,9 +576,95 @@ try:
                 else:
                     assessment_status = "non-conformant"
                 site_compliance_rows.append(
-                    {**site_compliance, "assessment_status": assessment_status}
+                    {
+                        **site_compliance,
+                        "disconnect_supported_assessment_status": assessment_status,
+                    }
                 )
-                # print("yo")
+
+                calculated_distribution = phase_b_calculated["site_compliance"].select(
+                    [
+                        "site_id",
+                        "threshold_method",
+                        pl.lit("calculated").alias("case"),
+                        pl.col("overall_responsible_count").alias(
+                            "eligible_timestamp_count"
+                        ),
+                        pl.col("overall_compliant_count").alias(
+                            "compliant_timestamp_count"
+                        ),
+                        (
+                            pl.col("overall_responsible_count")
+                            - pl.col("overall_compliant_count")
+                        ).alias("non_compliant_timestamp_count"),
+                        pl.col("overall_compliance_pct").alias("compliant_pct"),
+                        (100.0 - pl.col("overall_compliance_pct")).alias(
+                            "non_compliant_pct"
+                        ),
+                        "disconnected_below_threshold_count",
+                        "disconnected_unknown_voltage_count",
+                    ]
+                )
+                disconnect_supported_distribution = phase_b_disconnect_supported[
+                    "site_compliance"
+                ].select(
+                    [
+                        "site_id",
+                        "threshold_method",
+                        pl.lit("disconnect_supported").alias("case"),
+                        pl.col("overall_disconnect_supported_responsible_count").alias(
+                            "eligible_timestamp_count"
+                        ),
+                        pl.col("overall_disconnect_supported_compliant_count").alias(
+                            "compliant_timestamp_count"
+                        ),
+                        (
+                            pl.col("overall_disconnect_supported_responsible_count")
+                            - pl.col("overall_disconnect_supported_compliant_count")
+                        ).alias("non_compliant_timestamp_count"),
+                        pl.col("overall_disconnect_supported_compliance_pct").alias(
+                            "compliant_pct"
+                        ),
+                        (
+                            100.0
+                            - pl.col("overall_disconnect_supported_compliance_pct")
+                        ).alias("non_compliant_pct"),
+                        "disconnected_below_threshold_count",
+                        "disconnected_unknown_voltage_count",
+                    ]
+                )
+                lowest_disconnect_distribution = phase_b_lowest_disconnect[
+                    "site_compliance"
+                ].select(
+                    [
+                        "site_id",
+                        "threshold_method",
+                        pl.lit("lowest_disconnect").alias("case"),
+                        pl.col("overall_responsible_count").alias(
+                            "eligible_timestamp_count"
+                        ),
+                        pl.col("overall_compliant_count").alias(
+                            "compliant_timestamp_count"
+                        ),
+                        (
+                            pl.col("overall_responsible_count")
+                            - pl.col("overall_compliant_count")
+                        ).alias("non_compliant_timestamp_count"),
+                        pl.col("overall_compliance_pct").alias("compliant_pct"),
+                        (100.0 - pl.col("overall_compliance_pct")).alias(
+                            "non_compliant_pct"
+                        ),
+                        "disconnected_below_threshold_count",
+                        "disconnected_unknown_voltage_count",
+                    ]
+                )
+                site_compliance_time_distribution_rows.extend(
+                    [
+                        calculated_distribution,
+                        disconnect_supported_distribution,
+                        lowest_disconnect_distribution,
+                    ]
+                )
 
             # investigate
 
@@ -485,6 +682,14 @@ try:
                     include_header=False,
                 )
             site_compliance_rows.clear()
+        if site_compliance_time_distribution_rows:
+            time_distribution = pl.concat(
+                site_compliance_time_distribution_rows,
+                how="vertical",
+            ).cast(SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA, strict=False)
+            with time_distribution_output_path.open("ab") as output_file:
+                time_distribution.write_csv(output_file, include_header=False)
+            site_compliance_time_distribution_rows.clear()
         if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES and site_level_various_voltage_rows:
             site_level_various_voltages = pl.concat(
                 site_level_various_voltage_rows,
@@ -501,44 +706,61 @@ try:
         conformance_output_path,
         schema_overrides=SITE_COMPLIANCE_SCHEMA,
     )
+    write_method_compliance_final_table(
+        site_compliance,
+        conformance_output_dir / "site_compliance_final_table.csv",
+    )
 
     iceberg_exec("DROP TABLE IF EXISTS lso_anti_islanding_conformance")
     iceberg_exec("""
         CREATE TABLE lso_anti_islanding_conformance (
             site_id BIGINT,
             threshold_method VARCHAR,
-            assessment_status VARCHAR,
-            overall_pass BOOLEAN,
-            los_responsible_count BIGINT,
-            los_compliant_count BIGINT,
-            los_pass BOOLEAN,
-            los_compliance_pct DOUBLE,
-            los_threshold_used DOUBLE,
-            ov1_responsible_count BIGINT,
-            ov1_compliant_count BIGINT,
-            ov1_pass BOOLEAN,
-            ov1_compliance_pct DOUBLE,
-            ov1_threshold_used DOUBLE,
+            los_calculated_threshold_used DOUBLE,
+            ov1_calculated_threshold_used DOUBLE,
             los_lowest_disconnect_voltage DOUBLE,
-            los_extra_responsible_count BIGINT,
-            los_total_responsible_count BIGINT,
-            los_total_compliant_count BIGINT,
-            los_total_compliance_pct DOUBLE,
-            los_total_pass BOOLEAN,
             ov1_lowest_disconnect_voltage DOUBLE,
-            ov1_extra_responsible_count BIGINT,
-            ov1_total_responsible_count BIGINT,
-            ov1_total_compliant_count BIGINT,
-            ov1_total_compliance_pct DOUBLE,
-            ov1_total_pass BOOLEAN,
-            overall_responsible_count BIGINT,
-            overall_compliant_count BIGINT,
-            overall_compliance_pct DOUBLE,
-            overall_total_responsible_count BIGINT,
-            overall_total_compliant_count BIGINT,
-            overall_total_compliance_pct DOUBLE,
-            overall_total_pass BOOLEAN,
-            consider_lowest_threshold_at_disconnect BOOLEAN
+            los_lowest_disconnect_threshold_used DOUBLE,
+            ov1_lowest_disconnect_threshold_used DOUBLE,
+            los_calculated_responsible_count BIGINT,
+            los_calculated_compliant_count BIGINT,
+            los_calculated_compliance_pct DOUBLE,
+            los_calculated_pass BOOLEAN,
+            ov1_calculated_responsible_count BIGINT,
+            ov1_calculated_compliant_count BIGINT,
+            ov1_calculated_compliance_pct DOUBLE,
+            ov1_calculated_pass BOOLEAN,
+            overall_calculated_responsible_count BIGINT,
+            overall_calculated_compliant_count BIGINT,
+            overall_calculated_compliance_pct DOUBLE,
+            overall_calculated_pass BOOLEAN,
+            los_disconnect_support_added_count BIGINT,
+            ov1_disconnect_support_added_count BIGINT,
+            los_disconnect_supported_responsible_count BIGINT,
+            los_disconnect_supported_compliant_count BIGINT,
+            los_disconnect_supported_compliance_pct DOUBLE,
+            los_disconnect_supported_pass BOOLEAN,
+            ov1_disconnect_supported_responsible_count BIGINT,
+            ov1_disconnect_supported_compliant_count BIGINT,
+            ov1_disconnect_supported_compliance_pct DOUBLE,
+            ov1_disconnect_supported_pass BOOLEAN,
+            overall_disconnect_supported_responsible_count BIGINT,
+            overall_disconnect_supported_compliant_count BIGINT,
+            overall_disconnect_supported_compliance_pct DOUBLE,
+            overall_disconnect_supported_pass BOOLEAN,
+            los_lowest_disconnect_responsible_count BIGINT,
+            los_lowest_disconnect_compliant_count BIGINT,
+            los_lowest_disconnect_compliance_pct DOUBLE,
+            los_lowest_disconnect_pass BOOLEAN,
+            ov1_lowest_disconnect_responsible_count BIGINT,
+            ov1_lowest_disconnect_compliant_count BIGINT,
+            ov1_lowest_disconnect_compliance_pct DOUBLE,
+            ov1_lowest_disconnect_pass BOOLEAN,
+            overall_lowest_disconnect_responsible_count BIGINT,
+            overall_lowest_disconnect_compliant_count BIGINT,
+            overall_lowest_disconnect_compliance_pct DOUBLE,
+            overall_lowest_disconnect_pass BOOLEAN,
+            disconnect_supported_assessment_status VARCHAR
         )
         WITH (format = 'PARQUET')
     """)
@@ -551,6 +773,174 @@ try:
     )
     print(
         "Uploaded site compliance to lso_anti_islanding_conformance: "
+        f"{rows_written} rows",
+        flush=True,
+    )
+
+    time_distribution = pl.read_csv(
+        time_distribution_output_path,
+        schema_overrides=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
+    )
+    iceberg_exec(
+        "DROP TABLE IF EXISTS lso_anti_islanding_conformance_time_distribution"
+    )
+    iceberg_exec("""
+        CREATE TABLE lso_anti_islanding_conformance_time_distribution (
+            site_id BIGINT,
+            threshold_method VARCHAR,
+            "case" VARCHAR,
+            eligible_timestamp_count BIGINT,
+            compliant_timestamp_count BIGINT,
+            non_compliant_timestamp_count BIGINT,
+            compliant_pct DOUBLE,
+            non_compliant_pct DOUBLE,
+            disconnected_below_threshold_count BIGINT,
+            disconnected_unknown_voltage_count BIGINT
+        )
+        WITH (format = 'PARQUET')
+    """)
+    rows_written = time_distribution.write_database(
+        table_name="lso_anti_islanding_conformance_time_distribution",
+        connection=engine,
+        if_table_exists="append",
+        engine_options={"chunksize": 250, "method": "multi"},
+    )
+    print(
+        "Uploaded time distribution to "
+        "lso_anti_islanding_conformance_time_distribution: "
+        f"{rows_written} rows",
+        flush=True,
+    )
+
+    calculated_final = (
+        site_compliance.group_by("threshold_method", maintain_order=True)
+        .agg(
+            [
+                pl.col("site_id").n_unique().alias("eligible_sites_after_filtering"),
+                pl.col("overall_calculated_pass")
+                .is_not_null()
+                .sum()
+                .alias("sites_assessed"),
+                pl.col("overall_calculated_pass")
+                .is_null()
+                .sum()
+                .alias("unassessed_sites"),
+                pl.col("overall_calculated_pass")
+                .eq(True)
+                .fill_null(False)
+                .sum()
+                .alias("conformant_sites"),
+                pl.col("overall_calculated_pass")
+                .eq(False)
+                .fill_null(False)
+                .sum()
+                .alias("non_conformant_sites"),
+            ]
+        )
+        .with_columns(pl.lit("calculated").alias("case"))
+    )
+    disconnect_supported_final = (
+        site_compliance.group_by("threshold_method", maintain_order=True)
+        .agg(
+            [
+                pl.col("site_id").n_unique().alias("eligible_sites_after_filtering"),
+                pl.col("overall_disconnect_supported_pass")
+                .is_not_null()
+                .sum()
+                .alias("sites_assessed"),
+                pl.col("overall_disconnect_supported_pass")
+                .is_null()
+                .sum()
+                .alias("unassessed_sites"),
+                pl.col("overall_disconnect_supported_pass")
+                .eq(True)
+                .fill_null(False)
+                .sum()
+                .alias("conformant_sites"),
+                pl.col("overall_disconnect_supported_pass")
+                .eq(False)
+                .fill_null(False)
+                .sum()
+                .alias("non_conformant_sites"),
+            ]
+        )
+        .with_columns(pl.lit("disconnect_supported").alias("case"))
+    )
+    lowest_disconnect_final = (
+        site_compliance.group_by("threshold_method", maintain_order=True)
+        .agg(
+            [
+                pl.col("site_id").n_unique().alias("eligible_sites_after_filtering"),
+                pl.col("overall_lowest_disconnect_pass")
+                .is_not_null()
+                .sum()
+                .alias("sites_assessed"),
+                pl.col("overall_lowest_disconnect_pass")
+                .is_null()
+                .sum()
+                .alias("unassessed_sites"),
+                pl.col("overall_lowest_disconnect_pass")
+                .eq(True)
+                .fill_null(False)
+                .sum()
+                .alias("conformant_sites"),
+                pl.col("overall_lowest_disconnect_pass")
+                .eq(False)
+                .fill_null(False)
+                .sum()
+                .alias("non_conformant_sites"),
+            ]
+        )
+        .with_columns(pl.lit("lowest_disconnect").alias("case"))
+    )
+    final_table = (
+        pl.concat(
+            [
+                calculated_final,
+                disconnect_supported_final,
+                lowest_disconnect_final,
+            ]
+        )
+        .with_columns(
+            (pl.col("conformant_sites") / pl.col("sites_assessed") * 100.0).alias(
+                "conformance_percentage_pct"
+            )
+        )
+        .select(
+            [
+                "threshold_method",
+                "case",
+                "eligible_sites_after_filtering",
+                "sites_assessed",
+                "unassessed_sites",
+                "conformant_sites",
+                "non_conformant_sites",
+                "conformance_percentage_pct",
+            ]
+        )
+    )
+    iceberg_exec("DROP TABLE IF EXISTS lso_anti_islanding_conformance_final_table")
+    iceberg_exec("""
+        CREATE TABLE lso_anti_islanding_conformance_final_table (
+            threshold_method VARCHAR,
+            "case" VARCHAR,
+            eligible_sites_after_filtering BIGINT,
+            sites_assessed BIGINT,
+            unassessed_sites BIGINT,
+            conformant_sites BIGINT,
+            non_conformant_sites BIGINT,
+            conformance_percentage_pct DOUBLE
+        )
+        WITH (format = 'PARQUET')
+    """)
+    rows_written = final_table.write_database(
+        table_name="lso_anti_islanding_conformance_final_table",
+        connection=engine,
+        if_table_exists="append",
+    )
+    print(
+        "Uploaded final table to "
+        "lso_anti_islanding_conformance_final_table: "
         f"{rows_written} rows",
         flush=True,
     )

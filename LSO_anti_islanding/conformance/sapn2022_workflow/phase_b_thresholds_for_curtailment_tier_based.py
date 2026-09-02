@@ -110,9 +110,9 @@ def _load_assessed_sites() -> pl.DataFrame:
     required_columns = {
         "site_id",
         "threshold_method",
-        "overall_pass",
-        "los_threshold_used",
-        "ov1_threshold_used",
+        "overall_disconnect_supported_pass",
+        "los_calculated_threshold_used",
+        "ov1_calculated_threshold_used",
     }
     missing_columns = required_columns.difference(compliance_df.columns)
     if missing_columns:
@@ -123,9 +123,15 @@ def _load_assessed_sites() -> pl.DataFrame:
     assessed_sites = (
         compliance_df.filter(
             (pl.col("threshold_method") == PRIMARY_PHASE_B_METHOD)
-            & pl.col("overall_pass").is_not_null()
+            & pl.col("overall_disconnect_supported_pass").is_not_null()
         )
-        .select(["site_id", "los_threshold_used", "ov1_threshold_used"])
+        .select(
+            [
+                "site_id",
+                pl.col("los_calculated_threshold_used").alias("los_threshold_used"),
+                pl.col("ov1_calculated_threshold_used").alias("ov1_threshold_used"),
+            ]
+        )
         .with_columns(
             [
                 pl.col("site_id").cast(pl.Int64),
