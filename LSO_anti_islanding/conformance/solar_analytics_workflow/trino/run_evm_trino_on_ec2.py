@@ -264,6 +264,8 @@ try:
     site_level_various_voltages_path = (
         conformance_output_dir / "site_level_various_voltages.csv"
     )
+    final_table_output_path = conformance_output_dir / "site_compliance_final_table.csv"
+    final_table_output_path.unlink(missing_ok=True)
     if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
         pl.DataFrame(schema=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA).write_csv(
             site_level_various_voltages_path
@@ -708,7 +710,7 @@ try:
     )
     write_method_compliance_final_table(
         site_compliance,
-        conformance_output_dir / "site_compliance_final_table.csv",
+        final_table_output_path,
     )
 
     iceberg_exec("DROP TABLE IF EXISTS lso_anti_islanding_conformance")
@@ -978,6 +980,13 @@ try:
             f"{rows_written} rows",
             flush=True,
         )
+
+    conformance_output_path.unlink(missing_ok=True)
+    time_distribution_output_path.unlink(missing_ok=True)
+    final_table_output_path.unlink(missing_ok=True)
+    if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+        site_level_various_voltages_path.unlink(missing_ok=True)
+    print("Removed temporary conformance CSV files", flush=True)
 
 finally:
     engine.dispose()
