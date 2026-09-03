@@ -15,12 +15,12 @@ Reuses the existing plumbing rather than reinventing it:
 
 The one genuinely missing piece
 -------------------------------
-Solar Analytics stored ``n_lat`` / ``n_long`` per site. SolarEdge gives a postcode
+Solar Analytics stored ``n_lat`` / ``n_long`` per site. OEM gives a postcode
 and nothing else, so the grid points have to be derived: postcode -> ABS POA-2021
 polygon -> the BOM grid nodes falling inside it.
 
 Note that ``BOM_NCI/process_bom.ipynb`` ultimately AVERAGES all grid points within
-a postcode (``groupby(['time','postcode']).mean()``). For SolarEdge, where the site
+a postcode (``groupby(['time','postcode']).mean()``). For OEM, where the site
 location inside the postcode is unknown, that average is the better estimator than
 snapping to a single node -- there is no "nearest" to snap to.
 
@@ -89,7 +89,7 @@ def get_aq():
 # PROBES -- run these BEFORE any extract
 # ═══════════════════════════════════════════════════════════════════════════
 
-#: Bounding box covering the SolarEdge fleet (NSW, SA, QLD) with margin.
+#: Bounding box covering the OEM fleet (NSW, SA, QLD) with margin.
 #: Every probe is constrained to this by default. `bom_nci.solar` covers the whole
 #: Himawari disc, so an unbounded query scans an area many times larger than the
 #: fleet occupies.

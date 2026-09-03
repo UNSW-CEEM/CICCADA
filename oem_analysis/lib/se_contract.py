@@ -2,7 +2,7 @@
 Analysis contract: the manifest and the SQL predicates it describes.
 ====================================================================
 
-Deliverable D5. The SolarEdge counterpart of
+Deliverable D5. The OEM counterpart of
 ``data_query/lib/analysis_contract.py``.
 
 Two jobs, and they are the same job seen from two sides:

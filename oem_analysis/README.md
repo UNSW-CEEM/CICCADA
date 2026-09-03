@@ -1,7 +1,7 @@
-# CICCADA — SolarEdge extension
+# CICCADA — OEM extension
 
 Local-first reproduction of the `bms_sa_review` Volt-VAr / Volt-Watt conformance and
-curtailment analysis on the SolarEdge fleet dataset (1,602 sites, NSW / SA / QLD,
+curtailment analysis on the OEM fleet dataset (1,602 sites, NSW / SA / QLD,
 5-minute resolution, calendar year 2025).
 
 The Solar Analytics analysis runs on AWS Athena. This one runs entirely on your machine,
@@ -11,14 +11,14 @@ local.
 
 ## Why the methods are ported rather than reinvented
 
-The point of this work is to compare SolarEdge against Solar Analytics. That only holds
+The point of this work is to compare OEM against Solar Analytics. That only holds
 if the methods are the same. So:
 
 * AS/NZS 4777.2:2020 set-points are **imported** from
   `bms_sa_review/shared/ciccada_config.py` and `as4777_curves.py`, never restated.
 * The SQL fragments those modules emit (`vvar_required_q_sql`, `vw_max_p_sql`,
   `q_cap_absorbing_sql`, `q_impact_nearest_edge_sql`) run in DuckDB essentially
-  unchanged, so the SolarEdge queries stay line-comparable with the Athena originals.
+  unchanged, so the OEM queries stay line-comparable with the Athena originals.
 * Where the data forces a deviation — there is no nameplate capacity, so `s_99` is the
   sole capacity basis — the substitution is labelled, printed in `manifest()`, and swept
   in the sensitivity notebook.
@@ -82,7 +82,7 @@ NSW shifts 11.91 → 13.07 h and SA 12.30 → 13.48 h between June and January. 
 overlaps an hour, October deletes one. See `se_config.STATE_TIMEZONE` and the DST policy
 constants.
 
-**Reactive power uses the load convention.** SolarEdge reports a *mixed* convention:
+**Reactive power uses the load convention.** OEM reports a *mixed* convention:
 active power as a production magnitude (already generator-positive, never negative), but
 reactive power with **positive = absorbing**. CICCADA and AS/NZS 4777.2 Fig 3.2 use the
 generator convention, where negative = absorbing. So `Q` is multiplied by `-1` at ingest
@@ -187,7 +187,7 @@ the same category profile. Both cohorts also put their |Q| minimum at 232–235 
 the standard's 220–240 V deadband.
 
 That is evidence for a reporting-sign difference, not proof. **D9 scores the cohorts
-separately until it is resolved** with SolarEdge documentation or a site with known
+separately until it is resolved** with OEM documentation or a site with known
 ground truth. Getting it wrong either invents a fleet-wide non-conformance across 415
 sites or erases a real one.
 
@@ -219,4 +219,4 @@ correctly. Not reproduced here; may affect published basic Volt-Watt rates.
 | D14 | Method C derating-flag corroboration | |
 | D15 | Sensitivity analysis | |
 
-The full architecture and rationale are in the project's SolarEdge architecture proposal.
+The full architecture and rationale are in the project's OEM architecture proposal.

@@ -2,7 +2,7 @@
 Analysis configuration and Volt-VAr parameters.
 ===============================================
 
-Deliverable D5. The SolarEdge counterparts of
+Deliverable D5. The OEM counterparts of
 ``data_query/lib/analysis_contract.AnalysisConfig`` and
 ``data_query/lib/voltvar_params.VoltVarParams``.
 
@@ -19,7 +19,7 @@ rather than removed, so that:
 
 * the substitution is visible in the manifest instead of being invisible by
   absence, and
-* nameplate slots straight back in if SolarEdge ever supplies it, without
+* nameplate slots straight back in if OEM ever supplies it, without
   touching the query layer.
 
 ``flex_selection`` is likewise kept but defaults to ``"include"``. Solar Analytics
@@ -91,7 +91,7 @@ class SEAnalysisConfig:
     #: store holds. A parameter rather than an ingest constant, so the unresolved
     #: sign question can be swept in D15 without a 10-minute rebuild.
     #:
-    #:   "as_delivered"  use the store as-is (SolarEdge's own sign)
+    #:   "as_delivered"  use the store as-is (OEM's own sign)
     #:   "flipped"       negate it
     #:
     #: Default "as_delivered": the fleet test fits 213 sites this way against 106

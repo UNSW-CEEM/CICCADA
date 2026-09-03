@@ -2,7 +2,7 @@
 Site dimension and capacity proxies.
 ====================================
 
-Deliverable D4. The SolarEdge analogue of `meta_up23c`, except that almost all of
+Deliverable D4. The OEM analogue of `meta_up23c`, except that almost all of
 it has to be *derived* rather than read: the delivery ships alias, postcode and
 state, and nothing else.
 
@@ -339,7 +339,7 @@ def bom_grid_snap_sql(
 
     Note also that ``process_bom.ipynb`` ultimately AVERAGES all grid points within
     a postcode (``groupby(['time','postcode']).mean()``) rather than picking the
-    nearest to a point. For SolarEdge, where the site location within the postcode
+    nearest to a point. For OEM, where the site location within the postcode
     is unknown, that average is arguably the better estimator -- prefer it at D12
     and use this snap only for diagnostics.
     """

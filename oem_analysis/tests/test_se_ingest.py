@@ -268,7 +268,7 @@ def test_reactive_power_is_stored_as_delivered():
     241-253 V ramp, 213 sites fit the value AS DELIVERED, 106 fit it flipped, and
     1,271 fit neither. The three-phase cohort is 86:1 in favour of as-delivered.
 
-    So the store keeps SolarEdge's own sign, and the residual misorientation is
+    So the store keeps OEM's own sign, and the residual misorientation is
     triaged by se_adverse rather than absorbed into a global constant.
 
     If this assertion ever fails, the store and every conformance number computed
@@ -347,7 +347,7 @@ def test_voltage_aggregation_defaults_to_mean():
 def test_reactive_power_is_not_scaled_like_solar_analytics():
     """
     Solar Analytics stores `energy_reactive` and multiplies by 12 to reach kvar.
-    SolarEdge reports instantaneous var, so that factor must NOT appear.
+    OEM reports instantaneous var, so that factor must NOT appear.
     """
     assert C.REACTIVE_IS_INSTANTANEOUS is True
     assert C.VAR_TO_KVAR == 1.0 / 1000.0

@@ -1,5 +1,5 @@
 """
-Figures for the SolarEdge fleet EDA.
+Figures for the OEM fleet EDA.
 ====================================
 
 Deliverable D6. Every function takes a frame produced by ``se_queries`` and
@@ -249,7 +249,7 @@ def plot_derating_by_voltage(frame, figsize=(11, 4.2)):
             label="Intervals with derating_active (%)")
     ax.set_xlabel("Site voltage (V)")
     ax.set_ylabel("Derating active (% of intervals)")
-    ax.set_title("SolarEdge derating flag against voltage")
+    ax.set_title("OEM derating flag against voltage")
     ax.legend(fontsize=7.5, loc="upper left", framealpha=0.9)
     fig.tight_layout()
     return _done(fig)

@@ -1,1 +1,1 @@
-"""Library modules for the SolarEdge extension."""
+"""Library modules for the OEM extension."""

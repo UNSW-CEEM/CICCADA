@@ -185,7 +185,7 @@ def voltvar_interval_sql(config, params, capability_profile: str = "review_corre
                i.ts_aest,
                i.P_kW,
                -- Oriented per config.reactive_orientation, never read raw. The
-               -- store holds SolarEdge's own sign; the analysis decides what to
+               -- store holds OEM's own sign; the analysis decides what to
                -- do with it, and that decision is in the manifest.
                {q}                          AS Q_kvar,
                {v}                          AS V,

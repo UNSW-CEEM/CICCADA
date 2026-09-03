@@ -10,7 +10,7 @@ is never ambiguous which one you are looking at:
 
 ``Q_raw_var``
     Straight from the delivered Parquet, byte for byte. Nothing applied. This is
-    SolarEdge's ``reactive_power_1 + _2 + _3`` in var.
+    OEM's ``reactive_power_1 + _2 + _3`` in var.
 
 ``Q_stored_kvar``
     What ``se_interval`` holds, and what every conformance number in D9-D10 was
@@ -25,7 +25,7 @@ is never ambiguous which one you are looking at:
 ``verify_sign_transform()`` asserts that identity against the raw files rather
 than trusting it, because the whole sign question turns on it.
 
-Active power is NOT transformed: ``ACTIVE_POWER_SIGN = +1``. SolarEdge reports a
+Active power is NOT transformed: ``ACTIVE_POWER_SIGN = +1``. OEM reports a
 production magnitude with no negative values anywhere in the delivery, so
 ``P_kW = (p1 + p2 + p3) / 1000`` and there is no orientation question for P.
 """
@@ -1078,7 +1078,7 @@ def plot_operational(df_day, site_alias, capacity_kva, zoom_date,
     figure title:
 
       ``"stored"``  the store as-is -- what D9/D10 scored
-      ``"raw"``     raw/1000, exactly as SolarEdge delivered it
+      ``"raw"``     raw/1000, exactly as OEM delivered it
 
     Since 13 Aug ``REACTIVE_POWER_SIGN = +1``, so the two are IDENTICAL. The
     distinction is retained because the orientation is now an analysis parameter

@@ -1,8 +1,8 @@
 """
-DuckDB access layer for the SolarEdge store.
+DuckDB access layer for the OEM store.
 ============================================
 
-This is the SolarEdge equivalent of `bms_sa_review/shared/aws_config.py`: the one
+This is the OEM equivalent of `bms_sa_review/shared/aws_config.py`: the one
 module that knows how to open a connection and what the queryable relations are
 called. Every other module writes plain SQL against logical names
 (`se_raw`, `se_interval`, `se_site`, ...) and never sees a filesystem path.
@@ -14,7 +14,7 @@ never loaded whole. DuckDB streams it out-of-core, and the SQL fragments already
 emitted by `bms_sa_review.shared.as4777_curves` (`vvar_required_q_sql`,
 `vw_max_p_sql`, `q_cap_absorbing_sql`, `q_impact_nearest_edge_sql`) run
 essentially unchanged -- `CASE`, `power`, `sqrt`, `sign`, `count_if`, `bool_or`
-and `quantile_cont` all exist in both engines. That keeps the SolarEdge queries
+and `quantile_cont` all exist in both engines. That keeps the OEM queries
 line-comparable with the Athena originals.
 
 Typical use
@@ -57,7 +57,7 @@ def connect(
     verbose: bool = False,
 ) -> duckdb.DuckDBPyConnection:
     """
-    Open an in-memory DuckDB connection with the SolarEdge relations registered.
+    Open an in-memory DuckDB connection with the OEM relations registered.
 
     The connection itself is in-memory; all data stays in Parquet on disk. Nothing
     is copied into a DuckDB database file, which keeps the store readable by
@@ -246,7 +246,7 @@ def store_status(con: duckdb.DuckDBPyConnection | None = None) -> pd.DataFrame:
     One row per logical store table: whether it has been built, its size, and its
     row count if a connection is supplied.
 
-    This is the SolarEdge analogue of `conformance_queries.table_provenance()` --
+    This is the OEM analogue of `conformance_queries.table_provenance()` --
     it makes it impossible to run an analysis against a store you thought was
     complete but is not.
     """

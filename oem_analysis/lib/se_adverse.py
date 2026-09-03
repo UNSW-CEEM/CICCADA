@@ -38,7 +38,7 @@ Why this cannot simply be "fixed"
 The obvious move is to flip the polarity-suspect sites and re-score. That is
 circular: it infers the sign from conformity with the curve, then reports
 conformity with the curve. The classification here is a *triage* that tells you
-which sites to ask SolarEdge about -- not a correction that can be applied and
+which sites to ask OEM about -- not a correction that can be applied and
 published.
 
 What can be reported safely

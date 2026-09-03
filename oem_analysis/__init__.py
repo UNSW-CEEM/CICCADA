@@ -1,9 +1,9 @@
 """
-CICCADA SolarEdge extension
+CICCADA OEM extension
 ===========================
 
 Local-first, out-of-core reproduction of the `bms_sa_review` Volt-VAr / Volt-Watt
-conformance and curtailment analysis on the SolarEdge fleet dataset.
+conformance and curtailment analysis on the OEM fleet dataset.
 
 Design rules (mirroring `bms_sa_review`):
 

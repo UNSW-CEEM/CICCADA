@@ -29,7 +29,7 @@ Because the GHI model is trained on data that may itself contain curtailment, an
 cloud enhancement is capped, this is a **lower bound**. A and B are reported as a
 range and are NOT reconciled.
 
-**Method C -- derating-flag corroboration (D14).** SolarEdge reports
+**Method C -- derating-flag corroboration (D14).** OEM reports
 ``derating_active`` per interval. It has no Solar Analytics counterpart and is not
 a third estimate -- it is an *independent label* against which A and B can be
 tested on the same fleet.
@@ -845,7 +845,7 @@ def method_c_confusion(
     adverse: pd.DataFrame | None = None, exclude_polarity_suspect: bool = True,
 ) -> pd.DataFrame:
     """
-    The Method A symptom against SolarEdge's own ``derating_active`` flag.
+    The Method A symptom against OEM's own ``derating_active`` flag.
 
     A genuine confusion matrix over eligible intervals, which no Solar Analytics
     dataset could produce: an inverter-reported label for the thing Method A is

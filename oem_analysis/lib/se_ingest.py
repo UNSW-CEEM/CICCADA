@@ -1,10 +1,10 @@
 """
-Raw SolarEdge delivery -> tidy local store.
+Raw OEM delivery -> tidy local store.
 ===========================================
 
 Deliverables D2 (timestamp / DST resolution) and D3 (the store builder).
 
-This is the SolarEdge analogue of `build_structured_data.py`: the one place where
+This is the OEM analogue of `build_structured_data.py`: the one place where
 the delivered telemetry is turned into the CICCADA convention. Every conversion
 happens here, once, and is recorded in `se_config` so it travels with the results.
 
@@ -14,7 +14,7 @@ What the ingest does
    local civil time, *including* daylight saving. It is converted to a UTC
    instant, then to the fixed AEST (UTC+10) analysis frame that the Solar
    Analytics pipeline uses.
-2. **Corrects the reactive-power sign.** SolarEdge reports reactive power in the
+2. **Corrects the reactive-power sign.** OEM reports reactive power in the
    load convention (positive = absorbing); CICCADA uses the generator convention
    (negative = absorbing). See `se_config` section 3.
 3. **Converts units.** W -> kW and var -> kvar. Reactive power is instantaneous
@@ -199,7 +199,7 @@ def resolve_timestamp(naive_local: datetime | str, tz_name: str) -> datetime:
 # ═══════════════════════════════════════════════════════════════════════════
 
 #: Phase-level projection. One row per (site, timestamp, phase) that reported.
-#: Kept because SolarEdge gives true per-phase voltage, which Solar Analytics
+#: Kept because OEM gives true per-phase voltage, which Solar Analytics
 #: never had -- needed for the three-phase cohort investigation, and potentially
 #: for a per-phase conformance result with no published precedent.
 _PHASE_SELECT = """
@@ -771,7 +771,7 @@ def night_generation_anomaly(
         breaks the core assumption of both Method A and Method B.
 
     The classification here is INFERRED from reporting behaviour, not read from
-    metadata -- the delivery has no storage flag. Confirm with SolarEdge before
+    metadata -- the delivery has no storage flag. Confirm with OEM before
     relying on it.
 
     Returns one row per affected site with its classification, worst first.

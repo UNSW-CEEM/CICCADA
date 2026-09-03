@@ -115,7 +115,7 @@ def build_structured(
     2. **10-min -> 5-min by DUPLICATION**, not interpolation: each reading is
        emitted at ``t`` and again at ``t + 5 min``. The practical resolution stays
        10 minutes and must be described that way.
-    3. **Nearest-timestamp join** to ``se_interval``. Note SolarEdge timestamps sit
+    3. **Nearest-timestamp join** to ``se_interval``. Note OEM timestamps sit
        on per-site 5-minute offsets rather than a common grid, so this rounds to
        the nearest 5-minute slot -- a step the Solar Analytics pipeline did not
        need, and a small extra source of misalignment.
@@ -173,7 +173,7 @@ def build_structured(
                    c.s_99                                   AS normalization_capacity,
                    i.P_kW / nullif(c.s_99, 0)               AS P_kw_norm,
                    i.Q_kvar / nullif(c.s_99, 0)             AS Q_kvar_norm,
-                   -- Round to the nearest 5-min slot: SolarEdge timestamps carry
+                   -- Round to the nearest 5-min slot: OEM timestamps carry
                    -- per-site offsets, so an exact join would match almost nothing.
                    date_trunc('minute', i.ts_aest)
                      - INTERVAL '1' MINUTE * (minute(i.ts_aest) % {TIME_BIN_MIN})

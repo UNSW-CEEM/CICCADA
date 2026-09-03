@@ -243,7 +243,7 @@ def fleet_orientation_fit(
     required curve in BOTH orientations::
 
         Q_stored = -raw / 1000     (what the D2 flip produced)
-        Q_raw    =  raw / 1000     (as SolarEdge delivered it)
+        Q_raw    =  raw / 1000     (as OEM delivered it)
 
     ``verdict`` is the interesting column:
 
@@ -375,7 +375,7 @@ def fleet_sign_diagnosis(
       * **direction conformance is NOT assessable** -- ``Q_adverse`` versus
         conforming cannot be distinguished from a reporting-polarity difference.
 
-    Resolving it needs SolarEdge documentation or one site with known ground truth.
+    Resolving it needs OEM documentation or one site with known ground truth.
     """
     config = (config or se_params.CONFIG).validate()
     # Same fix as fleet_orientation_fit above: honour config.voltage_aggregation
@@ -538,7 +538,7 @@ def sign_evidence_summary(
     Assemble the three strands into one table a reviewer can read in 30 seconds.
 
     Deliberately reports evidence rather than a verdict. The decision needs
-    SolarEdge documentation or a site with known ground truth; this narrows what
+    OEM documentation or a site with known ground truth; this narrows what
     that documentation has to explain.
     """
     rows = []

@@ -1,1 +1,1 @@
-"""Configuration for the SolarEdge extension."""
+"""Configuration for the OEM extension."""

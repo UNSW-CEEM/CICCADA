@@ -1,5 +1,5 @@
 """
-Diagnostics for the SolarEdge extension.
+Diagnostics for the OEM extension.
 ========================================
 
 Deliverable D1: raw inventory and schema contract.
@@ -459,7 +459,7 @@ def data_quality_report(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         f"{pct(totals.n_null_p):.4f}%", "< 1%", pct(totals.n_null_p) < 1)
     add("active power negative", "% intervals with P_kW < 0",
         f"{pct(totals.n_neg_p):.4f}%", "0%", int(totals.n_neg_p) == 0,
-        "SolarEdge reports production magnitude; any negative would break the "
+        "OEM reports production magnitude; any negative would break the "
         "generator-convention assumption")
     add("reactive power missing", "% intervals with NULL Q_kvar",
         f"{pct(totals.n_null_q):.4f}%", "< 5%", pct(totals.n_null_q) < 5)
