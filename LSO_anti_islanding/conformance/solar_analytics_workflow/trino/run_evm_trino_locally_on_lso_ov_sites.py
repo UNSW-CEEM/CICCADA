@@ -721,6 +721,9 @@ with local_trino_engine(
                     pl.col("overall_compliant_count").alias(
                         "compliant_timestamp_count"
                     ),
+                    pl.lit(0, dtype=pl.Int64).alias(
+                        "disconnect_support_timestamp_count"
+                    ),
                     (
                         pl.col("overall_responsible_count")
                         - pl.col("overall_compliant_count")
@@ -746,6 +749,10 @@ with local_trino_engine(
                     pl.col("overall_disconnect_supported_compliant_count").alias(
                         "compliant_timestamp_count"
                     ),
+                    (
+                        pl.col("los_disconnect_support_added_count")
+                        + pl.col("ov1_disconnect_support_added_count")
+                    ).alias("disconnect_support_timestamp_count"),
                     (
                         pl.col("overall_disconnect_supported_responsible_count")
                         - pl.col("overall_disconnect_supported_compliant_count")
@@ -773,6 +780,9 @@ with local_trino_engine(
                     ),
                     pl.col("overall_compliant_count").alias(
                         "compliant_timestamp_count"
+                    ),
+                    pl.lit(0, dtype=pl.Int64).alias(
+                        "disconnect_support_timestamp_count"
                     ),
                     (
                         pl.col("overall_responsible_count")

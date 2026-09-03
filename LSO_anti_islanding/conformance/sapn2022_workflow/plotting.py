@@ -20,7 +20,7 @@ PLOT_COLORS = {
     "grid": "#ebebeb",
     "shade": "#7c3aed",
     "shade_extra": "#0891b2",
-    "shade_missing_voltage": "#bfdbfe",
+    "shade_missing_voltage": "#dc2626",
 }
 
 

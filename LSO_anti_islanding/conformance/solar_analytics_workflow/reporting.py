@@ -68,6 +68,7 @@ SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA = {
     "case": pl.Utf8,
     "eligible_timestamp_count": pl.Int64,
     "compliant_timestamp_count": pl.Int64,
+    "disconnect_support_timestamp_count": pl.Int64,
     "non_compliant_timestamp_count": pl.Int64,
     "compliant_pct": pl.Float64,
     "non_compliant_pct": pl.Float64,

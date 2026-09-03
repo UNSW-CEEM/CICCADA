@@ -344,6 +344,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.lit("calculated").alias("case"),
             pl.col("overall_responsible_count").alias("eligible_timestamp_count"),
             pl.col("overall_compliant_count").alias("compliant_timestamp_count"),
+            pl.lit(0, dtype=pl.Int64).alias(
+                "disconnect_support_timestamp_count"
+            ),
             (
                 pl.col("overall_responsible_count") - pl.col("overall_compliant_count")
             ).alias("non_compliant_timestamp_count"),
@@ -367,6 +370,10 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
                 "compliant_timestamp_count"
             ),
             (
+                pl.col("los_disconnect_support_added_count")
+                + pl.col("ov1_disconnect_support_added_count")
+            ).alias("disconnect_support_timestamp_count"),
+            (
                 pl.col("overall_disconnect_supported_responsible_count")
                 - pl.col("overall_disconnect_supported_compliant_count")
             ).alias("non_compliant_timestamp_count"),
@@ -389,6 +396,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.lit("lowest_disconnect").alias("case"),
             pl.col("overall_responsible_count").alias("eligible_timestamp_count"),
             pl.col("overall_compliant_count").alias("compliant_timestamp_count"),
+            pl.lit(0, dtype=pl.Int64).alias(
+                "disconnect_support_timestamp_count"
+            ),
             (
                 pl.col("overall_responsible_count") - pl.col("overall_compliant_count")
             ).alias("non_compliant_timestamp_count"),

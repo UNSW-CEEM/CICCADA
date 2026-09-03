@@ -596,6 +596,9 @@ try:
                         pl.col("overall_compliant_count").alias(
                             "compliant_timestamp_count"
                         ),
+                        pl.lit(0, dtype=pl.Int64).alias(
+                            "disconnect_support_timestamp_count"
+                        ),
                         (
                             pl.col("overall_responsible_count")
                             - pl.col("overall_compliant_count")
@@ -621,6 +624,10 @@ try:
                         pl.col("overall_disconnect_supported_compliant_count").alias(
                             "compliant_timestamp_count"
                         ),
+                        (
+                            pl.col("los_disconnect_support_added_count")
+                            + pl.col("ov1_disconnect_support_added_count")
+                        ).alias("disconnect_support_timestamp_count"),
                         (
                             pl.col("overall_disconnect_supported_responsible_count")
                             - pl.col("overall_disconnect_supported_compliant_count")
@@ -648,6 +655,9 @@ try:
                         ),
                         pl.col("overall_compliant_count").alias(
                             "compliant_timestamp_count"
+                        ),
+                        pl.lit(0, dtype=pl.Int64).alias(
+                            "disconnect_support_timestamp_count"
                         ),
                         (
                             pl.col("overall_responsible_count")
@@ -795,6 +805,7 @@ try:
             "case" VARCHAR,
             eligible_timestamp_count BIGINT,
             compliant_timestamp_count BIGINT,
+            disconnect_support_timestamp_count BIGINT,
             non_compliant_timestamp_count BIGINT,
             compliant_pct DOUBLE,
             non_compliant_pct DOUBLE,
