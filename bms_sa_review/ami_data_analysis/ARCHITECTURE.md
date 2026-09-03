@@ -19,7 +19,7 @@ point: disaggregation algorithms see only `ami_meter` and are scored against
 
 ## Layout
 
-Mirrors `solar_edge/`, which is the working precedent for a locally-run,
+Mirrors `oem_analysis/`, which is the working precedent for a locally-run,
 AWS-free analysis in this repository.
 
 ```
@@ -64,7 +64,7 @@ bms_sa_review/ami_data_analysis/
 │   └── ami_plots.py         [P3/6] example-site composition and validation plots
 ├── notebooks/               00..06, orchestrate and narrate only
 ├── tests/
-│   ├── test_notebook_names.py   ported from solar_edge
+│   ├── test_notebook_names.py   ported from oem_analysis
 │   └── test_ami_*.py            one per module with arithmetic to get wrong
 └── artefacts/               small, human-reviewable CSVs that belong in git
 ```

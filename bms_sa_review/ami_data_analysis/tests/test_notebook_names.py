@@ -1,7 +1,7 @@
 """
 Every name a notebook uses must be bound earlier in that same notebook.
 
-Ported verbatim in spirit from ``solar_edge/tests/test_notebook_names.py``,
+Ported verbatim in spirit from ``oem_analysis/tests/test_notebook_names.py``,
 which exists because of a real failure: a section was appended to
 ``04_bom_extract.ipynb`` without adding its module to the import cell, so the
 notebook raised ``NameError`` on first run -- after the expensive Athena extract

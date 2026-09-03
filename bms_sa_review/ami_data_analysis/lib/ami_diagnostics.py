@@ -2,7 +2,7 @@
 Check tables and the environment report.
 ========================================
 
-Phase 0. Ported from `solar_edge/lib/se_diagnostics.py` so that a check in this
+Phase 0. Ported from `oem_analysis/lib/se_diagnostics.py` so that a check in this
 package looks and reads exactly like a check in that one.
 
 A "check" is a row: what was expected, what was observed, and whether that is a

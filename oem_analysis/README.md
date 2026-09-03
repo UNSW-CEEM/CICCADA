@@ -1,0 +1,222 @@
+# CICCADA — SolarEdge extension
+
+Local-first reproduction of the `bms_sa_review` Volt-VAr / Volt-Watt conformance and
+curtailment analysis on the SolarEdge fleet dataset (1,602 sites, NSW / SA / QLD,
+5-minute resolution, calendar year 2025).
+
+The Solar Analytics analysis runs on AWS Athena. This one runs entirely on your machine,
+with DuckDB querying local Parquet. The only AWS touch is a single bounded extract of BOM
+satellite irradiance (D12a), which lands a local Parquet file; everything after that is
+local.
+
+## Why the methods are ported rather than reinvented
+
+The point of this work is to compare SolarEdge against Solar Analytics. That only holds
+if the methods are the same. So:
+
+* AS/NZS 4777.2:2020 set-points are **imported** from
+  `bms_sa_review/shared/ciccada_config.py` and `as4777_curves.py`, never restated.
+* The SQL fragments those modules emit (`vvar_required_q_sql`, `vw_max_p_sql`,
+  `q_cap_absorbing_sql`, `q_impact_nearest_edge_sql`) run in DuckDB essentially
+  unchanged, so the SolarEdge queries stay line-comparable with the Athena originals.
+* Where the data forces a deviation — there is no nameplate capacity, so `s_99` is the
+  sole capacity basis — the substitution is labelled, printed in `manifest()`, and swept
+  in the sensitivity notebook.
+
+## Layout
+
+```
+oem_analysis/
+├── config/se_config.py     paths, raw schema contract, sign/unit/time conventions,
+│                           store registry. The only place these are written down.
+├── lib/
+│   ├── se_store.py         DuckDB connection factory and view registration
+│   ├── se_diagnostics.py   inventory, schema contract, data-quality checks
+│   └── ...                 (added deliverable by deliverable)
+├── notebooks/              thin orchestrators — no logic
+├── artefacts/              small, reviewable outputs that belong in git
+└── tests/
+```
+
+The derived store lives **outside** the repository, beside the raw data, because it is
+large and regenerable:
+
+```
+CICCADA - Data/OEM analysis/_store/
+```
+
+## Getting started
+
+```python
+from oem_analysis.config import se_config as C
+from oem_analysis.lib import se_store, se_diagnostics as diag
+
+con = se_store.connect()
+diag.run_d1_checks(con)          # is the delivery what we think it is?
+se_store.store_status(con)       # what has been built so far?
+```
+
+If your data is not at `~/OneDrive - UNSW/Documents/CICCADA - Data/OEM analysis`, set
+`CICCADA_SE_DATA_ROOT` before importing.
+
+Start with `notebooks/00_environment_check.ipynb`. It reads Parquet footers only and
+completes in seconds.
+
+## What the data is
+
+| | |
+|---|---|
+| Files | 12 monthly Parquet, 2025-01 to 2025-12, one schema |
+| Rows | 86,643,185 |
+| Size | 1.5 GB compressed on disk (about 9–12 GB as float64 in memory) |
+| Sites | 1,602 across 507 postcodes — SA 574, NSW 570, QLD 458 |
+| Resolution | 5 min, but **not** aligned to a common grid; each site has its own offset |
+| Columns | per-phase active power (W), reactive power (var), voltage (V), frequency (Hz), plus `derating_active_flag` |
+| Absent | nameplate capacity, inverter model, DNSP, install date, **irradiance** |
+
+Two things will bite if handled carelessly, both resolved once at ingest:
+
+**Timestamps are per-site local civil time, including daylight saving.** Confirmed from
+the power-weighted diurnal centroid: QLD is stable across seasons (11.79 → 11.96 h) while
+NSW shifts 11.91 → 13.07 h and SA 12.30 → 13.48 h between June and January. April
+overlaps an hour, October deletes one. See `se_config.STATE_TIMEZONE` and the DST policy
+constants.
+
+**Reactive power uses the load convention.** SolarEdge reports a *mixed* convention:
+active power as a production magnitude (already generator-positive, never negative), but
+reactive power with **positive = absorbing**. CICCADA and AS/NZS 4777.2 Fig 3.2 use the
+generator convention, where negative = absorbing. So `Q` is multiplied by `-1` at ingest
+(`se_config.REACTIVE_POWER_SIGN`). The evidence and the caveat about the three-phase
+cohort are documented in full in `se_config`, section 3.
+
+## The store
+
+`se_interval` — one row per site per 5-minute interval, in the CICCADA convention.
+
+| | |
+|---|---|
+| Rows | 86,640,968 (2,217 duplicate rows removed from 86,643,185) |
+| Size | ~1.5 GB, 24 files, partitioned by AEST month, sorted by `(site_alias, ts_utc)` |
+| Build | ~35 s per month; peak RSS ≈ DuckDB memory limit + 200 MB, flat across the run |
+| Columns | `site_alias, ts_utc, ts_aest, state, postcode, P_kW, Q_kvar, V_max, V_mean, n_phases_reporting, freq_hz, derating_active` |
+
+`ts_aest` is computed by the registered view rather than stored — it is exactly
+`ts_utc + 10 h`, and materialising it cost 21 MB per month for nothing. Queries can use
+`hour(ts_aest)` and `date(ts_aest)` directly, which removes the `+ interval '10' hour`
+bug class that produced R3/R9 in the legacy conformance tables.
+
+Single-site queries run ~14× faster than against the raw delivery, whose files have one
+row group each and so cannot be pruned at all.
+
+### Sites generating outside daylight hours
+
+20 sites, 22,124 rows, 0.026% of the store — and **two different phenomena**, corrected
+13 Aug 2026 after the sites were examined individually:
+
+- **Likely storage (5 sites, 92% of rows).** Continuous 24-hour reporting (~105,000
+  rows/year = 24 × 12 × 365 exactly) with a flat overnight power plateau that scales with
+  season. A displaced solar curve would peak at some night hour; a battery discharging
+  overnight is flat. Inferred from reporting behaviour — the delivery has no storage flag.
+- **Stray timestamps (15 sites, 8% of rows).** Daylight-only reporting with a handful of
+  night rows at daytime power. The original hypothesis, which holds for these.
+
+Both are flagged, not dropped. `night_anomaly_selection="exclude"` removes both by
+default, which is defensible for a PV conformance study — storage sites are not PV-only,
+their `s_99` absorbs battery discharge, and a fall in active power may be charging rather
+than curtailment. But it is a judgement, and given CICCADA's BESS scope the five storage
+sites may deserve a cohort rather than an exclusion. Site list in
+`artefacts/night_generation_sites.csv`.
+
+## What the fleet looks like (D6)
+
+| | |
+|---|---|
+| Volt-VAr band (240–253 V) | **74.4%** of intervals, 1,580 sites |
+| Deadband (220–240 V) | 24.6% |
+| Volt-Watt overlap (253–258 V) | 0.96% — thin, so D10 rates will carry wide intervals |
+| Above 258 V | 0.003% |
+| Cohort funnel | 86.6 M → 85.3 M cohort → 20.1 M peak-solar → 16.6 M in band → 10.5 M absorbing |
+| `s_99` median | 5.0 kVA (SA), 5.7 (NSW), 6.7 (QLD) |
+| Median power factor | 0.995–0.997 — reactive power is small across the whole fleet |
+| Derating flag vs voltage | 7.2% at 240 V → 54% at 252.5 V → 85% at 257.5 V |
+
+Two findings worth carrying forward:
+
+**Most of this fleet does very little Volt-VAr.** The strong responders found during the
+sign-convention work are a minority; the fleet median reactive power is small at every
+voltage. Conformance rates in D9 have to be read against how little most inverters are
+doing, not just against the curve.
+
+**Single- and three-phase cohorts move in opposite reactive directions** — and both show
+a |Q| minimum at 230–235 V, almost exactly the standard's 220–240 V deadband. Two near
+mirror-image curves. That geometry leans toward a reporting-sign difference in
+three-phase inverters rather than 405 sites genuinely responding backwards, but it is not
+proof. **D9 should score the two cohorts separately until it is resolved** — pooling them
+averages a response against its mirror image and understates both.
+
+## Conformance results (D9, D10)
+
+Site-day grain, matching `conformance_voltvar_v2` / `conformance_voltwatt_v2`.
+**Cohorts are scored separately by default** — see the sign question below.
+
+| Volt-VAr | single-phase | three-phase |
+|---|---|---|
+| Sites | 1,165 | 415 |
+| Capability-assessable intervals | 37.6 M | 13.1 M |
+| Reduced non-conformance | **64.5%** | **81.7%** as stored / **62.5%** sign-flipped |
+| Dominant category | significant shortfall | adverse (as stored) |
+| Site verdicts | 111 conformant / 1,054 not | 13 / 402 |
+
+| Volt-Watt | single-phase | three-phase |
+|---|---|---|
+| Exposed intervals (V > 253 V) | 631 k | 185 k |
+| Non-conformant share of exposed | 19.7% | 30.9% |
+| Site verdicts | 402 / 101 / 662 not exposed | 101 / 94 / 220 not exposed |
+
+`reduced_nonconf` = adverse + inactive + significant shortfall. `Q_near_conformant` is
+excluded — those inverters deliver 90–110% of required reactive power. Milestone 3
+included that band and excluded the shortfall band (the R4 name swap), so these figures
+will not match it, and should not.
+
+### The three-phase sign question (D8)
+
+Under the convention as stored, the three-phase cohort scores 81.7% reduced
+non-conformance dominated by `Q_adverse`. Flipping the sign moves ~10.1 M intervals out
+of that category and lands the cohort at 62.5% — within two points of single-phase, with
+the same category profile. Both cohorts also put their |Q| minimum at 232–235 V, inside
+the standard's 220–240 V deadband.
+
+That is evidence for a reporting-sign difference, not proof. **D9 scores the cohorts
+separately until it is resolved** with SolarEdge documentation or a site with known
+ground truth. Getting it wrong either invents a fleet-wide non-conformance across 415
+sites or erases a real one.
+
+### A latent bug in the original, worth checking
+
+`build_conformance_voltwatt.py` (~line 160) sets `vw_exposed = "round(V,6) > 253.0"` then
+writes `CASE WHEN V > {vw_exposed}`, expanding to the chained comparison
+`V > round(V,6) > 253.0`. The GHI variant in the same file uses `WHEN {vw_exposed}`
+correctly. Not reproduced here; may affect published basic Volt-Watt rates.
+
+## Deliverable status
+
+| | Deliverable | Status |
+|---|---|---|
+| D0 | Package skeleton, config, DuckDB store layer | **done** |
+| D1 | Raw inventory and schema contract | **done** |
+| D2 | Timestamp and DST resolution, unit-tested | **done** — 22 tests |
+| D3 | Tidy store builder | **done** — reconciles exactly |
+| D4 | Site dimension and capacity proxies | **done** — geography pending shapefile |
+| D5 | Params, contract, manifest | **done** |
+| D6 | Fleet EDA | **done** |
+| D7 | Data-quality report | **done** — 0 warnings, 5 structural limitations |
+| D8 | Reactive sign convention | **done** — single-phase locked; three-phase bounded |
+| D9 | Volt-VAr conformance | **done** |
+| D10 | Volt-Watt conformance | **done** (basic variant; GHI variant needs D12) |
+| D11 | Method A symptom scan | |
+| D12a–c | BOM extract, `se_structured`, GHI model and counterfactual | |
+| D13 | Method B attribution and evidence tiers | |
+| D14 | Method C derating-flag corroboration | |
+| D15 | Sensitivity analysis | |
+
+The full architecture and rationale are in the project's SolarEdge architecture proposal.

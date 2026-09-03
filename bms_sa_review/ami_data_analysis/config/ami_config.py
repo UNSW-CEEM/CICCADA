@@ -54,7 +54,7 @@ def bootstrap_sys_path() -> Path:
     """
     Put the repository root on `sys.path` so `bms_sa_review.*` imports cleanly
     from a notebook regardless of where Jupyter was started. Mirrors
-    `solar_edge.config.se_config.bootstrap_sys_path`.
+    `oem_analysis.config.se_config.bootstrap_sys_path`.
     """
     for entry in (REPO_ROOT, REPO_ROOT / "bms_sa_review"):
         if str(entry) not in sys.path:
@@ -140,7 +140,7 @@ SMALL_TABLES: frozenset[str] = frozenset({
 # The extracted Parquet lives OUTSIDE the git repository. It is far too large to
 # commit, it is regenerable from Athena, and putting it in OneDrive would mean
 # re-uploading gigabytes on every rebuild. Same reasoning, same default location
-# and same override mechanism as `solar_edge.config.se_config`.
+# and same override mechanism as `oem_analysis.config.se_config`.
 
 
 def _default_store_dir() -> Path:
