@@ -249,6 +249,8 @@ try:
     total_sites = eligible_sites.height
     print(f"Eligible sites to process: {total_sites}", flush=True)
 
+    # temporary csv files are stored here to push it on trino
+    # and then deleted after
     conformance_output_dir = TRINO_OUTPUT_DIR
     conformance_output_dir.mkdir(parents=True, exist_ok=True)
     conformance_output_path = (
@@ -313,8 +315,8 @@ try:
             site_timeseries_data = convertWToKw(site_timeseries_data)
             site_timeseries_data = deduplicateMeasurements(site_timeseries_data)
 
-            # get local timestamp zone based on state name
-            site_timezone = STATE_TIMEZONES.get(site["state"], LOCAL_TIMEZONE)
+            # Reuse the timezone assigned when the eligible-site cohort was built.
+            site_timezone = site["timezone"]
             site_timeseries_data = site_timeseries_data.with_columns(
                 pl.lit(site_timezone).alias("timezone")
             )
@@ -324,7 +326,7 @@ try:
             site_timeseries_data = addValidVoltage(site_timeseries_data)
             site_timeseries_data = addPolarityToPower(
                 site_timeseries_data,
-                circuit_data,
+                batch_circuit_data,
             )
             site_timeseries_data = site_timeseries_data.select(
                 [
@@ -399,10 +401,7 @@ try:
             if not eligible_analysis_days:
                 continue
 
-            capacity_row = site_data.filter(
-                pl.col("site_id") == site["site_id"]
-            ).select("s_rated")
-            s_rated = None if capacity_row.is_empty() else capacity_row["s_rated"][0]
+            s_rated = site["s_rated"]
             if s_rated is None:
                 print(
                     f"No S_rated for site {site['site_id']}; skipping.",
@@ -429,6 +428,8 @@ try:
                 site_level_various_voltage_rows.append(
                     phase_a_result["site_level_various_voltages"]
                 )
+
+            # run the three cases of phase b
             for threshold_method in PHASE_B_METHODS:
                 phase_b_calculated = run_phase_b_for_site(
                     site["site_id"],
@@ -713,6 +714,7 @@ try:
         final_table_output_path,
     )
 
+    # push data to trino
     iceberg_exec("DROP TABLE IF EXISTS lso_anti_islanding_conformance")
     iceberg_exec("""
         CREATE TABLE lso_anti_islanding_conformance (
@@ -814,112 +816,17 @@ try:
         flush=True,
     )
 
-    calculated_final = (
-        site_compliance.group_by("threshold_method", maintain_order=True)
-        .agg(
-            [
-                pl.col("site_id").n_unique().alias("eligible_sites_after_filtering"),
-                pl.col("overall_calculated_pass")
-                .is_not_null()
-                .sum()
-                .alias("sites_assessed"),
-                pl.col("overall_calculated_pass")
-                .is_null()
-                .sum()
-                .alias("unassessed_sites"),
-                pl.col("overall_calculated_pass")
-                .eq(True)
-                .fill_null(False)
-                .sum()
-                .alias("conformant_sites"),
-                pl.col("overall_calculated_pass")
-                .eq(False)
-                .fill_null(False)
-                .sum()
-                .alias("non_conformant_sites"),
-            ]
-        )
-        .with_columns(pl.lit("calculated").alias("case"))
-    )
-    disconnect_supported_final = (
-        site_compliance.group_by("threshold_method", maintain_order=True)
-        .agg(
-            [
-                pl.col("site_id").n_unique().alias("eligible_sites_after_filtering"),
-                pl.col("overall_disconnect_supported_pass")
-                .is_not_null()
-                .sum()
-                .alias("sites_assessed"),
-                pl.col("overall_disconnect_supported_pass")
-                .is_null()
-                .sum()
-                .alias("unassessed_sites"),
-                pl.col("overall_disconnect_supported_pass")
-                .eq(True)
-                .fill_null(False)
-                .sum()
-                .alias("conformant_sites"),
-                pl.col("overall_disconnect_supported_pass")
-                .eq(False)
-                .fill_null(False)
-                .sum()
-                .alias("non_conformant_sites"),
-            ]
-        )
-        .with_columns(pl.lit("disconnect_supported").alias("case"))
-    )
-    lowest_disconnect_final = (
-        site_compliance.group_by("threshold_method", maintain_order=True)
-        .agg(
-            [
-                pl.col("site_id").n_unique().alias("eligible_sites_after_filtering"),
-                pl.col("overall_lowest_disconnect_pass")
-                .is_not_null()
-                .sum()
-                .alias("sites_assessed"),
-                pl.col("overall_lowest_disconnect_pass")
-                .is_null()
-                .sum()
-                .alias("unassessed_sites"),
-                pl.col("overall_lowest_disconnect_pass")
-                .eq(True)
-                .fill_null(False)
-                .sum()
-                .alias("conformant_sites"),
-                pl.col("overall_lowest_disconnect_pass")
-                .eq(False)
-                .fill_null(False)
-                .sum()
-                .alias("non_conformant_sites"),
-            ]
-        )
-        .with_columns(pl.lit("lowest_disconnect").alias("case"))
-    )
-    final_table = (
-        pl.concat(
-            [
-                calculated_final,
-                disconnect_supported_final,
-                lowest_disconnect_final,
-            ]
-        )
-        .with_columns(
-            (pl.col("conformant_sites") / pl.col("sites_assessed") * 100.0).alias(
-                "conformance_percentage_pct"
-            )
-        )
-        .select(
-            [
-                "threshold_method",
-                "case",
-                "eligible_sites_after_filtering",
-                "sites_assessed",
-                "unassessed_sites",
-                "conformant_sites",
-                "non_conformant_sites",
-                "conformance_percentage_pct",
-            ]
-        )
+    final_table = pl.read_csv(final_table_output_path).rename(
+        {
+            "Method Used": "threshold_method",
+            "Case": "case",
+            "Eligible Sites After Filtering": "eligible_sites_after_filtering",
+            "Sites Assessed": "sites_assessed",
+            "Unassessed Sites": "unassessed_sites",
+            "Conformant Sites": "conformant_sites",
+            "Non-Conformant Sites": "non_conformant_sites",
+            "Conformance Percentage (% of Assessed)": "conformance_percentage_pct",
+        }
     )
     iceberg_exec("DROP TABLE IF EXISTS lso_anti_islanding_conformance_final_table")
     iceberg_exec("""
