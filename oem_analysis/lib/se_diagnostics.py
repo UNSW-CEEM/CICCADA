@@ -507,7 +507,7 @@ def data_quality_report(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     structural("sparse overnight coverage",
                "% intervals in 22:00-04:00 AEST", f"{night_cov.pct_night}%",
                "Most inverters stop reporting after dark. Night-time Volt-VAr "
-               "assessment -- the Ausgrid AMI differentiator -- is largely "
+               "assessment -- the DNSP AMI differentiator -- is largely "
                "unavailable on this dataset.")
 
     structural("no nameplate capacity", "sites with a manufacturer rating", "0",

@@ -61,11 +61,9 @@ def bootstrap_sys_path() -> Path:
 # The raw data lives OUTSIDE the git repository, in OneDrive. Override with the
 # CICCADA_SE_DATA_ROOT environment variable if your layout differs.
 
-_DEFAULT_DATA_ROOT = (
-    Path.home() / "OneDrive - UNSW" / "Documents" / "CICCADA - Data" / "oem_analysis"
-)
+_DEFAULT_DATA_ROOT = None  # no fallback — CICCADA_SE_DATA_ROOT must be set
 
-DATA_ROOT = Path(os.environ.get("CICCADA_SE_DATA_ROOT", _DEFAULT_DATA_ROOT))
+DATA_ROOT = Path(os.environ["CICCADA_SE_DATA_ROOT"])
 
 #: The extracted OEM delivery.
 DELIVERY_DIR = DATA_ROOT / "OneDrive_1_6-18-2026"
@@ -241,7 +239,7 @@ STUDY_MONTHS = tuple(EXPECTED_RAW_ROWS)
 #     +P = consuming / importing
 #     +Q = ABSORBING (inductive)
 #     -Q = SUPPLYING (capacitive)
-#   This is what the Ausgrid AMI dataset uses, and what OEM appears to use
+#   This is what the DNSP AMI dataset uses, and what OEM appears to use
 #   for reactive power.
 #
 # ---------------------------------------------------------------------------
