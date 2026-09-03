@@ -232,7 +232,7 @@ def fleet_funnel(year, params, aq_func, database):
 def flex_export_prevalence(aq_func, database):
     """
     How many flex-export sites are there, and are they concentrated in the DNSPs
-    that actually run flexible-export programs (SAPN especially)? If the flag
+    that actually run flexible-export programs (any DNSP especially)? If the flag
     correlates with known programs, it's trustworthy.
     """
     overall = aq_func("""

@@ -2,8 +2,6 @@
 Single-site exploration, with explicit sign provenance.
 =======================================================
 
-For interrogating individual sites and their daily curves, ported from
-``dnsp_analysis/notebooks/voltvar_voltwatt_lib.plot_operational_ausgrid``.
 
 Sign provenance is the point of this module
 -------------------------------------------
@@ -542,7 +540,6 @@ def plot_voltwatt_day(frame, site_alias: str, day: str, config=None,
 
 
 #: Category palette, matching ``voltvar_voltwatt_lib.STATUS_COLORS`` so an
-#: Ausgrid figure and a SolarEdge figure can sit side by side unchanged.
 CATEGORY_COLORS = {
     "within_band": "#1565c0",
     "Q_near_conformant": "#2e7d32",
@@ -577,7 +574,7 @@ def plot_voltvar_scatter(categories: pd.DataFrame, site_alias: str,
     """
     Q-vs-V scatter for one site, every interval, coloured by its verdict.
 
-    Ported from ``voltvar_voltwatt_lib.plot_vvar_month_scatter_ausgrid``, with one
+    Ported from ``voltvar_voltwatt_lib.plot_vvar_month_scatter_dnsp_analysis``, with one
     change: the colours come from ``site_interval_categories``, which runs the
     **same D9 SQL that produced the fleet numbers**, rather than a separate scalar
     classifier. A point coloured "adverse" here is one of the intervals counted as
@@ -1076,8 +1073,6 @@ def plot_operational(df_day, site_alias, capacity_kva, zoom_date,
     """
     Five-panel daily plot: voltage, active power, Volt-Watt non-conformance,
     reactive power, Volt-VAr non-conformance.
-
-    Ported from ``voltvar_voltwatt_lib.plot_operational_ausgrid``.
 
     ``orientation`` selects which reactive trace is plotted and is stamped on the
     figure title:

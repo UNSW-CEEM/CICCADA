@@ -476,7 +476,7 @@ N_SITES = 41_393
 #: data, or scratch/infrastructure artefacts. Excluded from every later phase
 #: without re-justifying it each time.
 OUT_OF_SCOPE_DATABASES = frozenset({
-    "sapn2022",     # a different DNSP's dataset (South Australia Power Networks)
+    "sapn2022",     # a different DNSP's dataset
     "test_db",      # scratch tables (evm_batch_*)
     "elb_logdb",    # AWS load-balancer access logs
 })
