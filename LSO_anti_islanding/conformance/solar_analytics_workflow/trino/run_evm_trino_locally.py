@@ -1,6 +1,6 @@
 # this script is to be run on the local machine
 # for conformance analysis on solA data already on S3
-# estanlishes connection from local machine to trino
+# establishes connection from local machine to trino
 
 import sys
 from datetime import datetime

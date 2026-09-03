@@ -1,5 +1,8 @@
 # this script is to be run on the EC2 instance
-#  for conformance analysis on solA data already on S3
+# for conformance analysis on solA data already on S3
+# run this once and only save one table here
+# the rest of the tables must be saved by run_lso_conformance_daily_on_ec2.py
+
 import sys
 from datetime import datetime
 from pathlib import Path

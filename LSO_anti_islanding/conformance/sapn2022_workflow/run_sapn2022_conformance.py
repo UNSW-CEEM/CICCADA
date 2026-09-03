@@ -38,8 +38,10 @@ from sapn2022_workflow.reporting import (
     SITE_COMPLIANCE_NAME,
     SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME,
     SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
+    SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME,
     build_sapn_conformance_exclusions,
     build_sapn_site_compliance,
+    build_site_compliance_tod_distribution,
     write_method_compliance_final_table,
     write_sapn_threshold_distribution_plots,
 )
@@ -552,9 +554,15 @@ results = {
 CONFORMANCE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 site_compliance = build_sapn_site_compliance(results)
 conformance_exclusions = build_sapn_conformance_exclusions(results)
+site_compliance_tod_distribution = build_site_compliance_tod_distribution(
+    results["site_compliance_timestamp_detail"]
+)
 site_compliance.write_csv(CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_NAME)
 results["site_compliance_time_distribution"].write_csv(
     CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME
+)
+site_compliance_tod_distribution.write_csv(
+    CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME
 )
 if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
     results["site_level_various_voltages"].write_csv(
