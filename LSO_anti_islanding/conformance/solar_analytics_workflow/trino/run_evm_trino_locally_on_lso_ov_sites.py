@@ -41,7 +41,8 @@ from solar_analytics_workflow.reporting import (
 )
 from solar_analytics_workflow.reporting import (
     SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
-    write_method_compliance_final_table,
+    build_method_compliance_final_table,
+    build_site_compliance_table,
 )
 from solar_analytics_workflow.site_day_filtering import (
     summarize_solar_analytics_day_eligibility,
@@ -550,111 +551,10 @@ with local_trino_engine(
                 tau=0.0,
             )
 
-            calculated_compliance = phase_b_calculated["site_compliance"].select(
-                [
-                    "site_id",
-                    "threshold_method",
-                    pl.col("los_threshold_used").alias("los_calculated_threshold_used"),
-                    pl.col("ov1_threshold_used").alias("ov1_calculated_threshold_used"),
-                    "los_lowest_disconnect_voltage",
-                    "ov1_lowest_disconnect_voltage",
-                    pl.col("los_responsible_count").alias(
-                        "los_calculated_responsible_count"
-                    ),
-                    pl.col("los_compliant_count").alias(
-                        "los_calculated_compliant_count"
-                    ),
-                    pl.col("los_compliance_pct").alias("los_calculated_compliance_pct"),
-                    pl.col("los_pass").alias("los_calculated_pass"),
-                    pl.col("ov1_responsible_count").alias(
-                        "ov1_calculated_responsible_count"
-                    ),
-                    pl.col("ov1_compliant_count").alias(
-                        "ov1_calculated_compliant_count"
-                    ),
-                    pl.col("ov1_compliance_pct").alias("ov1_calculated_compliance_pct"),
-                    pl.col("ov1_pass").alias("ov1_calculated_pass"),
-                    pl.col("overall_responsible_count").alias(
-                        "overall_calculated_responsible_count"
-                    ),
-                    pl.col("overall_compliant_count").alias(
-                        "overall_calculated_compliant_count"
-                    ),
-                    pl.col("overall_compliance_pct").alias(
-                        "overall_calculated_compliance_pct"
-                    ),
-                    pl.col("overall_pass").alias("overall_calculated_pass"),
-                ]
-            )
-            disconnect_supported_compliance = phase_b_disconnect_supported[
-                "site_compliance"
-            ].select(
-                [
-                    "los_disconnect_support_added_count",
-                    "ov1_disconnect_support_added_count",
-                    "los_disconnect_supported_responsible_count",
-                    "los_disconnect_supported_compliant_count",
-                    "los_disconnect_supported_compliance_pct",
-                    "los_disconnect_supported_pass",
-                    "ov1_disconnect_supported_responsible_count",
-                    "ov1_disconnect_supported_compliant_count",
-                    "ov1_disconnect_supported_compliance_pct",
-                    "ov1_disconnect_supported_pass",
-                    "overall_disconnect_supported_responsible_count",
-                    "overall_disconnect_supported_compliant_count",
-                    "overall_disconnect_supported_compliance_pct",
-                    "overall_disconnect_supported_pass",
-                ]
-            )
-            lowest_disconnect_compliance = phase_b_lowest_disconnect[
-                "site_compliance"
-            ].select(
-                [
-                    pl.col("los_threshold_used").alias(
-                        "los_lowest_disconnect_threshold_used"
-                    ),
-                    pl.col("ov1_threshold_used").alias(
-                        "ov1_lowest_disconnect_threshold_used"
-                    ),
-                    pl.col("los_responsible_count").alias(
-                        "los_lowest_disconnect_responsible_count"
-                    ),
-                    pl.col("los_compliant_count").alias(
-                        "los_lowest_disconnect_compliant_count"
-                    ),
-                    pl.col("los_compliance_pct").alias(
-                        "los_lowest_disconnect_compliance_pct"
-                    ),
-                    pl.col("los_pass").alias("los_lowest_disconnect_pass"),
-                    pl.col("ov1_responsible_count").alias(
-                        "ov1_lowest_disconnect_responsible_count"
-                    ),
-                    pl.col("ov1_compliant_count").alias(
-                        "ov1_lowest_disconnect_compliant_count"
-                    ),
-                    pl.col("ov1_compliance_pct").alias(
-                        "ov1_lowest_disconnect_compliance_pct"
-                    ),
-                    pl.col("ov1_pass").alias("ov1_lowest_disconnect_pass"),
-                    pl.col("overall_responsible_count").alias(
-                        "overall_lowest_disconnect_responsible_count"
-                    ),
-                    pl.col("overall_compliant_count").alias(
-                        "overall_lowest_disconnect_compliant_count"
-                    ),
-                    pl.col("overall_compliance_pct").alias(
-                        "overall_lowest_disconnect_compliance_pct"
-                    ),
-                    pl.col("overall_pass").alias("overall_lowest_disconnect_pass"),
-                ]
-            )
-            site_compliance_frame = pl.concat(
-                [
-                    calculated_compliance,
-                    disconnect_supported_compliance,
-                    lowest_disconnect_compliance,
-                ],
-                how="horizontal",
+            site_compliance_frame = build_site_compliance_table(
+                phase_b_calculated,
+                phase_b_disconnect_supported,
+                phase_b_lowest_disconnect,
             )
             site_result = {
                 "site_compliance": site_compliance_frame,
@@ -828,8 +728,8 @@ time_distribution = (
     else pl.DataFrame(schema=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA)
 )
 time_distribution.write_csv(LIMITED_TIME_DISTRIBUTION_PATH)
-write_method_compliance_final_table(
-    site_compliance,
+site_compliance_final_table = build_method_compliance_final_table(site_compliance)
+site_compliance_final_table.write_csv(
     LIMITED_OUTPUT_DIR / "site_compliance_final_table.csv",
 )
 if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:

@@ -92,6 +92,121 @@ CONFORMANCE_EXCLUSIONS_SCHEMA = {
 }
 
 
+def build_site_compliance_table(
+    phase_b_calculated,
+    phase_b_disconnect_supported,
+    phase_b_lowest_disconnect,
+):
+    calculated_compliance = (
+        phase_b_calculated["site_compliance"]
+        .select(
+            [
+                "site_id",
+                "threshold_method",
+                "los_threshold_used",
+                "ov1_threshold_used",
+                "los_lowest_disconnect_voltage",
+                "ov1_lowest_disconnect_voltage",
+                "los_responsible_count",
+                "los_compliant_count",
+                "los_compliance_pct",
+                "los_pass",
+                "ov1_responsible_count",
+                "ov1_compliant_count",
+                "ov1_compliance_pct",
+                "ov1_pass",
+                "overall_responsible_count",
+                "overall_compliant_count",
+                "overall_compliance_pct",
+                "overall_pass",
+            ]
+        )
+        .rename(
+            {
+                "los_threshold_used": "los_calculated_threshold_used",
+                "ov1_threshold_used": "ov1_calculated_threshold_used",
+                "los_responsible_count": "los_calculated_responsible_count",
+                "los_compliant_count": "los_calculated_compliant_count",
+                "los_compliance_pct": "los_calculated_compliance_pct",
+                "los_pass": "los_calculated_pass",
+                "ov1_responsible_count": "ov1_calculated_responsible_count",
+                "ov1_compliant_count": "ov1_calculated_compliant_count",
+                "ov1_compliance_pct": "ov1_calculated_compliance_pct",
+                "ov1_pass": "ov1_calculated_pass",
+                "overall_responsible_count": "overall_calculated_responsible_count",
+                "overall_compliant_count": "overall_calculated_compliant_count",
+                "overall_compliance_pct": "overall_calculated_compliance_pct",
+                "overall_pass": "overall_calculated_pass",
+            }
+        )
+    )
+    disconnect_supported_compliance = phase_b_disconnect_supported[
+        "site_compliance"
+    ].select(
+        [
+            "los_disconnect_support_added_count",
+            "ov1_disconnect_support_added_count",
+            "los_disconnect_supported_responsible_count",
+            "los_disconnect_supported_compliant_count",
+            "los_disconnect_supported_compliance_pct",
+            "los_disconnect_supported_pass",
+            "ov1_disconnect_supported_responsible_count",
+            "ov1_disconnect_supported_compliant_count",
+            "ov1_disconnect_supported_compliance_pct",
+            "ov1_disconnect_supported_pass",
+            "overall_disconnect_supported_responsible_count",
+            "overall_disconnect_supported_compliant_count",
+            "overall_disconnect_supported_compliance_pct",
+            "overall_disconnect_supported_pass",
+        ]
+    )
+    lowest_disconnect_compliance = phase_b_lowest_disconnect[
+        "site_compliance"
+    ].select(
+        [
+            "los_threshold_used",
+            "ov1_threshold_used",
+            "los_responsible_count",
+            "los_compliant_count",
+            "los_compliance_pct",
+            "los_pass",
+            "ov1_responsible_count",
+            "ov1_compliant_count",
+            "ov1_compliance_pct",
+            "ov1_pass",
+            "overall_responsible_count",
+            "overall_compliant_count",
+            "overall_compliance_pct",
+            "overall_pass",
+        ]
+    ).rename(
+        {
+            "los_threshold_used": "los_lowest_disconnect_threshold_used",
+            "ov1_threshold_used": "ov1_lowest_disconnect_threshold_used",
+            "los_responsible_count": "los_lowest_disconnect_responsible_count",
+            "los_compliant_count": "los_lowest_disconnect_compliant_count",
+            "los_compliance_pct": "los_lowest_disconnect_compliance_pct",
+            "los_pass": "los_lowest_disconnect_pass",
+            "ov1_responsible_count": "ov1_lowest_disconnect_responsible_count",
+            "ov1_compliant_count": "ov1_lowest_disconnect_compliant_count",
+            "ov1_compliance_pct": "ov1_lowest_disconnect_compliance_pct",
+            "ov1_pass": "ov1_lowest_disconnect_pass",
+            "overall_responsible_count": "overall_lowest_disconnect_responsible_count",
+            "overall_compliant_count": "overall_lowest_disconnect_compliant_count",
+            "overall_compliance_pct": "overall_lowest_disconnect_compliance_pct",
+            "overall_pass": "overall_lowest_disconnect_pass",
+        }
+    )
+    return pl.concat(
+        [
+            calculated_compliance,
+            disconnect_supported_compliance,
+            lowest_disconnect_compliance,
+        ],
+        how="horizontal",
+    )
+
+
 def build_sola_site_compliance(results):
     site_compliance = results["site_compliance"]
     site_thresholds = results["site_thresholds"]
@@ -123,7 +238,7 @@ def build_sola_site_compliance(results):
     )
 
 
-def write_method_compliance_final_table(site_compliance, output_path):
+def build_method_compliance_final_table(site_compliance):
     calculated = (
         site_compliance.group_by("threshold_method", maintain_order=True)
         .agg(
@@ -226,7 +341,7 @@ def write_method_compliance_final_table(site_compliance, output_path):
             ]
         )
     )
-    final_table.write_csv(output_path)
+    return final_table
 
 
 def build_sola_conformance_exclusions(results):

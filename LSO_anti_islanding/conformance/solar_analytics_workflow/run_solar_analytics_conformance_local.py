@@ -36,9 +36,9 @@ from solar_analytics_workflow.reporting import (
     SITE_COMPLIANCE_NAME,
     SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME,
     SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
+    build_method_compliance_final_table,
     build_sola_conformance_exclusions,
     build_sola_site_compliance,
-    write_method_compliance_final_table,
     write_sola_threshold_distribution_plots,
 )
 from solar_analytics_workflow.site_day_filtering import (
@@ -513,6 +513,7 @@ results = {
 CONFORMANCE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 site_compliance = build_sola_site_compliance(results)
 conformance_exclusions = build_sola_conformance_exclusions(results)
+site_compliance_final_table = build_method_compliance_final_table(site_compliance)
 site_compliance.write_csv(CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_NAME)
 results["site_compliance_time_distribution"].write_csv(
     CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME
@@ -521,8 +522,7 @@ if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
     results["site_level_various_voltages"].write_csv(
         CONFORMANCE_OUTPUT_DIR / "site_level_various_voltages.csv"
     )
-write_method_compliance_final_table(
-    site_compliance,
+site_compliance_final_table.write_csv(
     CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_FINAL_TABLE_NAME,
 )
 conformance_exclusions.write_csv(CONFORMANCE_OUTPUT_DIR / CONFORMANCE_EXCLUSIONS_NAME)
