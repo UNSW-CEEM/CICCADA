@@ -41,8 +41,11 @@ from solar_analytics_workflow.reporting import (
 )
 from solar_analytics_workflow.reporting import (
     SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
+    SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME,
+    SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA,
     build_method_compliance_final_table,
     build_site_compliance_table,
+    build_site_compliance_tod_distribution,
 )
 from solar_analytics_workflow.site_day_filtering import (
     summarize_solar_analytics_day_eligibility,
@@ -85,6 +88,9 @@ LIMITED_THRESHOLD_PLOT_DIR = LIMITED_OUTPUT_DIR / "threshold_distribution_plots"
 LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "solA_conformance_trino_limited_summary.csv"
 LIMITED_TIME_DISTRIBUTION_PATH = (
     LIMITED_OUTPUT_DIR / "site_compliance_time_distribution.csv"
+)
+LIMITED_TOD_DISTRIBUTION_PATH = (
+    LIMITED_OUTPUT_DIR / SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME
 )
 ASSESSMENT_SUMMARY_PATH = TRINO_OUTPUT_DIR / "solA_conformance_trino_summary.csv"
 MAX_ASSESSED_SITES = 1500
@@ -307,6 +313,7 @@ WHERE m.inverter_count = 1
 LIMITED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 site_compliance_rows = []
 site_compliance_time_distribution_rows = []
+site_compliance_tod_distribution_rows = []
 site_level_various_voltage_rows = []
 phase_a_record_frames = []
 assessed_site_ids = (
@@ -560,6 +567,11 @@ with local_trino_engine(
                 "site_compliance": site_compliance_frame,
             }
 
+            tod_distribution = build_site_compliance_tod_distribution(
+                phase_b_disconnect_supported["site_compliance_timestamp_detail"]
+            )
+            site_compliance_tod_distribution_rows.append(tod_distribution)
+
             compliance = site_compliance_frame.to_dicts()[0]
             if (
                 GENERATE_SITE_PLOTS
@@ -728,6 +740,14 @@ time_distribution = (
     else pl.DataFrame(schema=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA)
 )
 time_distribution.write_csv(LIMITED_TIME_DISTRIBUTION_PATH)
+tod_distribution = (
+    pl.concat(site_compliance_tod_distribution_rows, how="vertical")
+    if site_compliance_tod_distribution_rows
+    else pl.DataFrame(schema=SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA)
+)
+if not tod_distribution.is_empty():
+    tod_distribution = tod_distribution.sort(["site_id", "time_of_day_bin"])
+tod_distribution.write_csv(LIMITED_TOD_DISTRIBUTION_PATH)
 site_compliance_final_table = build_method_compliance_final_table(site_compliance)
 site_compliance_final_table.write_csv(
     LIMITED_OUTPUT_DIR / "site_compliance_final_table.csv",

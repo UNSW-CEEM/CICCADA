@@ -41,8 +41,11 @@ from solar_analytics_workflow.reporting import (
 )
 from solar_analytics_workflow.reporting import (
     SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
+    SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME,
+    SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA,
     build_method_compliance_final_table,
     build_site_compliance_table,
+    build_site_compliance_tod_distribution,
 )
 from solar_analytics_workflow.site_day_filtering import (
     summarize_solar_analytics_day_eligibility,
@@ -69,6 +72,7 @@ SITE_COMPLIANCE_SCHEMA = {
 }
 site_compliance_rows = []
 site_compliance_time_distribution_rows = []
+site_compliance_tod_distribution_rows = []
 site_level_various_voltage_rows = []
 
 # Select distinct site-level metadata from the eligible inverter cohort.
@@ -266,6 +270,12 @@ try:
     )
     pl.DataFrame(schema=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA).write_csv(
         time_distribution_output_path
+    )
+    tod_distribution_output_path = (
+        conformance_output_dir / SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME
+    )
+    pl.DataFrame(schema=SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA).write_csv(
+        tod_distribution_output_path
     )
     site_level_various_voltages_path = (
         conformance_output_dir / "site_level_various_voltages.csv"
@@ -530,6 +540,14 @@ try:
                         "disconnect_supported_assessment_status": assessment_status,
                     }
                 )
+
+                if threshold_method == PRIMARY_PHASE_B_METHOD:
+                    tod_distribution = build_site_compliance_tod_distribution(
+                        phase_b_disconnect_supported[
+                            "site_compliance_timestamp_detail"
+                        ]
+                    )
+                    site_compliance_tod_distribution_rows.append(tod_distribution)
 
                 if (
                     threshold_method == PRIMARY_PHASE_B_METHOD
@@ -1012,6 +1030,14 @@ try:
             with time_distribution_output_path.open("ab") as output_file:
                 time_distribution.write_csv(output_file, include_header=False)
             site_compliance_time_distribution_rows.clear()
+        if site_compliance_tod_distribution_rows:
+            tod_distribution = pl.concat(
+                site_compliance_tod_distribution_rows,
+                how="vertical",
+            ).cast(SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA, strict=False)
+            with tod_distribution_output_path.open("ab") as output_file:
+                tod_distribution.write_csv(output_file, include_header=False)
+            site_compliance_tod_distribution_rows.clear()
         if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES and site_level_various_voltage_rows:
             site_level_various_voltages = pl.concat(
                 site_level_various_voltage_rows,
@@ -1133,6 +1159,40 @@ try:
         flush=True,
     )
 
+    tod_distribution = pl.read_csv(
+        tod_distribution_output_path,
+        schema_overrides=SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA,
+    )
+    iceberg_exec(
+        "DROP TABLE IF EXISTS lso_anti_islanding_conformance_tod_distribution"
+    )
+    iceberg_exec("""
+        CREATE TABLE lso_anti_islanding_conformance_tod_distribution (
+            site_id BIGINT,
+            time_of_day_bin VARCHAR,
+            eligible_timestamp_count BIGINT,
+            eligible_threshold_timestamp_count BIGINT,
+            disconnect_support_timestamp_count BIGINT,
+            compliant_timestamp_count BIGINT,
+            non_compliant_timestamp_count BIGINT,
+            disconnected_below_threshold_count BIGINT,
+            disconnected_unknown_voltage_count BIGINT
+        )
+        WITH (format = 'PARQUET')
+    """)
+    rows_written = tod_distribution.write_database(
+        table_name="lso_anti_islanding_conformance_tod_distribution",
+        connection=engine,
+        if_table_exists="append",
+        engine_options={"chunksize": 250, "method": "multi"},
+    )
+    print(
+        "Uploaded TOD distribution to "
+        "lso_anti_islanding_conformance_tod_distribution: "
+        f"{rows_written} rows",
+        flush=True,
+    )
+
     final_table = final_table.rename(
         {
             "Method Used": "threshold_method",
@@ -1215,6 +1275,7 @@ try:
 
     conformance_output_path.unlink(missing_ok=True)
     time_distribution_output_path.unlink(missing_ok=True)
+    tod_distribution_output_path.unlink(missing_ok=True)
     if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
         site_level_various_voltages_path.unlink(missing_ok=True)
     print("Removed temporary conformance CSV files", flush=True)

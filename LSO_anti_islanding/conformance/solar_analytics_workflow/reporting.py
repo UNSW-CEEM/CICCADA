@@ -11,6 +11,7 @@ from solar_analytics_workflow.plotting import (
 SITE_COMPLIANCE_NAME = "site_compliance.csv"
 SITE_COMPLIANCE_FINAL_TABLE_NAME = "site_compliance_final_table.csv"
 SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME = "site_compliance_time_distribution.csv"
+SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME = "site_compliance_tod_distribution.csv"
 CONFORMANCE_EXCLUSIONS_NAME = "conformance_exclusions.csv"
 
 SITE_COMPLIANCE_SCHEMA = {
@@ -72,6 +73,18 @@ SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA = {
     "non_compliant_timestamp_count": pl.Int64,
     "compliant_pct": pl.Float64,
     "non_compliant_pct": pl.Float64,
+    "disconnected_below_threshold_count": pl.Int64,
+    "disconnected_unknown_voltage_count": pl.Int64,
+}
+
+SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA = {
+    "site_id": pl.Int64,
+    "time_of_day_bin": pl.Utf8,
+    "eligible_timestamp_count": pl.Int64,
+    "eligible_threshold_timestamp_count": pl.Int64,
+    "disconnect_support_timestamp_count": pl.Int64,
+    "compliant_timestamp_count": pl.Int64,
+    "non_compliant_timestamp_count": pl.Int64,
     "disconnected_below_threshold_count": pl.Int64,
     "disconnected_unknown_voltage_count": pl.Int64,
 }
@@ -235,6 +248,74 @@ def build_sola_site_compliance(results):
         site_compliance.select(list(SITE_COMPLIANCE_SCHEMA))
         .cast(SITE_COMPLIANCE_SCHEMA, strict=False)
         .sort("site_id")
+    )
+
+
+def build_site_compliance_tod_distribution(timestamp_detail):
+    """Aggregate per-site counts by the existing five-minute local timestamps."""
+    if timestamp_detail.is_empty():
+        return pl.DataFrame(schema=SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA)
+
+    return (
+        timestamp_detail.with_columns(
+            [
+                pl.col("local_tstamp")
+                .dt.strftime("%H:%M")
+                .alias("time_of_day_bin"),
+                (pl.col("los_responsible") | pl.col("ov1_responsible")).alias(
+                    "_eligible_threshold"
+                ),
+                (
+                    pl.col("los_disconnect_support_added")
+                    | pl.col("ov1_disconnect_support_added")
+                ).alias("_disconnect_support"),
+                (pl.col("los_compliant") | pl.col("ov1_compliant")).alias(
+                    "_base_compliant"
+                ),
+            ]
+        )
+        .group_by(["site_id", "time_of_day_bin"])
+        .agg(
+            [
+                (
+                    pl.col("_eligible_threshold").sum()
+                    + pl.col("_disconnect_support").sum()
+                )
+                .cast(pl.Int64)
+                .alias("eligible_timestamp_count"),
+                pl.col("_eligible_threshold")
+                .sum()
+                .cast(pl.Int64)
+                .alias("eligible_threshold_timestamp_count"),
+                pl.col("_disconnect_support")
+                .sum()
+                .cast(pl.Int64)
+                .alias("disconnect_support_timestamp_count"),
+                (
+                    pl.col("_base_compliant").sum()
+                    + pl.col("_disconnect_support").sum()
+                )
+                .cast(pl.Int64)
+                .alias("compliant_timestamp_count"),
+                (
+                    pl.col("_eligible_threshold").sum()
+                    - pl.col("_base_compliant").sum()
+                )
+                .cast(pl.Int64)
+                .alias("non_compliant_timestamp_count"),
+                pl.col("disconnected_below_threshold")
+                .sum()
+                .cast(pl.Int64)
+                .alias("disconnected_below_threshold_count"),
+                pl.col("disconnected_unknown_voltage")
+                .sum()
+                .cast(pl.Int64)
+                .alias("disconnected_unknown_voltage_count"),
+            ]
+        )
+        .select(list(SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA))
+        .cast(SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA, strict=False)
+        .sort(["site_id", "time_of_day_bin"])
     )
 
 
