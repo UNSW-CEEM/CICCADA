@@ -1,5 +1,9 @@
 # script good for plotting and saving plots locally
-# and local csvs similar to sapn2022.py
+# and local csvs similar to sapn2022 workflow
+
+# need the file lso_anti_islanding_conformance from trino
+# make sure it is updated
+
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -85,13 +89,15 @@ SITE_COMPLIANCE_SCHEMA = {
 LIMITED_OUTPUT_DIR = TRINO_LIMITED_OUTPUT_DIR
 LIMITED_SITE_PLOT_DIR = LIMITED_OUTPUT_DIR / "overall_site_plots"
 LIMITED_THRESHOLD_PLOT_DIR = LIMITED_OUTPUT_DIR / "threshold_distribution_plots"
-LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "solA_conformance_trino_limited_summary.csv"
+LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "site_compliance_limited_local.csv"
 LIMITED_TIME_DISTRIBUTION_PATH = (
     LIMITED_OUTPUT_DIR / "site_compliance_time_distribution.csv"
 )
 LIMITED_TOD_DISTRIBUTION_PATH = (
     LIMITED_OUTPUT_DIR / SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME
 )
+# need the file lso_anti_islanding_conformance from trino
+# make sure it is updated
 ASSESSMENT_SUMMARY_PATH = TRINO_OUTPUT_DIR / "solA_conformance_trino_summary.csv"
 MAX_ASSESSED_SITES = 1500
 
@@ -451,10 +457,6 @@ with local_trino_engine(
                 )
                 continue
 
-            print(
-                f"Cleaned site {site['site_id']}: {site_timeseries_data.height} rows",
-                flush=True,
-            )
             processed_sites += 1
 
             eligible_analysis_days = []
@@ -573,6 +575,13 @@ with local_trino_engine(
             site_compliance_tod_distribution_rows.append(tod_distribution)
 
             compliance = site_compliance_frame.to_dicts()[0]
+            print(
+                f"[{completed_phase_sites + 1}/{selected_sites.height}] "
+                f"Completed conformance for site {site['site_id']}: "
+                f"{compliance['overall_disconnect_supported_compliance_pct']:.1f}% "
+                f"compliant, pass={compliance['overall_disconnect_supported_pass']}",
+                flush=True,
+            )
             if (
                 GENERATE_SITE_PLOTS
                 and compliance["overall_disconnect_supported_pass"] is not None
