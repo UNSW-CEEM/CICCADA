@@ -1,12 +1,14 @@
 # This script is to be run on the EC2 instance for reporting 
 # per day per site LSO anti-islanding cnofromance
-# it is a subset of the bigger ec2 script
+# pushes the table lso_anti_islanding_conformance_daily only
+# it does not push anything else
+# run_evm_trino_on_ec2.py pushes the same table too
+# so only use this script if you want to update that table
+
 # helpful to run if the cohort of assessed sites wont change but 
 # the method is slightly changed
 # conformance results for the assessed Solar Analytics site cohort.
 
-# think if you want this to be the script to insert into tables
-# so tables are insertee only for assessed sites or the big ec2 script
 import sys
 from datetime import datetime
 from pathlib import Path

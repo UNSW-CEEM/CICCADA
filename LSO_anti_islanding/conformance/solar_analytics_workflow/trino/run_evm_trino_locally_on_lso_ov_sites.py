@@ -86,7 +86,7 @@ LIMITED_TIME_DISTRIBUTION_PATH = (
     LIMITED_OUTPUT_DIR / "site_compliance_time_distribution.csv"
 )
 ASSESSMENT_SUMMARY_PATH = TRINO_OUTPUT_DIR / "solA_conformance_trino_summary.csv"
-MAX_ASSESSED_SITES = 1000
+MAX_ASSESSED_SITES = 1500
 
 
 def _site_compliance_report_row(site_result):
