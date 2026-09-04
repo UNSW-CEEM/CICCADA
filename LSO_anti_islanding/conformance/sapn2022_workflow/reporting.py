@@ -12,6 +12,7 @@ SITE_COMPLIANCE_NAME = "site_compliance.csv"
 SITE_COMPLIANCE_FINAL_TABLE_NAME = "site_compliance_final_table.csv"
 SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME = "site_compliance_time_distribution.csv"
 SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME = "site_compliance_tod_distribution.csv"
+SITE_LEVEL_VARIOUS_VOLTAGES_NAME = "site_level_various_voltages.csv"
 CONFORMANCE_EXCLUSIONS_NAME = "conformance_exclusions.csv"
 
 SITE_COMPLIANCE_SCHEMA = {
@@ -205,7 +206,7 @@ def build_site_compliance_tod_distribution(timestamp_detail):
     )
 
 
-def write_method_compliance_final_table(site_compliance, output_path):
+def build_method_compliance_final_table(site_compliance):
     calculated = (
         site_compliance.group_by("threshold_method", maintain_order=True)
         .agg(
@@ -308,7 +309,7 @@ def write_method_compliance_final_table(site_compliance, output_path):
             ]
         )
     )
-    final_table.write_csv(output_path)
+    return final_table
 
 
 def build_sapn_conformance_exclusions(results):

@@ -39,10 +39,11 @@ from sapn2022_workflow.reporting import (
     SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME,
     SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
     SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME,
+    SITE_LEVEL_VARIOUS_VOLTAGES_NAME,
+    build_method_compliance_final_table,
     build_sapn_conformance_exclusions,
     build_sapn_site_compliance,
     build_site_compliance_tod_distribution,
-    write_method_compliance_final_table,
     write_sapn_threshold_distribution_plots,
 )
 from sapn2022_workflow.sapn_paths import (
@@ -557,6 +558,7 @@ conformance_exclusions = build_sapn_conformance_exclusions(results)
 site_compliance_tod_distribution = build_site_compliance_tod_distribution(
     results["site_compliance_timestamp_detail"]
 )
+site_compliance_final_table = build_method_compliance_final_table(site_compliance)
 site_compliance.write_csv(CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_NAME)
 results["site_compliance_time_distribution"].write_csv(
     CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME
@@ -566,10 +568,9 @@ site_compliance_tod_distribution.write_csv(
 )
 if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
     results["site_level_various_voltages"].write_csv(
-        CONFORMANCE_OUTPUT_DIR / "site_level_various_voltages.csv"
+        CONFORMANCE_OUTPUT_DIR / SITE_LEVEL_VARIOUS_VOLTAGES_NAME
     )
-write_method_compliance_final_table(
-    site_compliance,
+site_compliance_final_table.write_csv(
     CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_FINAL_TABLE_NAME,
 )
 conformance_exclusions.write_csv(CONFORMANCE_OUTPUT_DIR / CONFORMANCE_EXCLUSIONS_NAME)

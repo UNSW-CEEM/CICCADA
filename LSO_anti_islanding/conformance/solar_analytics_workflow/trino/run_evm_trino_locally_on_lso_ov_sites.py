@@ -1,5 +1,5 @@
 # script good for plotting and saving plots locally
-#
+# and local csvs similar to sapn2022.py
 import sys
 from datetime import datetime
 from pathlib import Path
