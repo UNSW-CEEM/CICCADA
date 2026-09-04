@@ -1,0 +1,209 @@
+%% ======================================================================
+%% Section 3 "Data" -- drop-in replacement for the empty \section{Data}
+%% block in main.tex. Two subsections as requested:
+%%   3.1 Synthetic dataset creation  -- full methodology text, ready to use
+%%   3.2 Dataset description        -- skeleton only, left for the author
+%%       to complete once final counts/figures are available
+%% Bracketed placeholders [LIKE THIS] mark numbers that depend on the
+%% final production build (still pending as of this draft) and must be
+%% filled in once that run completes -- do not guess these before then.
+%% ======================================================================
+
+\subsection{Synthetic dataset creation}
+\label{subsec:dataset_creation}
+
+The synthetic ground-truth dataset used in this study is derived entirely
+from network-side data already collected by the distribution network
+operator: a circuit-level interval telemetry table (hereafter the
+\emph{source telemetry table}) and an accompanying circuit/site metadata
+table. The source telemetry table records 5-minute interval readings of
+active power, reactive power (derived from cumulative reactive energy),
+voltage, current, power factor, and cumulative imported/exported energy
+for every monitored circuit at every site, partitioned by year, month, and
+generation/load side. Over the [2024--2025] study period it spans
+approximately [X] billion rows across [Y] GB. The metadata table carries,
+per circuit, a \emph{circuit type} label distinguishing the whole-site
+load-side signal from the whole-site PV-side signal (plus a set of
+named, partial sub-load circuits not required for this study), a
+\emph{circuit polarity} indicator, a \emph{device identifier} grouping
+co-located phases of the same physical meter, and site-level attributes
+including two independent PV capacity proxies (a nameplate rating and an
+empirical 99th-percentile apparent-power figure) used later for
+capacity-normalised comparisons (Section~\ref{subsec:capacity_proxies}).
+
+\subsubsection*{Cohort selection}
+Two circuit types anchor the ground truth used throughout this paper: a
+load-side circuit type, representing the site's net load as measured at
+the load-side conductor, and a PV-side circuit type, representing the
+site's PV generation. A candidate site was retained only if it exposed at
+least one circuit of each type in the metadata table. Because single- and
+three-phase installations are both present in the fleet, and the
+metadata table carries no verified circuit-to-phase (A/B/C) label for
+either side, sites were further restricted to those with exactly one or
+exactly three load-side circuits -- the two circuit counts consistent
+with a genuine single- or three-phase installation -- deferring the
+remaining, structurally ambiguous sites (multi-device sites and sites
+with two or four+ load-side circuits) to future work rather than guessing
+at their topology. This restriction yielded [14{,}353] clean candidate
+sites out of [15{,}048] sites exposing at least one load-side circuit.
+
+\subsubsection*{Data-quality issues identified and handled}
+An initial signal-taxonomy investigation surfaced five issues that, left
+uncorrected, would have silently biased the resulting ground truth:
+
+\begin{enumerate}
+  \item \textbf{Duplicate circuits.} A material share of sites exposed
+    two or more circuit identifiers reporting near-identical (correlation
+    $\geq 0.99$) readings, both within the same circuit type (e.g. two
+    \texttt{PV} circuit identifiers reporting the same underlying signal)
+    and across types. Left unresolved, these would double-count load or
+    generation. A per-site duplicate-detection step identifies and drops
+    the redundant identifier(s), keeping one representative circuit per
+    physical signal.
+  \item \textbf{Inactive circuits.} A smaller share of circuits reported
+    a near-zero (sub-few-Watt) reading for an entire day, consistent with
+    a decommissioned or never-commissioned meter channel still present in
+    the metadata. These are detected and dropped independently of the
+    duplicate check.
+  \item \textbf{A device/meter-model power-reporting artefact.} A subset
+    of circuits, strongly associated with a specific meter/device model,
+    reports an instantaneous power field that is unreliable at the
+    nominal 5-minute cadence: the underlying energy register only
+    accumulates in whole Watt-hour steps at a true interval closer to
+    five minutes, and reading power directly off it aliases against the
+    true accumulation interval. For these circuits, power is instead
+    re-derived from the accumulated energy and the circuit's own implied
+    accumulation interval; this correction is applied by default but is
+    exposed as a configurable option, since it is what makes this
+    dataset's active-power series diverge (visibly, since the correction
+    produces a step-wise rather than smooth trace) from a naive
+    energy-agnostic read of the same source table.
+  \item \textbf{Sign convention.} Raw per-circuit power and reactive
+    power are not consistently signed with respect to import/export
+    across circuits. A per-circuit polarity correction, derived and
+    verified against known-generation and known-load circuits, is
+    applied uniformly so that positive PV-side power always denotes
+    generation and load-side power reflects genuine net (import-minus-
+    self-consumed-generation) flow at the load conductor, consistent
+    with a physical net meter rather than a pure consumption meter.
+  \item \textbf{Night-time reconstruction failures.} For every candidate
+    site, load-side and PV-side signals were summed (after polarity
+    correction) and checked against an expected near-zero PV contribution
+    overnight. A small share of sites showed an implausible non-zero
+    night-time reconstructed load, consistent with an undeclared
+    behind-the-meter storage circuit or an uncorrected sign issue outside
+    the scope of the polarity correction above. Rather than attempt a
+    per-site correction, these sites were excluded entirely, along with
+    any site whose duplicate-circuit resolution could not be settled
+    unambiguously (flagged for manual review) -- a deliberately
+    conservative choice, favouring a smaller but trustworthy dataset over
+    a larger one requiring untested per-site assumptions.
+\end{enumerate}
+
+Because neither the metadata table nor the source telemetry table carries
+a verified circuit-to-phase label, one further modelling choice was
+necessary wherever PV-side and load-side circuit counts disagree at a
+site (e.g. one PV-side circuit serving a three-phase load): PV generation
+is allocated evenly across the site's load phases in that case, and
+matched one-to-one, by circuit identifier ordering, only where the two
+counts agree. This is treated explicitly as a heuristic, not a verified
+pairing, and every derived value carries a record of which rule produced
+it (Section~\ref{subsec:dataset_description}).
+
+\subsubsection*{Construction pipeline}
+The final dataset was built in four stages, applied to the [14{,}353]
+clean candidate sites identified above:
+
+\begin{enumerate}
+  \item \textbf{Fleet-wide resolution (single representative day).} The
+    duplicate, inactivity, and reconstruction checks above were run
+    across the full candidate cohort for one representative day, yielding
+    a per-circuit keep/drop decision and a per-site exclusion decision
+    (manual-review and reconstruction-failure sites dropped entirely).
+  \item \textbf{Full-period extraction.} For every circuit surviving
+    stage 1, the complete [2024--2025] interval history was extracted
+    from the source telemetry table, restricted to the load-side and
+    PV-side circuit types only (the named partial sub-load circuits were
+    not required for this study).
+  \item \textbf{Full-history revalidation.} The single-day checks in
+    stage~1 establish circuit and site quality on one day only; a circuit
+    or site can still degrade later in the study period (e.g. a device
+    failure, a newly commissioned behind-the-meter battery). Stage~3
+    therefore repeats the inactivity and reconstruction checks across
+    every landed month rather than the single sampled day: a circuit
+    found newly inactive in any month is dropped from that point forward;
+    a site newly failing the reconstruction check in any month is
+    excluded from the dataset entirely.
+  \item \textbf{Table construction.} From the fully revalidated circuit
+    set, the three deliverable tables described in
+    Section~\ref{subsec:dataset_description} are built one landed month
+    at a time, with the device/meter-model and sign-convention
+    corrections above applied throughout.
+\end{enumerate}
+
+\subsubsection*{Final dataset}
+The output of this pipeline is three related tables, each built from the
+same underlying revalidated circuit-level telemetry but aggregated
+differently, so that the signal an algorithm is evaluated \emph{against}
+is never derived from the same aggregation as the signal it is given as
+\emph{input}:
+
+\begin{itemize}
+  \item A \textbf{site-level ground-truth table}, one row per site per
+    timestamp, giving load-side and PV-side active power, reactive power,
+    and voltage separately, plus their combination into a single
+    PV-independent gross load figure and a capacity-normalised PV output
+    figure. This is the target a disaggregation algorithm's site-level
+    output is graded against.
+  \item A \textbf{synthetic smart-meter table}, one row per site, device,
+    circuit, and timestamp, restricted to load-side circuits only and
+    kept per phase (not pre-summed), using the raw, uncorrected
+    per-circuit reading. This is the only table intended as algorithm
+    \emph{input} -- it is deliberately built to resemble what a
+    distribution network operator's existing AMI infrastructure already
+    reports, without exposing the independently metered PV signal an
+    algorithm is meant to infer.
+  \item A \textbf{per-circuit ground-truth table}, one row per site,
+    device, circuit, and timestamp, for every surviving load-side
+    \emph{and} PV-side circuit, sign-corrected but otherwise
+    unaggregated. This supports per-phase grading and topology-aware
+    analysis, and carries the PV-to-phase allocation rule
+    (Section~\ref{subsec:dataset_creation}) as an explicit per-site tag
+    rather than folding it into a derived numeric value.
+\end{itemize}
+
+Across the [2024--2025] period and the sites surviving every stage above,
+the final dataset comprises [X] sites, [Y] rows in the site-level table,
+and [Z] rows in the synthetic smart-meter table (Section~\ref{subsec:dataset_description}
+gives the full breakdown).
+
+\subsection{Dataset description}
+\label{subsec:dataset_description}
+
+%% TODO (author): complete this subsection once the final [2024--2025]
+%% production build has run. Suggested structure, matching the three
+%% tables introduced in Section~\ref{subsec:dataset_creation}:
+%%
+%%   - Fleet size and attrition: candidate sites -> clean cohort ->
+%%     sites surviving into each of the three final tables, with the
+%%     reasons for attrition at each stage (duplicate/inactive circuits,
+%%     manual-review/reconstruction exclusions, sites with no temporal
+%%     overlap between load and PV signals).
+%%   - Geographic distribution (e.g. postcode/DNSP-zone choropleth or
+%%     scatter, if location data is included/permitted).
+%%   - PV and load capacity distribution across the final cohort (e.g.
+%%     histogram of nameplate/S_99 capacity; single- vs three-phase
+%%     PV/load split; counts of the four load/PV phase-count
+%%     combinations, e.g. 1-phase load with 3-phase PV).
+%%   - Temporal coverage per site (date range actually landed per site,
+%%     given real-world circuit/device churn -- some sites' data ends
+%%     before the nominal study end date).
+%%   - Table-level summary statistics: row counts, site counts, and
+%%     total data volume for each of the three final tables (see the
+%%     bracketed placeholders left in Section~\ref{subsec:dataset_creation}).
+%%   - A short note on data provenance/reproducibility: the pipeline
+%%     above is deterministic and re-runnable end-to-end from the source
+%%     telemetry table, with every exclusion decision retained in an
+%%     audit trail rather than only reflected in the final row counts.
+
+\hspace{1em} % placeholder paragraph break -- replace with the text above

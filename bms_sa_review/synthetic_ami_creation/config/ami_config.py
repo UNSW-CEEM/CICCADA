@@ -201,12 +201,15 @@ S3_EXTRACT_PREFIX = os.environ.get(
 STORE_TABLES: dict[str, str] = {
     # Phase 4: landed exactly as Athena returned it, nothing derived.
     "ami_extract":   "ami_extract",          # circuit x interval, Hive-partitioned
-    "ami_meta":      "ami_meta.parquet",     # circuit dimension, from meta_up23c
     "ami_provenance": "ami_provenance.parquet",  # per-chunk SQL, counts, timestamps
     # Phase 5: the deliverable trio.
     "ami_raw":              "ami_raw",              # site x interval, ground truth
     "ami_meter":            "ami_meter",            # site x AMI interval, net only, per phase
     "ami_raw_phaseseparate": "ami_raw_phaseseparate",  # per-phase ground truth, PV-allocated
+    # Phase 6: dimension tables, from meta_up23c, scoped to whatever is
+    # actually landed above right now (see ami_metadata.py).
+    "ami_site_metadata":    "ami_site_metadata.parquet",     # one row per site_id
+    "ami_circuit_metadata": "ami_circuit_metadata.parquet",  # one row per (site_id, device_id, circuit_id)
 }
 
 PARTITIONED_TABLES = frozenset({"ami_extract", "ami_raw", "ami_meter"})
