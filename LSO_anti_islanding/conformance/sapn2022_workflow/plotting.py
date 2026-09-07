@@ -12,7 +12,7 @@ from matplotlib.ticker import MultipleLocator
 
 PLOT_COLORS = {
     "power_total": "#2e7d32",
-    "power_channels": ["#2e7d32", "#2e7d32", "#2e7d32", "#2e7d32"],
+    "power_channels": ["#1565C0", "#4A148C", "#A67C00"],
     "voltage_inst": "#b45309",
     "voltage_avg": "#1a1a1a",
     "threshold_lso": "#1a1a1a",
