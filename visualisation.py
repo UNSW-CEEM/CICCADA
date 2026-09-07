@@ -447,21 +447,21 @@ class my_plot4:
                                     > 0
                                 ):
                                     ax.set_title(
-                                        f"{self.title} {str(t0_dt.date())[self.title_i:self.title_j]}---{str(t1_dt.date())[self.title_i:self.title_j]}"
+                                        f"{self.title} {str(t0_dt.date())[self.title_i : self.title_j]}---{str(t1_dt.date())[self.title_i : self.title_j]}"
                                     )
                             else:
                                 ax.set_title(
-                                    f"{self.title} {str(t0_dt.date())[self.title_i:self.title_j]}"
+                                    f"{self.title} {str(t0_dt.date())[self.title_i : self.title_j]}"
                                 )
                     else:
                         if t0_dt.date() != t1_dt.date():
                             if len(str(t0_dt.date())[self.title_i : self.title_j]) > 0:
                                 ax.set_title(
-                                    f"{self.title} {str(t0_dt.date())[self.title_i:self.title_j]}---{str(t1_dt.date())[self.title_i:self.title_j]}"
+                                    f"{self.title} {str(t0_dt.date())[self.title_i : self.title_j]}---{str(t1_dt.date())[self.title_i : self.title_j]}"
                                 )
                         else:
                             ax.set_title(
-                                f"{self.title} {str(t0_dt.date())[self.title_i:self.title_j]}"
+                                f"{self.title} {str(t0_dt.date())[self.title_i : self.title_j]}"
                             )
 
                     ax.set_ylabel(self.y_labels[self.plt_attr.index(plt_attr)])

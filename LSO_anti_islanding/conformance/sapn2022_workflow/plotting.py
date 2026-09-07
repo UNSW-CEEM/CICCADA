@@ -610,7 +610,7 @@ def plot_method_threshold_overlay_day(
                 linewidth=1.4,
                 alpha=0.9,
                 zorder=1,
-                label=f'{method_info["label"]} LOS {threshold_value:.3f} V',
+                label=f"{method_info['label']} LOS {threshold_value:.3f} V",
             )
 
     method_status_parts = []
@@ -620,13 +620,13 @@ def plot_method_threshold_overlay_day(
         day_status, day_pct = _day_status_label(day_compliant_ts, day_eligible_ts)
         if day_pct is not None:
             method_status_parts.append(
-                f'{method_info["label"]}: site {method_info["status"]} | '
-                f'day {day_status} {day_pct:.1f}% '
-                f'({int(day_compliant_ts)}/{int(day_eligible_ts)} ts)'
+                f"{method_info['label']}: site {method_info['status']} | "
+                f"day {day_status} {day_pct:.1f}% "
+                f"({int(day_compliant_ts)}/{int(day_eligible_ts)} ts)"
             )
         else:
             method_status_parts.append(
-                f'{method_info["label"]}: site {method_info["status"]} | day {day_status}'
+                f"{method_info['label']}: site {method_info['status']} | day {day_status}"
             )
     method_status_text = " | ".join(method_status_parts)
     plot_date = _format_plot_date(day_label, x)
@@ -696,7 +696,7 @@ def plot_method_threshold_overlay_day(
                 for overlay_info in overlay_spans
             ]
             v_labels = v_labels + [
-                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+                f"{overlay_info['label']} EVM window" for overlay_info in overlay_spans
             ]
         ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
     else:
@@ -712,7 +712,7 @@ def plot_method_threshold_overlay_day(
                 for overlay_info in overlay_spans
             ]
             top_v_labels = top_v_labels + [
-                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+                f"{overlay_info['label']} EVM window" for overlay_info in overlay_spans
             ]
         ax_top.legend(
             top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
@@ -730,7 +730,7 @@ def plot_method_threshold_overlay_day(
                 for overlay_info in overlay_spans
             ]
             bottom_v_labels = bottom_v_labels + [
-                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+                f"{overlay_info['label']} EVM window" for overlay_info in overlay_spans
             ]
         ax_bottom.legend(
             bottom_lines + bottom_v_lines,
