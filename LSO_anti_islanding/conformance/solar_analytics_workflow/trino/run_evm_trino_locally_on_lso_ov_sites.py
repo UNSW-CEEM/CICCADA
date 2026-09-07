@@ -96,10 +96,11 @@ LIMITED_TIME_DISTRIBUTION_PATH = (
 LIMITED_TOD_DISTRIBUTION_PATH = (
     LIMITED_OUTPUT_DIR / SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME
 )
+LIMITED_COMPLETED_SITES_PATH = LIMITED_OUTPUT_DIR / "completed_sites.csv"
 # need the file lso_anti_islanding_conformance from trino
 # make sure it is updated
 ASSESSMENT_SUMMARY_PATH = TRINO_OUTPUT_DIR / "solA_conformance_trino_summary.csv"
-MAX_ASSESSED_SITES = 1500
+MAX_ASSESSED_SITES = 1500 # 1500
 
 
 def _site_compliance_report_row(site_result):
@@ -413,6 +414,26 @@ with local_trino_engine(
     selected_site_ids = selected_sites.get_column("site_id")
     circuit_data = circuit_data.filter(
         pl.col("site_id").is_in(selected_site_ids.implode())
+    )
+
+    pl.DataFrame(schema=SITE_COMPLIANCE_SCHEMA).write_csv(LIMITED_SUMMARY_PATH)
+    pl.DataFrame(schema=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA).write_csv(
+        LIMITED_TIME_DISTRIBUTION_PATH
+    )
+    pl.DataFrame(schema=SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA).write_csv(
+        LIMITED_TOD_DISTRIBUTION_PATH
+    )
+    build_method_compliance_final_table(
+        pl.DataFrame(schema=SITE_COMPLIANCE_SCHEMA)
+    ).write_csv(
+        LIMITED_OUTPUT_DIR / "site_compliance_final_table.csv",
+    )
+    if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+        pl.DataFrame(schema=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA).write_csv(
+            LIMITED_OUTPUT_DIR / "site_level_various_voltages.csv"
+        )
+    pl.DataFrame(schema={"site_id": pl.Int64}).write_csv(
+        LIMITED_COMPLETED_SITES_PATH
     )
 
     processed_sites = 0
@@ -730,6 +751,43 @@ with local_trino_engine(
             phase_a_records = phase_a_result["records"]
             if not phase_a_records.is_empty():
                 phase_a_record_frames.append(phase_a_records)
+
+            with LIMITED_SUMMARY_PATH.open("ab") as output_file:
+                pl.DataFrame(
+                    [compliance_row],
+                    schema=SITE_COMPLIANCE_SCHEMA,
+                ).write_csv(output_file, include_header=False)
+            with LIMITED_TIME_DISTRIBUTION_PATH.open("ab") as output_file:
+                pl.concat(
+                    [
+                        calculated_distribution,
+                        disconnect_supported_distribution,
+                        lowest_disconnect_distribution,
+                    ],
+                    how="vertical",
+                ).write_csv(output_file, include_header=False)
+            with LIMITED_TOD_DISTRIBUTION_PATH.open("ab") as output_file:
+                tod_distribution.write_csv(output_file, include_header=False)
+            site_compliance = pl.DataFrame(
+                site_compliance_rows,
+                schema=SITE_COMPLIANCE_SCHEMA,
+            )
+            build_method_compliance_final_table(site_compliance).write_csv(
+                LIMITED_OUTPUT_DIR / "site_compliance_final_table.csv",
+            )
+            if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+                with (
+                    LIMITED_OUTPUT_DIR / "site_level_various_voltages.csv"
+                ).open("ab") as output_file:
+                    phase_a_result["site_level_various_voltages"].write_csv(
+                        output_file,
+                        include_header=False,
+                    )
+            with LIMITED_COMPLETED_SITES_PATH.open("ab") as output_file:
+                pl.DataFrame(
+                    {"site_id": [site["site_id"]]},
+                    schema={"site_id": pl.Int64},
+                ).write_csv(output_file, include_header=False)
 
             completed_phase_sites += 1
             del site_result
