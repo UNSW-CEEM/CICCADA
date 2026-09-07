@@ -318,10 +318,72 @@ WHERE m.inverter_count = 1
 
 # Keep one Trino connection open
 LIMITED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-site_compliance_rows = []
-site_compliance_time_distribution_rows = []
-site_compliance_tod_distribution_rows = []
+
+if LIMITED_COMPLETED_SITES_PATH.exists():
+    completed_sites = pl.read_csv(
+        LIMITED_COMPLETED_SITES_PATH,
+        schema_overrides={"site_id": pl.Int64},
+    )
+else:
+    completed_sites = pl.DataFrame(schema={"site_id": pl.Int64})
+    completed_sites.write_csv(LIMITED_COMPLETED_SITES_PATH)
+completed_site_ids = completed_sites.get_column("site_id")
+
+if LIMITED_SUMMARY_PATH.exists():
+    site_compliance = pl.read_csv(
+        LIMITED_SUMMARY_PATH,
+        schema_overrides=SITE_COMPLIANCE_SCHEMA,
+    ).filter(pl.col("site_id").is_in(completed_site_ids.implode()))
+else:
+    site_compliance = pl.DataFrame(schema=SITE_COMPLIANCE_SCHEMA)
+site_compliance.write_csv(LIMITED_SUMMARY_PATH)
+site_compliance_rows = site_compliance.to_dicts()
+
+if LIMITED_TIME_DISTRIBUTION_PATH.exists():
+    time_distribution = pl.read_csv(
+        LIMITED_TIME_DISTRIBUTION_PATH,
+        schema_overrides=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
+    ).filter(pl.col("site_id").is_in(completed_site_ids.implode()))
+else:
+    time_distribution = pl.DataFrame(schema=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA)
+time_distribution.write_csv(LIMITED_TIME_DISTRIBUTION_PATH)
+site_compliance_time_distribution_rows = (
+    [time_distribution] if not time_distribution.is_empty() else []
+)
+
+if LIMITED_TOD_DISTRIBUTION_PATH.exists():
+    tod_distribution = pl.read_csv(
+        LIMITED_TOD_DISTRIBUTION_PATH,
+        schema_overrides=SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA,
+    ).filter(pl.col("site_id").is_in(completed_site_ids.implode()))
+else:
+    tod_distribution = pl.DataFrame(schema=SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA)
+tod_distribution.write_csv(LIMITED_TOD_DISTRIBUTION_PATH)
+site_compliance_tod_distribution_rows = (
+    [tod_distribution] if not tod_distribution.is_empty() else []
+)
+
 site_level_various_voltage_rows = []
+if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+    site_level_various_voltages_path = (
+        LIMITED_OUTPUT_DIR / "site_level_various_voltages.csv"
+    )
+    if site_level_various_voltages_path.exists():
+        site_level_various_voltages = pl.read_csv(
+            site_level_various_voltages_path,
+            schema_overrides=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA,
+        ).filter(pl.col("site_id").is_in(completed_site_ids.implode()))
+    else:
+        site_level_various_voltages = pl.DataFrame(
+            schema=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA
+        )
+    site_level_various_voltages.write_csv(site_level_various_voltages_path)
+    if not site_level_various_voltages.is_empty():
+        site_level_various_voltage_rows.append(site_level_various_voltages)
+
+build_method_compliance_final_table(site_compliance).write_csv(
+    LIMITED_OUTPUT_DIR / "site_compliance_final_table.csv",
+)
 phase_a_record_frames = []
 assessed_site_ids = (
     pl.read_csv(
@@ -409,31 +471,20 @@ with local_trino_engine(
     ).sort("site_id")
     if MAX_ASSESSED_SITES is not None:
         selected_sites = selected_sites.head(MAX_ASSESSED_SITES)
-    print(f"Selected assessed sites: {selected_sites.height}", flush=True)
+    selected_cohort_size = selected_sites.height
+    completed_selected_sites = selected_sites.filter(
+        pl.col("site_id").is_in(completed_site_ids.implode())
+    ).height
+    selected_sites = selected_sites.filter(
+        ~pl.col("site_id").is_in(completed_site_ids.implode())
+    )
+    print(f"Selected assessed cohort: {selected_cohort_size}", flush=True)
+    print(f"Completed sites skipped: {completed_selected_sites}", flush=True)
+    print(f"Sites remaining: {selected_sites.height}", flush=True)
 
     selected_site_ids = selected_sites.get_column("site_id")
     circuit_data = circuit_data.filter(
         pl.col("site_id").is_in(selected_site_ids.implode())
-    )
-
-    pl.DataFrame(schema=SITE_COMPLIANCE_SCHEMA).write_csv(LIMITED_SUMMARY_PATH)
-    pl.DataFrame(schema=SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA).write_csv(
-        LIMITED_TIME_DISTRIBUTION_PATH
-    )
-    pl.DataFrame(schema=SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA).write_csv(
-        LIMITED_TOD_DISTRIBUTION_PATH
-    )
-    build_method_compliance_final_table(
-        pl.DataFrame(schema=SITE_COMPLIANCE_SCHEMA)
-    ).write_csv(
-        LIMITED_OUTPUT_DIR / "site_compliance_final_table.csv",
-    )
-    if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
-        pl.DataFrame(schema=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA).write_csv(
-            LIMITED_OUTPUT_DIR / "site_level_various_voltages.csv"
-        )
-    pl.DataFrame(schema={"site_id": pl.Int64}).write_csv(
-        LIMITED_COMPLETED_SITES_PATH
     )
 
     processed_sites = 0
@@ -831,7 +882,9 @@ if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
 
 _generate_threshold_distribution_plots(phase_a_record_frames)
 
-print(f"Selected sites: {selected_sites.height}")
+print(f"Selected cohort: {selected_cohort_size}")
+print(f"Previously completed sites skipped: {completed_selected_sites}")
+print(f"Sites attempted in this run: {selected_sites.height}")
 print(f"Selected PV circuits: {circuit_data['c_id'].n_unique()}")
 print(f"Sites processed through conformance: {processed_sites}")
 print(f"Sites completing Phase A and Phase B: {completed_phase_sites}")
