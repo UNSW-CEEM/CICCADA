@@ -89,7 +89,7 @@ SITE_COMPLIANCE_SCHEMA = {
 LIMITED_OUTPUT_DIR = TRINO_LIMITED_OUTPUT_DIR
 LIMITED_SITE_PLOT_DIR = LIMITED_OUTPUT_DIR / "overall_site_plots"
 LIMITED_THRESHOLD_PLOT_DIR = LIMITED_OUTPUT_DIR / "threshold_distribution_plots"
-LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "site_compliance_limited_local.csv"
+LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "site_compliance.csv"
 LIMITED_TIME_DISTRIBUTION_PATH = (
     LIMITED_OUTPUT_DIR / "site_compliance_time_distribution.csv"
 )
