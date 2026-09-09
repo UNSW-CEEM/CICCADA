@@ -4,24 +4,29 @@ This folder contains the local SAPN2022 curtailment workflow and a few small sup
 
 ## Local path setup
 
-- External SAPN, EVM, and BOM locations are intentionally kept out of Git.
+- External SAPN training/validation and BOM locations are intentionally kept
+  out of Git.
 - Copy `local_paths.example.py` to `local_paths.py` in this folder and fill in the paths for your machine.
 - `local_paths.py` is ignored by Git, while `local_paths.example.py` is the tracked template that documents each variable.
 
 ## Main pipeline scripts
 
-- `build_structured_5m.py`: Builds the canonical 5-minute structured dataset from local EVM, SAPN, and BOM inputs; this is the default upstream for the later 5-minute model and curtailment scripts.
+- `build_structured_5m.py`: Builds the canonical 5-minute structured dataset
+  from local SAPN training/validation and BOM inputs; this is the default
+  upstream for the later 5-minute model and curtailment scripts.
 - `build_structured_high_resolution.py`: Builds the higher-resolution structured dataset and also provides many of the shared builder utilities reused by `build_structured_5m.py`.
 - `fit_ghi_model.py`: Fits the per-site, per-time-bin GHI-normalised linear model from the structured training rows.
 - `write_all_uncurtailedPV.py`: Applies the fitted GHI model to validation rows to estimate uncurtailed PV at each timestamp.
 - `run_sapn2022_metrics.py`: Older exact-timestamp Phase B curtailment summary that joins responsibility flags to `all_uncurtailedPV`.
 - `run_sapn2022_metrics_5m.py`: Main 5-minute curtailment summary that joins eligible LOS/OV1 buckets to `all_uncurtailedPV_5m`.
-- `plot_site_day_evm.py`: Plots one site/day of actual power, estimated uncurtailed power, nonconformance, and voltage.
+- `plot_site_day_sapn2022_train.py`: Plots one site/day of actual power, estimated uncurtailed power, nonconformance, and voltage.
 - `plot_aggregates.ipynb`: Interactive notebook for daily aggregate curtailed-power and kWh share pies from the 5-minute summary parquet.
 
 ## Supporting scripts used by the pipeline
 
-- `site_metrology_helpers.py`: Curtailment-specific wrapper helpers for SAPN/EVM metrology preparation and site-level aggregation, built on shared conformance cleaning utilities.
+- `site_metrology_helpers.py`: Curtailment-specific wrapper helpers for SAPN
+  training/validation metrology preparation and site-level aggregation, built
+  on shared conformance cleaning utilities.
 - `sapn2022_metrics_5m_data_checks.py`: Shared uniqueness and join-coverage checks used by the 5-minute metrics and plotting scripts.
 - `prepare_confidence_tier_site_cohort.py`: Writes the `confidence_tier_site_ids.csv` cohort consumed by the build scripts.
 - `parquet2csv.py`: Small manual utility for exporting selected parquet outputs to CSV.

@@ -3,8 +3,9 @@ Build script 1 for the local SAPN2022 curtailment workflow.
 
 This creates the structured dataset used by the later GHI-normalised model
 scripts. It follows the original Solar Analytics structured-data workflow, but
-reads local EVM/SAPN/BOM files with Polars instead of querying Trino.
-EVM training metrology is expected to have already been converted from the
+reads local SAPN training/validation and BOM files with Polars instead of
+querying Trino.
+SAPN2022 training metrology is expected to have already been converted from the
 original CSVs into parquet outside this workflow, without filtering,
 aggregation, timestamp rounding, or schema changes.
 
@@ -14,7 +15,7 @@ Important choices kept explicit in this script:
   SAPN2022 local-data handling rather than the original fixed +10 hour shortcut;
 - sites are restricted to the explicit confidence-tier assessed cohort CSV,
   because models are per-site and unused site models add work only;
-- EVM rows are labelled dataset_role="train";
+- SAPN2022 training rows are labelled dataset_role="train";
 - SAPN2022 validation rows are read from the cleaned parquet produced by
   `data_processing.py`, so power conversion, local timestamps, `voltage_valid`,
   and polarity have already been applied before this script runs;
@@ -40,30 +41,31 @@ from structured_data_shared_params import (
     build_eligible_sites,
     clear_sky_days,
     end_labeled_5min_utc_expr,
-    evm_training_parquets,
     map_sites_to_bom_grid,
     prepare_bom10min,
     pv_circuits_for_sites,
-    read_evm_circuit_metadata,
-    read_evm_site_metadata,
+    read_sapn2022_train_circuit_metadata,
+    read_sapn2022_train_site_metadata,
     read_sapn_circuit_details,
     read_sapn_site_details,
     read_site_cohort,
     resolve_capacity,
+    sapn2022_train_parquets,
     time_of_day_5min_expr,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# SAPN/EVM/BOM inputs live outside this repo, so their machine-specific paths
-# are loaded from the ignored `local_paths.py` file instead of being committed.
+# SAPN training/validation and BOM inputs live outside this repo, so their
+# machine-specific paths are loaded from the ignored `local_paths.py` file
+# instead of being committed.
 DEFAULT_SAPN_ROOT = require_local_path(
     "SAPN_ROOT",
     "root folder containing `Nov2022/`, `All Results/`, and `updated results/`.",
 )
-DEFAULT_EVM_ROOT = require_local_path(
-    "EVM_ROOT",
-    "root folder containing `site_metadata.csv`, `circuit_metadata.csv`, and the EVM training parquet directory.",
+DEFAULT_SAPN2022_TRAIN_ROOT = require_local_path(
+    "SAPN2022_TRAIN_ROOT",
+    "root folder containing `site_metadata.csv`, `circuit_metadata.csv`, and the SAPN2022 training parquet directory.",
 )
 DEFAULT_BOM_ROOT = require_local_path(
     "BOM_ROOT",
@@ -90,9 +92,15 @@ SAPN_CIRCUIT_DETAILS_PATH = (
 SAPN_CLEANED_DATA_PATH = (
     DEFAULT_SAPN_ROOT / "Nov2022" / "ebm_1_20221112_20221119_data_cleaned_sa.parquet"
 )
-EVM_SITE_METADATA_PATH = DEFAULT_EVM_ROOT / "site_metadata.csv"
-EVM_CIRCUIT_METADATA_PATH = DEFAULT_EVM_ROOT / "circuit_metadata.csv"
-EVM_TRAINING_DIR = DEFAULT_EVM_ROOT / "curtailment training data parquet"
+SAPN2022_TRAIN_SITE_METADATA_PATH = (
+    DEFAULT_SAPN2022_TRAIN_ROOT / "site_metadata.csv"
+)
+SAPN2022_TRAIN_CIRCUIT_METADATA_PATH = (
+    DEFAULT_SAPN2022_TRAIN_ROOT / "circuit_metadata.csv"
+)
+SAPN2022_TRAIN_DATA_DIR = (
+    DEFAULT_SAPN2022_TRAIN_ROOT / "curtailment training data parquet"
+)
 BOM_ROOT = DEFAULT_BOM_ROOT
 BOM_POINTS_CSV = DEFAULT_BOM_POINTS
 SITE_COHORT_CSV = DEFAULT_SITE_COHORT
@@ -116,7 +124,7 @@ DIAGNOSTIC_DAYLIGHT_START = time(6, 0)
 DIAGNOSTIC_DAYLIGHT_END = time(18, 0)
 
 # Final structured-data schema. Later scripts should depend on these columns,
-# not on the raw SAPN/EVM/BOM input schemas.
+# not on the raw SAPN training/validation or BOM input schemas.
 STRUCTURED_COLUMNS = [
     "site_id",
     "t_stamp",
@@ -586,7 +594,8 @@ def run(
             "Run data_processing.py to create the cleaned parquet or pass another path to run(...)."
         )
 
-    # Training uses EVM data. Validation/test uses SAPN2022 data. BOM is read
+    # Training uses SAPN2022 training data. Validation/test uses SAPN2022 data.
+    # BOM is read
     # over a wider window so clear-sky reference days can be found near both.
     train_start = TRAIN_START_DATE
     train_end = TRAIN_END_DATE
@@ -606,11 +615,16 @@ def run(
     print("Loading metadata")
     sapn_sites = read_sapn_site_details(SAPN_SITE_DETAILS_PATH)
     sapn_circuits = read_sapn_circuit_details(SAPN_CIRCUIT_DETAILS_PATH)
-    evm_sites = read_evm_site_metadata(EVM_SITE_METADATA_PATH)
-    evm_circuits = read_evm_circuit_metadata(EVM_CIRCUIT_METADATA_PATH)
+    sapn2022_train_sites = read_sapn2022_train_site_metadata(
+        SAPN2022_TRAIN_SITE_METADATA_PATH
+    )
+    sapn2022_train_circuits = read_sapn2022_train_circuit_metadata(
+        SAPN2022_TRAIN_CIRCUIT_METADATA_PATH
+    )
 
-    # Build the SAPN validation cohort, then reuse the same site IDs for EVM
-    # training so capacity, BOM grid mapping, and later scoring are consistent.
+    # Build the SAPN validation cohort, then reuse the same site IDs for
+    # SAPN2022 training so capacity, BOM grid mapping, and later scoring are
+    # consistent.
     site_cohort = None
     if USE_SITE_COHORT:
         if not SITE_COHORT_CSV.exists():
@@ -621,7 +635,7 @@ def run(
     eligible_sites, _ = build_eligible_sites(
         sapn_sites,
         sapn_circuits,
-        evm_sites,
+        sapn2022_train_sites,
         site_cohort=site_cohort,
         limit_sites=None if SITE_ID is not None else LIMIT_SITES,
     )
@@ -634,24 +648,28 @@ def run(
     print(f"Eligible sites: {eligible_sites.height}")
 
     # Select only the PV circuits needed for site-level PV generation. SAPN and
-    # EVM metadata use different source column names, but are standardised to
-    # site_id/c_id/polarity before this point.
+    # SAPN2022 training metadata use different source column names, but are
+    # standardised to site_id/c_id/polarity before this point.
     sapn_pv_circuits = pv_circuits_for_sites(sapn_circuits, eligible_sites)
-    evm_pv_circuits = pv_circuits_for_sites(evm_circuits, eligible_sites)
+    sapn2022_train_pv_circuits = pv_circuits_for_sites(
+        sapn2022_train_circuits, eligible_sites
+    )
     bom_mapping = map_sites_to_bom_grid(eligible_sites, BOM_POINTS_CSV)
 
-    evm_parquets = evm_training_parquets(EVM_TRAINING_DIR, train_start, train_end)
+    sapn2022_train_files = sapn2022_train_parquets(
+        SAPN2022_TRAIN_DATA_DIR, train_start, train_end
+    )
     bom_files = bom_daily_parquets(BOM_ROOT, bom_start, bom_end)
-    print(f"EVM training parquet files: {len(evm_parquets)}")
+    print(f"SAPN2022 training parquet files: {len(sapn2022_train_files)}")
     print(f"BOM files: {len(bom_files)}")
 
     # Read and normalise raw metrology. After this step, both sources use kW
     # power, UTC/source t_stamp, and the shared dataset_role label.
     print("Preparing metrology")
     site_ids = eligible_sites["site_id"].to_list()
-    train_raw = sapn_funcs.prepare_evm_metrology(
-        evm_parquets,
-        evm_pv_circuits,
+    train_raw = sapn_funcs.prepare_sapn2022_train_metrology(
+        sapn2022_train_files,
+        sapn2022_train_pv_circuits,
         train_start,
         train_end,
     )
@@ -662,7 +680,7 @@ def run(
     )
     train_site_metrology = sapn_funcs.aggregate_site_metrology(
         train_raw,
-        evm_pv_circuits,
+        sapn2022_train_pv_circuits,
         site_ids,
         train_start,
         train_end,

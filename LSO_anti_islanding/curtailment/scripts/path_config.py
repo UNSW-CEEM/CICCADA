@@ -1,6 +1,7 @@
 """Load machine-specific external data paths for the curtailment workflow.
 
-Tracked scripts deliberately keep local SAPN/EVM/BOM locations out of Git.
+Tracked scripts deliberately keep local SAPN training/validation and BOM
+locations out of Git.
 Create `local_paths.py` next to this file by copying `local_paths.example.py`
 and filling in the paths for your machine.
 """
@@ -21,7 +22,7 @@ LOCAL_PATHS_EXAMPLE_FILE = SCRIPTS_DIR / "local_paths.example.py"
 def _setup_message() -> str:
     return (
         f"Create {LOCAL_PATHS_FILE} from {LOCAL_PATHS_EXAMPLE_FILE} and fill in the "
-        "machine-specific SAPN/EVM/BOM paths before running this script."
+        "machine-specific SAPN training/validation and BOM paths before running this script."
     )
 
 
