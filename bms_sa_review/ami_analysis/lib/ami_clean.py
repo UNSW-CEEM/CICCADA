@@ -6,17 +6,26 @@ CICCADA's own research question makes them opposite things to do with:
 
 * **HARD flags** -- physically impossible or internally inconsistent
   readings (negative current, voltage <= 0V or > 300V, |power factor| > 1,
-  duplicate/missing key fields, a stored apparent power that doesn't match
-  V x I for the same row). These are sensor or pipeline faults, never a real
-  grid state. `apply_cleaning` drops rows carrying any hard flag.
-* **SOFT flags** -- readings that are extreme relative to a circuit's own
-  history (via a robust per-circuit MAD threshold) but not physically
-  impossible. A single-phase circuit briefly at 270V during a PV export
-  event, or a load spike from an EV charger, is exactly the kind of
-  AS/NZS 4777.2 Volt-Watt/Volt-VAr-relevant event this project exists to
-  study -- blanket-removing it as "noise" would delete the signal, not the
-  fault. `apply_cleaning` keeps these rows, tagged with their flag column,
-  so downstream analysis can see them without having to trust every one.
+  duplicate/missing key fields). These are sensor or pipeline faults, never
+  a real grid state. `apply_cleaning` drops rows carrying any hard flag.
+* **SOFT flags** -- readings that look anomalous but are NOT confidently
+  established as faults, either because they're extreme-but-physically-
+  possible (a robust per-circuit MAD threshold on power magnitude -- a
+  single-phase circuit briefly at 270V during a PV export event, or a load
+  spike from an EV charger, is exactly the kind of AS/NZS 4777.2 Volt-Watt/
+  Volt-VAr-relevant event this project exists to study, and blanket-
+  removing it as "noise" would delete the signal, not the fault), or
+  because the check itself hasn't yet been validated against real sample
+  data enough to trust as a hard drop (`apparent_power_inconsistent` -- see
+  its own docstring: an earlier, stricter version of this check flagged
+  ~22% of a real month almost entirely on quantization noise at low power,
+  not real faults; even after fixing that, it still flags ~9% with no
+  device- or circuit-level pattern yet confirmed, so it stays soft until
+  that's investigated, e.g. by cross-referencing flagged circuits against
+  `ami_circuit_metadata.device_type` for a pattern like the already-
+  confirmed `CATCH Power` power-reporting quirk). `apply_cleaning` keeps
+  every soft-flagged row, tagged with its flag column, so downstream
+  analysis can see it without having to trust every one.
 
 The 0V/300V hard voltage bound and the general shape of these checks follow
 a convention this project has already validated on real data (see
@@ -91,27 +100,42 @@ def flag_negative_current(frame: pd.DataFrame, *, current_column: str = "current
 def flag_apparent_power_inconsistency(
     frame: pd.DataFrame, *,
     voltage_column: str = "V", current_column: str = "current_a",
-    apparent_power_column: str = "S_kva", rel_tol: float = 0.2,
-    min_current_a: float = 0.5,
+    apparent_power_column: str = "S_kva", rel_tol: float = 0.3,
+    abs_tol_kva: float = 0.5, min_current_a: float = 1.0,
 ) -> pd.Series:
     """
-    HARD flag: the row's own V x I (converted to kVA) disagrees with its
-    stored `S_kva` by more than `rel_tol` (relative). These two are
-    independently sourced -- `S_kva` is derived upstream from
-    `P_kw`/`Q_kvar` (a power-side measurement), while V and `current_a` are
-    a separate voltage/current-side measurement of the same row -- so a
-    genuine mismatch flags a metering/pipeline fault (e.g. a wrong CT
-    ratio) rather than a real grid event. Skipped (flag False) below
-    `min_current_a`, where V x I noise dominates and a relative comparison
-    is meaningless.
+    SOFT flag (see module docstring for why this one is soft, not hard): the
+    row's own V x I (converted to kVA) disagrees with its stored `S_kva` by
+    more than BOTH `abs_tol_kva` (absolute) AND `rel_tol`
+    (relative, against whichever of the two readings is larger -- symmetric,
+    so neither a tiny `S_kva` nor a tiny implied V x I can dominate the
+    denominator). These two are independently sourced -- `S_kva` is derived
+    upstream from `P_kw`/`Q_kvar` (a power-side measurement), while V and
+    `current_a` are a separate voltage/current-side measurement of the same
+    row -- so a genuine mismatch on both counts flags a metering/pipeline
+    fault (e.g. a wrong CT ratio) rather than a real grid event.
+
+    Requiring BOTH thresholds (not relative alone) matters in practice: a
+    relative-only test blows up whenever true power is near zero -- which is
+    most 5-minute readings on a residential circuit -- because ordinary
+    rounding in `current_a` (commonly reported to ~0.1A resolution) produces
+    a small absolute mismatch that becomes a huge relative one once divided
+    by a near-zero `S_kva`. An earlier relative-only version of this check
+    flagged ~22% of ALL rows in a real month almost entirely on this basis
+    (see project history, 2026-09) -- not genuine faults, just quantization
+    noise at low power. The absolute floor filters that out; only a mismatch
+    that is large in BOTH senses is treated as a fault. Skipped (flag False)
+    below `min_current_a`, where V x I noise dominates regardless.
     """
     if not {voltage_column, current_column, apparent_power_column} <= set(frame.columns):
         return pd.Series(False, index=frame.index)
     implied_kva = (frame[voltage_column] * frame[current_column]) / 1000.0
+    stored_kva = frame[apparent_power_column]
     stable = frame[current_column] >= min_current_a
-    denom = frame[apparent_power_column].abs().clip(lower=1e-9)
-    rel_error = (implied_kva - frame[apparent_power_column]).abs() / denom
-    return stable & (rel_error > rel_tol)
+    abs_error = (implied_kva - stored_kva).abs()
+    denom = pd.concat([implied_kva.abs(), stored_kva.abs()], axis=1).max(axis=1).clip(lower=1e-9)
+    rel_error = abs_error / denom
+    return stable & (abs_error > abs_tol_kva) & (rel_error > rel_tol)
 
 
 def flag_extreme_power_magnitude(
@@ -166,14 +190,16 @@ HARD_FLAGS = (
     "voltage_implausible",
     "power_factor_implausible",
     "current_negative",
-    "apparent_power_inconsistent",
     "duplicate_reading",
     "missing_critical_field",
 )
 
-#: Flags that mark a row as extreme-but-physically-possible -- kept, tagged.
+#: Flags that mark a row as anomalous but not confidently a fault -- kept, tagged.
+#: `apparent_power_inconsistent` sits here (not in HARD_FLAGS) pending further
+#: investigation -- see this module's docstring and the function's own.
 SOFT_FLAGS = (
     "power_magnitude_extreme",
+    "apparent_power_inconsistent",
 )
 
 

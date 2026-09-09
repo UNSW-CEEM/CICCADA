@@ -210,9 +210,24 @@ STORE_TABLES: dict[str, str] = {
     # actually landed above right now (see ami_metadata.py).
     "ami_site_metadata":    "ami_site_metadata.parquet",     # one row per site_id
     "ami_circuit_metadata": "ami_circuit_metadata.parquet",  # one row per (site_id, device_id, circuit_id)
+    # Phase 7 (bms_sa_review/ami_analysis): ami_meter with hard-flagged
+    # (physically impossible) rows dropped; extreme-but-plausible rows kept
+    # and tagged -- see ami_analysis/lib/ami_clean.py.
+    "ami_meter_clean":      "ami_meter_clean",      # site x AMI interval, cleaned, per phase
+    # Phase 7 notebook 03: ami_meter_clean further scoped to residential-sized
+    # PV (ac_capacity_kw <= 30, per ami_site_metadata_residential) -- see
+    # ami_analysis/lib/ami_filter.py.
+    "ami_meter_residential": "ami_meter_residential",  # site x AMI interval, cleaned + residential-scoped, per phase
+    # Phase 7 notebook 03: ami_site_metadata, scoped to ami_meter_residential's
+    # sites, with dnsp_name/manufacturer replaced by the local DNSP/OEM key
+    # mapping (see ami_analysis/lib/ami_filter.py) -- not a raw re-export of
+    # ami_site_metadata, so kept as its own table rather than overwriting it.
+    "ami_site_metadata_residential": "ami_site_metadata_residential.parquet",
 }
 
-PARTITIONED_TABLES = frozenset({"ami_extract", "ami_raw", "ami_meter"})
+PARTITIONED_TABLES = frozenset({
+    "ami_extract", "ami_raw", "ami_meter", "ami_meter_clean", "ami_meter_residential",
+})
 
 #: Partition key used when writing the local store.
 PARTITION_KEY = "dt_month"

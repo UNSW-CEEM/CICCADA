@@ -100,6 +100,26 @@ def test_flag_apparent_power_inconsistency_skips_low_current_rows():
     assert list(Clean.flag_apparent_power_inconsistency(frame)) == [False]
 
 
+def test_flag_apparent_power_inconsistency_does_not_flag_low_power_quantization_noise():
+    # V*I quantization at low, but not skipped, current: a small ABSOLUTE
+    # mismatch that would blow up into a huge RELATIVE one if S_kva were
+    # used alone as the denominator -- must NOT flag on relative error alone
+    # (regression test for the real-data bug found 2026-09: a relative-only
+    # version of this check flagged ~22% of a real month almost entirely on
+    # near-zero-power rows like this one).
+    frame = _base_frame(1)
+    frame.loc[0, "current_a"] = 1.2          # implied kVA = 240*1.2/1000 = 0.288
+    frame.loc[0, "S_kva"] = 0.20              # ~44% relative error, but only 0.088 kVA absolute
+    assert list(Clean.flag_apparent_power_inconsistency(frame)) == [False]
+
+
+def test_flag_apparent_power_inconsistency_flags_when_both_absolute_and_relative_are_large():
+    frame = _base_frame(1)
+    frame.loc[0, "current_a"] = 20.0         # implied kVA = 240*20/1000 = 4.8
+    frame.loc[0, "S_kva"] = 1.0               # 3.8 kVA absolute, 79% relative -- both large
+    assert list(Clean.flag_apparent_power_inconsistency(frame)) == [True]
+
+
 # --------------------------------------------------------------------------- #
 # flag_extreme_power_magnitude
 # --------------------------------------------------------------------------- #
