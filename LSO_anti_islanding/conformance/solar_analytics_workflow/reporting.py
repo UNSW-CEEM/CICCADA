@@ -87,6 +87,10 @@ SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA = {
     "non_compliant_timestamp_count": pl.Int64,
     "disconnected_below_threshold_count": pl.Int64,
     "disconnected_unknown_voltage_count": pl.Int64,
+    "large_negative_power_timestamp_count": pl.Int64,
+    "within_tolerance_negative_power_timestamp_count": pl.Int64,
+    "positive_site_power_timestamp_count": pl.Int64,
+    "zero_site_power_timestamp_count": pl.Int64,
 }
 
 CONFORMANCE_EXCLUSIONS_SCHEMA = {
@@ -311,6 +315,22 @@ def build_site_compliance_tod_distribution(timestamp_detail):
                 .sum()
                 .cast(pl.Int64)
                 .alias("disconnected_unknown_voltage_count"),
+                pl.col("large_negative_power_timestamp")
+                .sum()
+                .cast(pl.Int64)
+                .alias("large_negative_power_timestamp_count"),
+                pl.col("within_tolerance_negative_power_timestamp")
+                .sum()
+                .cast(pl.Int64)
+                .alias("within_tolerance_negative_power_timestamp_count"),
+                pl.col("positive_site_power_timestamp")
+                .sum()
+                .cast(pl.Int64)
+                .alias("positive_site_power_timestamp_count"),
+                pl.col("zero_site_power_timestamp")
+                .sum()
+                .cast(pl.Int64)
+                .alias("zero_site_power_timestamp_count"),
             ]
         )
         .select(list(SITE_COMPLIANCE_TOD_DISTRIBUTION_SCHEMA))

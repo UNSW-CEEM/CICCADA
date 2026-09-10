@@ -187,6 +187,22 @@ def build_site_compliance_tod_distribution(timestamp_detail):
                 .sum()
                 .cast(pl.Int64)
                 .alias("disconnected_unknown_voltage_count"),
+                pl.col("large_negative_power_timestamp")
+                .sum()
+                .cast(pl.Int64)
+                .alias("large_negative_power_timestamp_count"),
+                pl.col("within_tolerance_negative_power_timestamp")
+                .sum()
+                .cast(pl.Int64)
+                .alias("within_tolerance_negative_power_timestamp_count"),
+                pl.col("positive_site_power_timestamp")
+                .sum()
+                .cast(pl.Int64)
+                .alias("positive_site_power_timestamp_count"),
+                pl.col("zero_site_power_timestamp")
+                .sum()
+                .cast(pl.Int64)
+                .alias("zero_site_power_timestamp_count"),
             ]
         )
         .select(
@@ -200,6 +216,10 @@ def build_site_compliance_tod_distribution(timestamp_detail):
                 "non_compliant_timestamp_count",
                 "disconnected_below_threshold_count",
                 "disconnected_unknown_voltage_count",
+                "large_negative_power_timestamp_count",
+                "within_tolerance_negative_power_timestamp_count",
+                "positive_site_power_timestamp_count",
+                "zero_site_power_timestamp_count",
             ]
         )
         .sort(["site_id", "time_of_day_bin"])

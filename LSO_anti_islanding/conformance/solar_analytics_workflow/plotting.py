@@ -149,9 +149,11 @@ def plot_site_compliance_day(
         return
 
     plot_df = df.sort("local_tstamp")
-    if "site_power" not in plot_df.columns:
+    if "site_power_calculated" not in plot_df.columns:
         plot_df = plot_df.with_columns(
-            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias("site_power")
+            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias(
+                "site_power_calculated"
+            )
         )
 
     x = plot_df["local_tstamp"].to_list()
@@ -291,7 +293,7 @@ def plot_site_compliance_day(
 
         ax_bottom.plot(
             x,
-            plot_df["site_power"].to_list(),
+            plot_df["site_power_calculated"].to_list(),
             color=PLOT_COLORS["power_total"],
             linewidth=2.2,
             zorder=4,
@@ -566,9 +568,11 @@ def plot_method_threshold_overlay_day(
         return
 
     plot_df = df.sort("local_tstamp")
-    if "site_power" not in plot_df.columns:
+    if "site_power_calculated" not in plot_df.columns:
         plot_df = plot_df.with_columns(
-            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias("site_power")
+            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias(
+                "site_power_calculated"
+            )
         )
 
     x = plot_df["local_tstamp"].to_list()
@@ -680,7 +684,7 @@ def plot_method_threshold_overlay_day(
 
         ax_bottom.plot(
             x,
-            plot_df["site_power"].to_list(),
+            plot_df["site_power_calculated"].to_list(),
             color=PLOT_COLORS["power_total"],
             linewidth=1.8,
             zorder=4,

@@ -1176,7 +1176,11 @@ try:
             compliant_timestamp_count BIGINT,
             non_compliant_timestamp_count BIGINT,
             disconnected_below_threshold_count BIGINT,
-            disconnected_unknown_voltage_count BIGINT
+            disconnected_unknown_voltage_count BIGINT,
+            large_negative_power_timestamp_count BIGINT,
+            within_tolerance_negative_power_timestamp_count BIGINT,
+            positive_site_power_timestamp_count BIGINT,
+            zero_site_power_timestamp_count BIGINT
         )
         WITH (format = 'PARQUET')
     """)

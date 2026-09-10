@@ -154,7 +154,10 @@ def evaluate_compliance_for_day(
     return frame.with_columns(
         (
             pl.col("is_disc").fill_null(False)
-            & (pl.col("site_power") <= pl.lit(1e-8, dtype=pl.Float64)) # added this so discnnction in this case is really when gernation is 0
+            & (
+                pl.col("site_power_calculated")
+                <= pl.lit(1e-8, dtype=pl.Float64)
+            )  # added this so discnnction in this case is really when gernation is 0
             & ~(
                 pl.col("los_responsible")
                 | pl.col("ov1_responsible")
@@ -179,6 +182,10 @@ def aggregate_all_daily_compliance_for_site(site_id, evaluated_site_days):
         "ov1_signals_available",
         "is_disc",
         "is_disc_next",
+        "large_negative_power_timestamp",
+        "within_tolerance_negative_power_timestamp",
+        "positive_site_power_timestamp",
+        "zero_site_power_timestamp",
         "los_responsible",
         "ov1_responsible",
         "eligible_for_disconnect_support",
