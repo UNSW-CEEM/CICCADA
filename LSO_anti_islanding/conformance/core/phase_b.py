@@ -154,6 +154,7 @@ def evaluate_compliance_for_day(
     return frame.with_columns(
         (
             pl.col("is_disc").fill_null(False)
+            & (pl.col("site_power") <= pl.lit(1e-8, dtype=pl.Float64)) # added this so discnnction in this case is really when gernation is 0
             & ~(
                 pl.col("los_responsible")
                 | pl.col("ov1_responsible")
