@@ -102,6 +102,10 @@ def evaluate_compliance_for_day(
         frame = frame.with_columns(
             (
                 pl.col("eligible_for_disconnect_support")
+                & (
+                    pl.col("site_power_calculated")
+                    <= pl.lit(1e-8, dtype=pl.Float64)
+                )
                 & pl.col("ov1_signals_available")
                 & (
                     pl.col("vinst_max")
@@ -114,6 +118,10 @@ def evaluate_compliance_for_day(
         frame = frame.with_columns(
             (
                 pl.col("eligible_for_disconnect_support")
+                & (
+                    pl.col("site_power_calculated")
+                    <= pl.lit(1e-8, dtype=pl.Float64)
+                )
                 & (~pl.col("ov1_disconnect_support_added"))
                 & pl.col("los_signals_available")
                 & (
