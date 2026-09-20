@@ -21,7 +21,7 @@ from ebm_workflow.ebm_all_paths.ebm_nsw_path4 import (
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
     LOCAL_TIMEZONE,
-    RAW_SITE_DATA_CSV_GLOB,
+    RAW_SITE_DATA_GLOB,
     RAW_SITE_DATA_PATH,
 )
 
@@ -35,7 +35,7 @@ print(
 # cleaned partitions to one Parquet file. This returns the output file path.
 cleaned_data_path = write_cleaned_site_data(
     raw_path=RAW_SITE_DATA_PATH,
-    raw_csv_glob=RAW_SITE_DATA_CSV_GLOB,
+    raw_source_glob=RAW_SITE_DATA_GLOB,
     circuit_details_path=CIRCUIT_DETAILS_PATH,
     cleaned_path=CLEANED_SITE_DATA_PATH,
     local_timezone=LOCAL_TIMEZONE,

@@ -17,7 +17,7 @@ from ebm_workflow.loading import load_ebm_circuit_details
 
 def write_cleaned_site_data(
     raw_path,
-    raw_csv_glob,
+    raw_source_glob,
     circuit_details_path,
     cleaned_path,
     local_timezone,
@@ -32,11 +32,27 @@ def write_cleaned_site_data(
     """
     raw_path = Path(raw_path)
     if not raw_path.exists():
-        raw_csv_glob = Path(raw_csv_glob)
-        csv_files = sorted(raw_csv_glob.parent.glob(raw_csv_glob.name))
-        if not csv_files:
-            raise FileNotFoundError(f"No raw CSV files match {raw_csv_glob}.")
-        pl.scan_csv(csv_files).sink_parquet(raw_path)
+        raw_source_glob = Path(raw_source_glob)
+        source_files = sorted(
+            raw_source_glob.parent.glob(raw_source_glob.name)
+        )
+        if not source_files:
+            raise FileNotFoundError(
+                f"No raw data files match {raw_source_glob}."
+            )
+
+        source_formats = {path.suffix.lower() for path in source_files}
+        if source_formats == {".csv"}:
+            raw_data = pl.scan_csv(source_files)
+        elif source_formats == {".parquet"}:
+            raw_data = pl.scan_parquet(source_files)
+        else:
+            raise ValueError(
+                "Raw input files must be entirely CSV or entirely Parquet; "
+                f"found: {sorted(source_formats)}"
+            )
+
+        raw_data.sink_parquet(raw_path)
     if not raw_path.exists():
         raise FileNotFoundError(f"Missing raw processed site data at {raw_path}.")
     circuit_details_path = Path(circuit_details_path)
