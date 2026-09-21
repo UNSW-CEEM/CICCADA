@@ -95,6 +95,48 @@ CONFORMANCE_EXCLUSIONS_SCHEMA = {
 }
 
 
+def add_disconnect_voltage_lists(site_summary, phase_a_records):
+    """Add JSON lists of attributed LOS and OV1 disconnect voltages by site."""
+    list_columns = [
+        "all_los_disconnect_voltages",
+        "all_ov1_disconnect_voltages",
+    ]
+    if phase_a_records.is_empty():
+        return site_summary.with_columns(
+            [pl.lit("[]").alias(column) for column in list_columns]
+        )
+
+    voltage_lists = (
+        phase_a_records.group_by("site_id")
+        .agg(
+            pl.col("v10m_disc")
+            .filter(pl.col("mechanism") == "LOS")
+            .drop_nulls()
+            .sort()
+            .alias(list_columns[0]),
+            pl.col("vinst_disc")
+            .filter(pl.col("mechanism") == "OV1")
+            .drop_nulls()
+            .sort()
+            .alias(list_columns[1]),
+        )
+        .with_columns(
+            [
+                pl.format(
+                    "[{}]",
+                    pl.col(column)
+                    .list.eval(pl.element().cast(pl.Utf8))
+                    .list.join(", "),
+                ).alias(column)
+                for column in list_columns
+            ]
+        )
+    )
+    return site_summary.join(voltage_lists, on="site_id", how="left").with_columns(
+        pl.col(list_columns).fill_null("[]")
+    )
+
+
 def build_sapn_site_compliance(results):
     site_compliance = results["site_compliance"]
     site_thresholds = results["site_thresholds"]

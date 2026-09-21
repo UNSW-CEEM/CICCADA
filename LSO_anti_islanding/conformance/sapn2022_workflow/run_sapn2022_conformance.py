@@ -40,6 +40,7 @@ from sapn2022_workflow.reporting import (
     SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA,
     SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME,
     SITE_LEVEL_VARIOUS_VOLTAGES_NAME,
+    add_disconnect_voltage_lists,
     build_method_compliance_final_table,
     build_sapn_conformance_exclusions,
     build_sapn_site_compliance,
@@ -577,7 +578,10 @@ site_compliance_tod_distribution.write_csv(
     CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME
 )
 if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
-    results["site_level_various_voltages"].write_csv(
+    add_disconnect_voltage_lists(
+        results["site_level_various_voltages"],
+        results["phase_a_trip_attribution"],
+    ).write_csv(
         CONFORMANCE_OUTPUT_DIR / SITE_LEVEL_VARIOUS_VOLTAGES_NAME
     )
 site_compliance_final_table.write_csv(
