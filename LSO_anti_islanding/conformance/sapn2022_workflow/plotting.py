@@ -94,7 +94,7 @@ def plot_site_compliance_day(
     p_rated: float,
     lso_threshold: float | None,
     ov1_threshold: float | None,
-    overall_pass,
+    overall_category: str,
     los_lowest_disconnect_voltage: float | None = None,
     ov1_lowest_disconnect_voltage: float | None = None,
     plot_no_responsible_timestamp_days: bool = False,
@@ -376,9 +376,11 @@ def plot_site_compliance_day(
 
     overall_label = (
         "Conformant"
-        if overall_pass is True
+        if overall_category == "compliant"
+        else "Conformant (erratic)"
+        if overall_category == "compliant_erratic"
         else "Non-conformant"
-        if overall_pass is False
+        if overall_category == "non_compliant"
         else "Unassessed"
     )
     disconnect_supported_compliant_count = (

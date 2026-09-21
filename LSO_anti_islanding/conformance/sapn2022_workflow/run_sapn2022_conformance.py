@@ -377,6 +377,19 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         on=["site_id", "threshold_method"],
         how="inner",
     )
+    site_compliance = site_compliance.with_columns(
+        pl.when(
+            pl.col("overall_disconnect_supported_pass").eq(True)
+            & pl.col("overall_calculated_pass").eq(True)
+        )
+        .then(pl.lit("compliant"))
+        .when(pl.col("overall_disconnect_supported_pass").eq(True))
+        .then(pl.lit("compliant_erratic"))
+        .when(pl.col("overall_disconnect_supported_pass").eq(False))
+        .then(pl.lit("non_compliant"))
+        .otherwise(pl.lit("unassessed"))
+        .alias("overall_compliance_category")
+    )
     site_compliance_rows.append(site_compliance)
 
     calculated_distribution = phase_b_calculated["site_compliance"].select(
@@ -468,11 +481,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         GENERATE_SITE_PLOTS
         and compliance["overall_disconnect_supported_pass"] is not None
     ):
-        plot_folder = (
-            "compliant"
-            if compliance["overall_disconnect_supported_pass"] is True
-            else "non_compliant"
-        )
+        plot_folder = compliance["overall_compliance_category"]
         for day_info in prepared_site_days:
             evaluated_day = evaluate_compliance_for_day(
                 day_info["signal_frame"],
@@ -499,7 +508,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
                 ov1_lowest_disconnect_voltage=compliance[
                     "ov1_lowest_disconnect_threshold_used"
                 ],
-                overall_pass=compliance["overall_disconnect_supported_pass"],
+                overall_category=compliance["overall_compliance_category"],
                 plot_no_responsible_timestamp_days=(PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS),
                 save_path=(
                     CONFORMANCE_OUTPUT_DIR
@@ -514,7 +523,8 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         f"[{site_index}/{len(candidate_site_ids)}] site {site_id} "
         f"LOS={compliance['los_disconnect_supported_compliance_pct']} "
         f"OV1={compliance['ov1_disconnect_supported_compliance_pct']} "
-        f"PASS={compliance['overall_disconnect_supported_pass']}"
+        f"PASS={compliance['overall_disconnect_supported_pass']} "
+        f"CATEGORY={compliance['overall_compliance_category']}"
     )
 
 results = {

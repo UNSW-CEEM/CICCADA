@@ -50,6 +50,7 @@ SITE_COMPLIANCE_SCHEMA = {
     "overall_disconnect_supported_compliant_count": pl.Int64,
     "overall_disconnect_supported_compliance_pct": pl.Float64,
     "overall_disconnect_supported_pass": pl.Boolean,
+    "overall_compliance_category": pl.Utf8,
     "los_lowest_disconnect_responsible_count": pl.Int64,
     "los_lowest_disconnect_compliant_count": pl.Int64,
     "los_lowest_disconnect_compliance_pct": pl.Float64,
@@ -119,7 +120,20 @@ def build_sapn_site_compliance(results):
         )
 
     return (
-        site_compliance.select(list(SITE_COMPLIANCE_SCHEMA))
+        site_compliance.with_columns(
+            pl.when(
+                pl.col("overall_disconnect_supported_pass").eq(True)
+                & pl.col("overall_calculated_pass").eq(True)
+            )
+            .then(pl.lit("compliant"))
+            .when(pl.col("overall_disconnect_supported_pass").eq(True))
+            .then(pl.lit("compliant_erratic"))
+            .when(pl.col("overall_disconnect_supported_pass").eq(False))
+            .then(pl.lit("non_compliant"))
+            .otherwise(pl.lit("unassessed"))
+            .alias("overall_compliance_category")
+        )
+        .select(list(SITE_COMPLIANCE_SCHEMA))
         .cast(SITE_COMPLIANCE_SCHEMA, strict=False)
         .sort("site_id")
     )
@@ -245,6 +259,7 @@ def build_method_compliance_final_table(site_compliance):
                 .fill_null(False)
                 .sum()
                 .alias("Conformant Sites"),
+                pl.lit(0, dtype=pl.UInt32).alias("Conformant (Erratic) Sites"),
                 pl.col("overall_calculated_pass")
                 .eq(False)
                 .fill_null(False)
@@ -267,11 +282,14 @@ def build_method_compliance_final_table(site_compliance):
                 .is_null()
                 .sum()
                 .alias("Unassessed Sites"),
-                pl.col("overall_disconnect_supported_pass")
-                .eq(True)
-                .fill_null(False)
+                pl.col("overall_compliance_category")
+                .eq("compliant")
                 .sum()
                 .alias("Conformant Sites"),
+                pl.col("overall_compliance_category")
+                .eq("compliant_erratic")
+                .sum()
+                .alias("Conformant (Erratic) Sites"),
                 pl.col("overall_disconnect_supported_pass")
                 .eq(False)
                 .fill_null(False)
@@ -299,6 +317,7 @@ def build_method_compliance_final_table(site_compliance):
                 .fill_null(False)
                 .sum()
                 .alias("Conformant Sites"),
+                pl.lit(0, dtype=pl.UInt32).alias("Conformant (Erratic) Sites"),
                 pl.col("overall_lowest_disconnect_pass")
                 .eq(False)
                 .fill_null(False)
@@ -311,9 +330,33 @@ def build_method_compliance_final_table(site_compliance):
     final_table = (
         pl.concat([calculated, disconnect_supported, lowest_disconnect])
         .with_columns(
-            (pl.col("Conformant Sites") / pl.col("Sites Assessed") * 100.0)
-            .round(2)
-            .alias("Conformance Percentage (% of Assessed)")
+            (pl.col("Conformant Sites") + pl.col("Conformant (Erratic) Sites")).alias(
+                "Total Conformant Sites"
+            )
+        )
+        .with_columns(
+            [
+                (pl.col("Conformant Sites") / pl.col("Sites Assessed") * 100.0)
+                .round(2)
+                .alias("Conformant Percentage (% of Assessed)"),
+                (
+                    pl.col("Conformant (Erratic) Sites")
+                    / pl.col("Sites Assessed")
+                    * 100.0
+                )
+                .round(2)
+                .alias("Conformant (Erratic) Percentage (% of Assessed)"),
+                (pl.col("Non-Conformant Sites") / pl.col("Sites Assessed") * 100.0)
+                .round(2)
+                .alias("Non-Conformant Percentage (% of Assessed)"),
+                (
+                    pl.col("Total Conformant Sites")
+                    / pl.col("Sites Assessed")
+                    * 100.0
+                )
+                .round(2)
+                .alias("Total Conformance Percentage (% of Assessed)"),
+            ]
         )
         .rename({"threshold_method": "Method Used"})
         .select(
@@ -324,8 +367,13 @@ def build_method_compliance_final_table(site_compliance):
                 "Sites Assessed",
                 "Unassessed Sites",
                 "Conformant Sites",
+                "Conformant Percentage (% of Assessed)",
+                "Conformant (Erratic) Sites",
+                "Conformant (Erratic) Percentage (% of Assessed)",
                 "Non-Conformant Sites",
-                "Conformance Percentage (% of Assessed)",
+                "Non-Conformant Percentage (% of Assessed)",
+                "Total Conformant Sites",
+                "Total Conformance Percentage (% of Assessed)",
             ]
         )
     )
