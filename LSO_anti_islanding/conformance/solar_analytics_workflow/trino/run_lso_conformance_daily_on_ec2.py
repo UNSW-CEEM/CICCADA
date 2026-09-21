@@ -435,7 +435,7 @@ try:
                 engine_options={"chunksize": 250, "method": "multi"},
             )
             print(
-                "Uploaded daily conformance rows: " f"{rows_written}",
+                f"Uploaded daily conformance rows: {rows_written}",
                 flush=True,
             )
 

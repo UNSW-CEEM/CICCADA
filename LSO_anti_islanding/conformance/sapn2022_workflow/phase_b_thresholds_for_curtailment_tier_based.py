@@ -117,7 +117,7 @@ def _load_assessed_sites() -> pl.DataFrame:
     missing_columns = required_columns.difference(compliance_df.columns)
     if missing_columns:
         raise ValueError(
-            "Site compliance is missing required columns: " f"{sorted(missing_columns)}"
+            f"Site compliance is missing required columns: {sorted(missing_columns)}"
         )
 
     assessed_sites = (
