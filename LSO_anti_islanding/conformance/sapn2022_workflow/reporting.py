@@ -409,12 +409,12 @@ def build_method_compliance_final_table(site_compliance):
                 "Sites Assessed",
                 "Unassessed Sites",
                 "Conformant Sites",
-                "Conformant Percentage (% of Assessed)",
                 "Conformant (Erratic) Sites",
-                "Conformant (Erratic) Percentage (% of Assessed)",
                 "Non-Conformant Sites",
-                "Non-Conformant Percentage (% of Assessed)",
                 "Total Conformant Sites",
+                "Conformant Percentage (% of Assessed)",
+                "Conformant (Erratic) Percentage (% of Assessed)",
+                "Non-Conformant Percentage (% of Assessed)",
                 "Total Conformance Percentage (% of Assessed)",
             ]
         )
