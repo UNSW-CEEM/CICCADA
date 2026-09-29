@@ -1,54 +1,6 @@
 """
 Is postcode actually explanatory of non-conformance?
 ====================================================
-
-Deliverable D16. Two things live here: an honest test of whether geography
-carries information about conformance, and an interactive map to explore it.
-
-The question is harder than it looks
-------------------------------------
-"Does postcode explain non-conformance?" invites a regression of the site rate on
-postcode, an R^2 near 0.9, and a conclusion that geography is the dominant driver.
-That conclusion would be an artefact. The fleet has **1,600 sites across 507
-postcodes** and the distribution is brutal::
-
-    194 postcodes hold exactly 1 site
-    115 hold 2
-    median 2, mean 3.2
-
-With one site in 38% of postcodes, "the postcode effect" and "that one site's
-behaviour" are the same number. A 507-level categorical fitted to 1,600
-observations will always absorb most of the variance, because it has enough free
-parameters to memorise the data. High R^2 here is a statement about degrees of
-freedom, not about geography.
-
-So this module never reports a bare R^2. Every measure is compared against a
-**permutation null**: shuffle the postcode labels between sites, recompute, and
-ask how often chance alone does as well. That null automatically carries the same
-group-size structure and the same overfitting capacity as the real data, so what
-survives it is real signal.
-
-Three complementary tests, because they can disagree
-----------------------------------------------------
-``variance_decomposition``
-    Are sites in the same postcode more alike than sites in different postcodes?
-    (ICC, permutation-tested.) A *label* question -- it treats postcodes as
-    unordered categories and ignores where they are.
-
-``morans_i``
-    Are *nearby* postcodes more alike than distant ones? A *spatial* question.
-    Postcode can fail the first test and pass this one, if the real gradient is
-    regional rather than per-postcode.
-
-``nested_explained_variance``
-    Does postcode add anything once state, system size and phase cohort are
-    known? Postcode correlates with all three; if they account for the same
-    variance, postcode is a proxy, not a cause.
-
-None of this establishes causation. Postcode is a stand-in for network topology,
-transformer sizing, feeder length, installer, and inverter vintage -- none of
-which are in this dataset. A confirmed postcode effect says "look at the network
-here", not "the postcode caused it".
 """
 
 from __future__ import annotations

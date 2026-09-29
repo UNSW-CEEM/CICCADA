@@ -1,47 +1,6 @@
 """
 Sensitivity analysis.
 =====================
-
-Deliverable D15.
-
-Every headline number in this study rests on choices that were forced by the data
-rather than chosen on merit. This module sweeps them, so each result ships with a
-range instead of a point estimate.
-
-The axes, in rough order of how much they are likely to matter
----------------------------------------------------------------
-``reactive_orientation``
-    The unresolved one. 213 sites fit as-delivered, 106 fit flipped. Anything
-    direction-based (``Q_adverse``, Method A's ``Q < 0`` gate) moves with it.
-
-``rating_basis`` / ``empirical_limit_basis``
-    ``s_99`` vs ``s_95`` vs ``s_max``. No nameplate exists, so the whole
-    AS/NZS 4777.2 curve is scaled by an OBSERVED quantile. A site that never
-    approached its inverter limit gets a low ``s_99``, a smaller required Q, and a
-    flattering verdict -- while simultaneously tripping Method A's apparent-limit
-    test more readily. The two biases run in opposite directions for the two
-    methods, which is worth showing rather than asserting.
-
-``voltage_aggregation``
-    ``mean`` (default, and correct for three-phase) vs ``max``. Worth ~5
-    percentage points of site conformance.
-
-``tolerance_fraction``
-    The +/-4% band, re-anchored to ``s_99`` because there is no nameplate.
-
-``night_anomaly_selection``
-    Whether the 20 night-generation sites (5 likely storage, 15 stray timestamps)
-    are in or out.
-
-``peak_hour_end``
-    Method A's window. The legacy query used ``BETWEEN start AND end``, inclusive,
-    so reproducing it needs ``peak_hour_end=15`` against this half-open version.
-
-What a sweep can and cannot tell you
-------------------------------------
-A number that barely moves across a sweep is robust to that choice. A number that
-moves a lot is CONDITIONAL on it, and must be reported as such -- not averaged
-across the sweep, which would invent a value no defensible configuration produces.
 """
 
 from __future__ import annotations

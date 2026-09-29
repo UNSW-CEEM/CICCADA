@@ -1,33 +1,10 @@
 """
 Volt-VAr and Volt-Watt conformance scoring.
 ===========================================
-
-Deliverables D9 (Volt-VAr) and D10 (Volt-Watt). Ports of
-``build_conformance_voltvar.py`` and ``build_conformance_voltwatt.py`` to DuckDB
-over the local store.
-
-The AS/NZS 4777.2 curves themselves are NOT reimplemented here. Every normative
-expression comes from ``bms_sa_review.shared.as4777_curves`` -- ``vvar_required_q_sql``,
+The AS/NZS 4777.2 curves themselves are NOT reimplemented here. 
+Every normative expression comes from ``bms_sa_review.shared.as4777_curves`` -- ``vvar_required_q_sql``,
 ``q_conformance_floor_absorbing_sql``, ``q_impact_nearest_edge_sql``,
-``vw_max_p_sql``, ``tol_kw_sql`` -- and runs unchanged in DuckDB. That is what
-makes these results comparable to the Solar Analytics ones by construction rather
-than by inspection.
-
-Two departures from the original, both forced and both recorded in the manifest
---------------------------------------------------------------------------------
-1. **Capacity basis.** The original scales the required-Q curve, the +/-4% band,
-   the 20% assessability rule and the Figure 2.1 capability floor by provider
-   ``ac_capacity_kw``. This delivery has no nameplate, so all of them are scaled
-   by ``s_99`` instead. ``s_99`` is an *observed* p99 of apparent power, so a site
-   that never approached its inverter limit gets a low ``s_99``, which makes its
-   required Q smaller and its conformance look better. The bias has a direction
-   and it is stated; D15 sweeps the quantile.
-
-2. **Cohorts are scored separately by default.** D6 found single- and three-phase
-   sites moving in opposite reactive directions with near mirror-image deadband
-   shapes. Until that is resolved, pooling them averages a response against its
-   inverse. ``voltvar_summary`` therefore reports by cohort, and pooling is an
-   explicit opt-in.
+``vw_max_p_sql``, ``tol_kw_sql`` -- and runs unchanged in DuckDB. 
 
 A latent bug in the original, deliberately not reproduced
 ---------------------------------------------------------
@@ -99,8 +76,8 @@ _A = C.as4777()
 _QIMP = _A["QIMP"]
 CAPABILITY_PROFILES = ("review_corrected", "hossein_m3")
 
-#: The five Q_impact categories, in order. Names follow the corrected scheme in
-#: build_conformance_voltvar.py -- the two middle bands were swapped in Milestone 3.
+# The five Q_impact categories, in order.
+# the two middle bands were swapped in Milestone 3.
 Q_CATEGORIES = (
     "Q_adverse",                 # wrong direction
     "Q_inactive",                # no response
@@ -109,13 +86,11 @@ Q_CATEGORIES = (
     "Q_major_surplus",           # over-response
 )
 
-#: reduced non-conformance = adverse + inactive + significant shortfall.
-#: Q_near_conformant is EXCLUDED: those inverters deliver 90-110% of required Q.
+# reduced non-conformance = adverse + inactive + significant shortfall.
 REDUCED_NONCONF = ("Q_adverse", "Q_inactive", "Q_significant_shortfall")
 
-
 # ═══════════════════════════════════════════════════════════════════════════
-# D9. VOLT-VAR
+# VOLT-VAR
 # ═══════════════════════════════════════════════════════════════════════════
 
 def voltvar_interval_sql(config, params, capability_profile: str = "review_corrected") -> str:
@@ -127,11 +102,9 @@ def voltvar_interval_sql(config, params, capability_profile: str = "review_corre
 
     ``capability_profile``:
       * ``review_corrected`` -- reactive-power priority above 0.8 S, and intervals
-        below 0.2 S are marked unassessable rather than scored. This is the
-        defensible reading: Figure 2.1 sets no quantified minimum below 20%.
+        below 0.2 S are marked unassessable rather than scored.
       * ``hossein_m3`` -- the Milestone 3 behaviour, which uses the shrinking
-        fixed-P circle above 0.8 S and assesses every interval. Kept for
-        reconciliation only.
+        fixed-P circle above 0.8 S and assesses every interval. Kept for reconciliation.
     """
     if capability_profile not in CAPABILITY_PROFILES:
         raise ValueError(f"capability_profile must be one of {CAPABILITY_PROFILES}")
@@ -254,10 +227,6 @@ def voltvar_site_day(
 ) -> pd.DataFrame:
     """
     Aggregate Volt-VAr scoring to one row per (site, AEST date).
-
-    The site-day grain matches ``conformance_voltvar_v2`` so the two are directly
-    comparable, and it keeps the result small enough for pandas while preserving
-    every denominator the site-level verdict needs.
     """
     config = (config or se_params.CONFIG).validate()
     params = (params or se_params.PARAMS).validate()
@@ -269,8 +238,7 @@ def voltvar_site_day(
         f"count(*) FILTER (WHERE {c} > 0) AS {c}_count" for c in Q_CATEGORIES
     )
     # Per-unit shortfall: the same kvar distance divided by the site's rating, so
-    # a 5 kVA and a 10 kVA site contribute on the same scale. This is what makes
-    # the kVArh/kW/h rate meaningful across a fleet of mixed sizes.
+    # a 5 kVA and a 10 kVA site contribute on the same scale.
     pu_sums = ",\n               ".join(
         f"sum({c} / nullif(rating_capacity, 0)) AS {c}_pu_sum" for c in Q_CATEGORIES
     )
@@ -286,7 +254,7 @@ def voltvar_site_day(
                sum(exposed)                                 AS exposed_count,
                sum(capability_assessable)                   AS total_count,
                -- capability_assessable is NOT gated on exposed (Q buckets score
-               -- against the full assessable population, by design -- see
+               -- against the full assessable population, by design see
                -- total_count's other uses). This column is the AND of the two,
                -- for the one place that actually needs a nested funnel/rate:
                -- "of the exposed population, how much was assessable" must not
@@ -307,8 +275,7 @@ def voltvar_site_day(
     ).df()
 
 
-#: Capacity bands used for every "by system size" breakdown, so the bins cannot
-#: drift between tables.
+# Capacity bands used for every "by system size" breakdown, so the bins cannot drift between tables.
 CAPACITY_BANDS = [0, 3, 4, 5, 6, 8, 10, 1000]
 CAPACITY_LABELS = ["<3", "3-4", "4-5", "5-6", "6-8", "8-10", ">10"]
 
@@ -316,11 +283,6 @@ CAPACITY_LABELS = ["<3", "3-4", "4-5", "5-6", "6-8", "8-10", ">10"]
 def _pct(numerator, denominator, decimals: int = 3):
     """
     Percentage with NaN where the denominator is zero.
-
-    Uses numpy NaN, never ``pd.NA``. ``series.replace(0, pd.NA)`` silently promotes
-    an integer column to object dtype, and the next ``.round()`` raises
-    "Expected numeric dtype, got object instead". That has bitten this module
-    three times; route every rate through here.
     """
     import numpy as np
 
@@ -334,10 +296,6 @@ def _pct(numerator, denominator, decimals: int = 3):
 def enrich_site_day(con: duckdb.DuckDBPyConnection, site_day: pd.DataFrame) -> pd.DataFrame:
     """
     Attach site dimension and capacity to a scored site-day frame.
-
-    Adds ``postcode``, ``s_99`` and a banded ``capacity_band``, which is what every
-    breakdown groups on. Kept separate from the scoring so the expensive interval
-    pass is not repeated once per breakdown dimension.
     """
     meta = con.execute(
         """
@@ -374,21 +332,7 @@ def voltvar_site_table(
     adverse: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
-    One row per site: category percentages, verdict, and everything needed to pick
-    sites to inspect in ``05_site_explorer.ipynb``.
-
-    This is the bridge between the fleet result and the per-site investigation.
-    Sort or filter it, take the ``site_alias`` values, and feed them to
-    ``se_explore.explore(site)``.
-
-    Percentages are against that site's own capability-assessable intervals, so a
-    site with 200 assessable intervals and one with 200,000 are on the same scale
-    -- but ``assessable_intervals`` is carried alongside precisely so a 100% rate
-    on a handful of intervals is not mistaken for a finding.
-
-    If ``adverse`` (from ``se_adverse.classify_adverse_sites``) is supplied, the
-    polarity triage is joined on, so sites flagged as ``polarity_suspect`` can be
-    excluded or inspected first.
+    One row per site: category percentages, verdict, and everything needed to pick sites to inspect in ``05_site_explorer.ipynb``.
     """
     config = (config or se_params.CONFIG).validate()
     enriched = enrich_site_day(con, site_day)
@@ -483,22 +427,6 @@ def voltvar_breakdown(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Volt-VAr results split by a fleet dimension.
-
-    ``by``: ``site_state``, ``capacity_band``, ``postcode`` or ``cohort``.
-
-    Returns two frames, deliberately kept apart because they answer different
-    questions and have different denominators:
-
-    ``site_pct``
-        Percentage of SITES conformant / non-conformant / not assessable, on the
-        10% rule. Equal weight per site.
-    ``interval_pct``
-        Percentage of capability-assessable INTERVALS in each of the five
-        Q_impact categories. Weighted by how much each site was observed.
-
-    A group can look bad on one and fine on the other -- a handful of heavily
-    observed sites can dominate the interval view while barely moving the site
-    view. Reporting only one of them hides that.
     """
     config = (config or se_params.CONFIG).validate()
     enriched = enrich_site_day(con, site_day)
@@ -541,15 +469,6 @@ def voltwatt_breakdown(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Volt-Watt results split by a fleet dimension.
-
-    Same two-frame structure as ``voltvar_breakdown``. The interval denominator
-    here is EXPOSED intervals (V > 253 V), not all intervals -- a site that never
-    saw high voltage was never tested, and including it would dilute the rate with
-    sites that had no opportunity to fail.
-
-    ``severity_Wh_per_kVA_per_exposed`` is the normalised magnitude metric from the
-    Solar Analytics notebook: nonconformance Wh divided by (capacity x exposed
-    intervals). Frequency says how often; this says how far over.
     """
     config = (config or se_params.CONFIG).validate()
     enriched = enrich_site_day(con, site_day)
@@ -593,16 +512,6 @@ def voltwatt_breakdown(
 def voltvar_summary(site_day: pd.DataFrame, by_cohort: bool = True) -> pd.DataFrame:
     """
     Fleet Volt-VAr conformance rates.
-
-    ``by_cohort=True`` (the default) splits single- from three-phase. D6 found the
-    two moving in opposite reactive directions with mirror-image deadband shapes;
-    until that is resolved, a pooled rate averages a response against its inverse
-    and understates both. Pass ``by_cohort=False`` only with that caveat stated.
-
-    ``reduced_nonconf`` = adverse + inactive + significant shortfall.
-    ``Q_near_conformant`` is excluded: those inverters deliver 90-110% of required
-    reactive power. Milestone 3 included that band and excluded the shortfall band,
-    an artefact of the swapped names (R4), so these figures will not match it.
     """
     frame = site_day.copy()
     keys = ["is_three_phase"] if by_cohort else []
@@ -651,11 +560,9 @@ def voltvar_summary(site_day: pd.DataFrame, by_cohort: bool = True) -> pd.DataFr
     return pd.DataFrame(rows)
 
 
-#: The two site-denominator conventions, kept explicit because they produce very
-#: different headlines from identical data and neither is wrong.
-#:
-#: ``assessed``  matches Hossein's original and ``bms_sa_review``. In
-#:   ``Volt-Watt-Trino.ipynb`` the build carries ``HAVING avg(voltage) > 253``, so
+# The two site-denominator conventions
+#: ``assessed``  matches original and ``bms_sa_review``. 
+#  In``Volt-Watt-Trino.ipynb`` the build carries ``HAVING avg(voltage) > 253``, so
 #:   a site that never saw high voltage produces no rows at all and cannot reach
 #:   any downstream rate. ``conformance_metrics.aggregate_sites`` does the same
 #:   thing explicitly with ``d[d[denominator] >= min_intervals]``.
@@ -665,13 +572,11 @@ def voltvar_summary(site_day: pd.DataFrame, by_cohort: bool = True) -> pd.DataFr
 #:   *what share of the fleet has demonstrated conformance?* On this fleet ~71% of
 #:   sites never reach 253 V, so the distinction moves the Volt-Watt headline from
 #:   80% to 23%.
-#:
-#: Neither convention counts a never-tested site as CONFORMANT. That would be a
-#: third thing, it is what a careless reading of the original suggests, and it is
-#: indefensible -- it would mostly measure the absence of high voltage.
+#
+#: Neither convention counts a never-tested site as CONFORMANT. 
 DENOMINATOR_CONVENTIONS = {
     "assessed": "sites with >= min_intervals in the denominator "
-                "(Hossein / bms_sa_review)",
+                "(original / bms_sa_review)",
     "all": "every site in the cohort, never-tested ones as their own category",
 }
 

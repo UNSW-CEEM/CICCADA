@@ -1,16 +1,7 @@
 """
-Unpacking the adverse-direction sites.
+adverse-direction sites.
 ======================================
-
-Under the ``as_delivered`` orientation the fleet test fits 213 sites and
-misorients 106. Those 106 will score as ``Q_adverse`` -- responding in the wrong
-direction -- for what is almost certainly a reporting-polarity difference rather
-than an inverter doing the wrong thing.
-
-Publishing them as non-conformant would be a straightforward error. This module
-exists to separate them out.
-
-The taxonomy
+taxonomy
 ------------
 An adverse site is classified by whether its reactive MAGNITUDE tracks the
 AS/NZS 4777.2 requirement. Magnitude is orientation-independent, which is what
@@ -19,34 +10,15 @@ makes it usable while the sign is unresolved:
 ``polarity_suspect``
     Adverse in direction, but |Q| sits within the +/-4% tolerance of the required
     curve across the ramp. An inverter delivering exactly the required quantity
-    of reactive power, with the sign reported the other way. NOT a conformance
-    finding -- a data-format finding.
+    of reactive power, with the sign reported the other way.
 
 ``genuinely_adverse``
     Adverse in direction AND |Q| materially exceeds what the curve requires. The
-    inverter is doing something substantial in the wrong direction. This IS a
-    conformance finding, and the interesting one.
+    inverter is doing something substantial in the wrong direction.
 
 ``adverse_but_inactive``
-    Adverse in direction but |Q| is small relative to the requirement -- the site
-    is barely responding at all. The direction of a near-zero quantity carries
-    little information; these belong with the inactive population, not the
-    adverse one.
+    Adverse in direction but |Q| is small relative to the requirement.
 
-Why this cannot simply be "fixed"
----------------------------------
-The obvious move is to flip the polarity-suspect sites and re-score. That is
-circular: it infers the sign from conformity with the curve, then reports
-conformity with the curve. The classification here is a *triage* that tells you
-which sites to ask OEM about -- not a correction that can be applied and
-published.
-
-What can be reported safely
----------------------------
-* the count in each class, with the reasoning stated;
-* magnitude-based conformance for the whole fleet, which is unaffected;
-* direction-based conformance for ``genuinely_adverse`` sites only, since those
-  are adverse under EITHER orientation.
 """
 
 from __future__ import annotations
@@ -86,30 +58,10 @@ def classify_adverse_sites(
 ) -> pd.DataFrame:
     """
     Classify every site by direction AND magnitude of its reactive response.
-
-    Measured across the Volt-VAr ramp only (241-253 V), where the requirement is
-    non-zero and Volt-Watt has not yet engaged.
-
-    Two independent measurements per site:
-
-    ``median_q_kvar``
-        Direction, in the CONFIGURED orientation. Positive above 240 V is adverse
-        -- the standard requires absorption there.
-    ``ratio_to_required``
-        Magnitude, |Q| / |required Q|. Orientation-independent by construction.
-
-    ``inactive_ratio`` is the floor below which a site counts as barely
-    responding. At 0.25 a site delivering under a quarter of the required
-    magnitude is treated as inactive regardless of sign -- the direction of a
-    near-zero quantity is not evidence of anything.
     """
     config = (config or se_params.CONFIG).validate()
     q = contract.q_expr(config, "i")
-    # Route through config.voltage_aggregation like every other query in the
-    # pipeline (default "mean") rather than hardcoding max-of-phases -- this
-    # feeds adverse_class/polarity_suspect, which in turn gates the
-    # exclude_polarity_suspect filter used by Methods A/B/C, so a max-vs-mean
-    # bias here changes which sites those methods exclude.
+    # Route through config.voltage_aggregation like every other query in the pipeline (default "mean") rather than hardcoding max-of-phases
     v = contract.voltage_sql(config.voltage_aggregation, "i")
     tol = config.tolerance_fraction
     required = (
@@ -177,7 +129,7 @@ def classify_adverse_sites(
 
 
 def adverse_summary(classified: pd.DataFrame) -> pd.DataFrame:
-    """Counts per class and cohort, with what each class licenses you to say."""
+    """Counts per class and cohort"""
     meaning = {
         "not_adverse": "absorbing (or near zero) in the configured orientation",
         "polarity_suspect": "follows the curve in magnitude; sign reported inverted "
@@ -201,16 +153,6 @@ def adverse_summary(classified: pd.DataFrame) -> pd.DataFrame:
 def adverse_conformance_impact(
     con: duckdb.DuckDBPyConnection, classified: pd.DataFrame, config=None, params=None
 ) -> pd.DataFrame:
-    """
-    How much of the reported ``Q_adverse`` total comes from polarity-suspect sites?
-
-    Re-runs the D9 scoring and attributes the adverse intervals to the classes
-    above, which turns "our adverse rate may be contaminated" into a number.
-
-    If most adverse intervals come from ``polarity_suspect`` sites, the headline
-    adverse rate is largely a data-format artefact and must not be published as a
-    conformance result. If most come from ``genuinely_adverse`` sites, it stands.
-    """
     from oem_analysis.lib import se_conformance as cf
 
     config = (config or se_params.CONFIG).validate()

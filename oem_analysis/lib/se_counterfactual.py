@@ -1,9 +1,6 @@
 """
-The GHI counterfactual: structured data, model, uncurtailed PV.
+GHI counterfactual: structured data, model, uncurtailed PV.
 ===============================================================
-
-Deliverables D12b and D12c. Ports of ``build_structured_data.py``,
-``build_ghi_model.py`` and ``build_all_uncurtailedpv.py`` to DuckDB.
 
 Three steps, in order::
 
@@ -12,28 +9,6 @@ Three steps, in order::
     fit_ghi_model()       per-site, per-5-min-ToD regression -> se_ghi_model
     build_uncurtailedpv() apply the model -> se_uncurtailedpv
 
-Why GHI_cs cannot be replaced by pvlib
---------------------------------------
-``GHI_cs`` in the original is NOT a modelled clear-sky curve. It is derived from
-the BOM data itself: pick the clearest day per month per grid point (lowest
-``cloud_sum``, ``max_GHI > 200``), then take a percentile of GHI over a window.
-
-The model's regressor is the RATIO ``GHI / GHI_cs``. Substituting a modelled
-clear-sky irradiance changes what that ratio means, and the fitted coefficients
-would no longer be comparable to the Solar Analytics ones. That is why D12
-insists on the BOM extract rather than falling back to pvlib.
-
-The postcode compromise, restated because it governs coverage
--------------------------------------------------------------
-Solar Analytics had per-site coordinates. This has a postcode. Following
-``BOM_NCI/process_bom.ipynb``, irradiance is AVERAGED over all BOM nodes inside
-the postcode polygon -- with the site's true location unknown, an average is a
-better estimator than snapping to one node.
-
-Expect the MAPE quality gate to reject large-area postcodes preferentially. That
-is correct behaviour and NOT random attrition: coverage will be biased toward
-dense urban postcodes. ``postcode_area_km2`` travels through to the gate report
-so the bias is auditable.
 """
 
 from __future__ import annotations
@@ -79,16 +54,6 @@ MIN_TRAIN_POINTS = 2
 def _require(con: duckdb.DuckDBPyConnection, table: str, hint: str):
     """
     Check a store table exists, then make sure this connection can see it.
-
-    The re-registration is the important half. Each step here WRITES a parquet
-    table and the next step READS it, but the DuckDB views are created once at
-    ``se_store.connect()``. Run the whole chain in one session -- which is exactly
-    what notebook 04 does -- and the connection has no view for a table that was
-    written after it opened, so a perfectly good file fails with
-    ``Catalog Error: Table with name bom_solar does not exist``.
-
-    Refreshing here rather than asking every caller to remember
-    ``register_store_views`` makes the pipeline order-independent.
     """
     if not C.store_path(table).exists():
         raise FileNotFoundError(
@@ -100,7 +65,7 @@ def _require(con: duckdb.DuckDBPyConnection, table: str, hint: str):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# D12b. STRUCTURED DATA
+# STRUCTURED DATA
 # ═══════════════════════════════════════════════════════════════════════════
 
 def build_structured(
@@ -231,7 +196,7 @@ def build_structured(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# D12c. GHI MODEL AND COUNTERFACTUAL
+# GHI MODEL AND COUNTERFACTUAL
 # ═══════════════════════════════════════════════════════════════════════════
 
 def fit_ghi_model(
@@ -461,7 +426,7 @@ def build_uncurtailedpv(
 
 def check_ghi_alignment(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     """
-    Does irradiance actually line up with generation in time? Run before fitting.
+    Does irradiance actually line up with generation in time?
 
     ``build_structured`` assumes ``bom_solar.time`` is **UTC** and converts with a
     fixed ``+ INTERVAL '10' HOUR`` to the AEST analysis frame. If that assumption

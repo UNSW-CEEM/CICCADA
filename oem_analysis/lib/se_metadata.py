@@ -1,30 +1,6 @@
 """
 Site dimension and capacity proxies.
 ====================================
-
-Deliverable D4. The OEM analogue of `meta_up23c`, except that almost all of
-it has to be *derived* rather than read: the delivery ships alias, postcode and
-state, and nothing else.
-
-Two tables:
-
-* ``se_site``          one row per site: identity, geography, phase configuration,
-                       observation coverage, and data-quality flags.
-* ``se_site_capacity`` one row per site: the ``s_99`` empirical apparent-power
-                       limit and its supporting counts, ported from
-                       ``build_s99_estimates.py``.
-
-They are kept apart deliberately. ``se_site`` is descriptive and stable;
-``se_site_capacity`` is a *modelling choice* with a method version attached, and
-is swept in the sensitivity notebook. Blending them would hide that distinction.
-
-The missing nameplate
----------------------
-Solar Analytics carried ``ac_capacity_kw`` from the provider and used ``s_99``
-only as an alternative basis. Here there is no nameplate at all, so ``s_99`` is
-the sole capacity basis and the AS/NZS 4777.2 tolerance is re-anchored to
-``0.04 * s_99``. That substitution is labelled everywhere it appears and is a
-first-class sensitivity axis, not a silent default.
 """
 
 from __future__ import annotations

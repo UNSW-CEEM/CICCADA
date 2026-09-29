@@ -1,37 +1,6 @@
 """
 BOM satellite irradiance: probe, map and extract.
 =================================================
-
-Deliverable D12a. The one step that touches AWS, and only once.
-
-Reuses the existing plumbing rather than reinventing it:
-
-* ``bms_sa_review.shared.aws_config.aq`` -- the same Athena helper, same SSO
-  profile (``ciccada``), same S3 staging bucket.
-* The ``bom_nci.solar`` access pattern lifted from ``build_structured_data.py``,
-  which joins ``b.latitude = m.n_lat AND b.longitude = m.n_long`` against
-  per-site nearest grid points held in ``meta_up23c``.
-* The postcode geometry approach from ``BOM_NCI/Get_ALL_postcodes_ABS.ipynb``.
-
-The one genuinely missing piece
--------------------------------
-Solar Analytics stored ``n_lat`` / ``n_long`` per site. OEM gives a postcode
-and nothing else, so the grid points have to be derived: postcode -> ABS POA-2021
-polygon -> the BOM grid nodes falling inside it.
-
-Note that ``BOM_NCI/process_bom.ipynb`` ultimately AVERAGES all grid points within
-a postcode (``groupby(['time','postcode']).mean()``). For OEM, where the site
-location inside the postcode is unknown, that average is the better estimator than
-snapping to a single node -- there is no "nearest" to snap to.
-
-Cost discipline
----------------
-Athena bills by data scanned. ``bom_nci.solar`` is large, so:
-
-* probe BEFORE extracting -- ``probe_coverage`` and ``probe_grid`` scan almost
-  nothing and tell you whether 2025 exists and how big the extract will be;
-* always name columns, never ``SELECT *``;
-* always filter to the fleet's own latitude/longitude box.
 """
 
 from __future__ import annotations
@@ -56,8 +25,6 @@ __all__ = [
     "BOM_TABLE",
 ]
 
-#: `bom_nci.solar` is referenced as a fully-qualified name in build_structured_data.py,
-#: so the Athena `database=` argument is largely cosmetic. Kept explicit anyway.
 BOM_DATABASE = "bom_nci"
 BOM_TABLE = "bom_nci.solar"
 
@@ -65,12 +32,6 @@ BOM_TABLE = "bom_nci.solar"
 def get_aq():
     """
     Return the project's Athena query helper.
-
-    Deliberately imported lazily. `aws_config` constructs a boto3 session at
-    import time, so importing it eagerly would make every notebook -- including
-    the ones that never touch AWS -- fail on a missing SSO token.
-
-    Requires:  aws sso login --profile ciccada
     """
     C.bootstrap_sys_path()
     try:
@@ -86,29 +47,15 @@ def get_aq():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PROBES -- run these BEFORE any extract
+# PROBES
 # ═══════════════════════════════════════════════════════════════════════════
-
-#: Bounding box covering the OEM fleet (NSW, SA, QLD) with margin.
-#: Every probe is constrained to this by default. `bom_nci.solar` covers the whole
-#: Himawari disc, so an unbounded query scans an area many times larger than the
-#: fleet occupies.
+# Bounding box covering the OEM fleet (NSW, SA, QLD) with margin.
 FLEET_BOX = dict(lat_min=-39.5, lat_max=-9.5, lon_min=129.0, lon_max=154.5)
 
 
 def describe_bom(aq=None) -> pd.DataFrame:
     """
     Column names, types and PARTITION columns of ``bom_nci.solar``.
-
-    Run this first. It reads Glue metadata only -- instant, free -- and answers the
-    question that determines whether every other query here is fast or ruinous:
-    **is the table partitioned, and on what?**
-
-    If it has ``year`` / ``month`` partition columns, filter on THOSE. Filtering on
-    ``year(time) = 2025`` applies a function to the column, which Athena cannot use
-    for partition pruning, so it scans the entire table regardless. Note that
-    ``build_structured_data.py`` does exactly that (``WHERE year(time) = {year}``),
-    so the existing pipeline may also be scanning more than it needs to.
     """
     aq = aq or get_aq()
     return aq(f"DESCRIBE {BOM_TABLE}", database=BOM_DATABASE)
@@ -117,10 +64,6 @@ def describe_bom(aq=None) -> pd.DataFrame:
 def probe_one_day(aq=None, day: str = "2025-06-15", **box) -> pd.DataFrame:
     """
     The cheapest possible sanity check: ONE day, fleet box only.
-
-    Start here. It answers "does 2025 exist at all, and what does a row look like"
-    for a scan of roughly 1/365th of the year. If this is slow, everything else
-    will be far worse, and the table is probably unpartitioned.
     """
     aq = aq or get_aq()
     b = {**FLEET_BOX, **box}
@@ -142,29 +85,6 @@ def probe_one_day(aq=None, day: str = "2025-06-15", **box) -> pd.DataFrame:
 
 
 def probe_coverage(aq=None, year: int = C.STUDY_YEAR, months=None, **box) -> pd.DataFrame:
-    """
-    Does ``bom_nci.solar`` cover the study period, and how densely?
-
-    COST WARNING -- read before running.
-
-    An earlier version of this scanned the whole year across the entire satellite
-    grid with two ``count(DISTINCT ...)`` aggregates and no spatial bound. That is
-    not a cheap query; it can run for tens of minutes and scan a very large volume.
-    It is now bounded two ways, and both matter:
-
-      * **spatially** to ``FLEET_BOX`` -- the fleet occupies a small part of the disc;
-      * **temporally** to ``months``, which defaults to a SINGLE month.
-
-    Widen ``months`` only once a single month has returned and you know what it
-    costs. Run ``probe_one_day`` before even that.
-
-    What to look for:
-
-      * **``n_times`` ~4,464 per 31-day month** (144 ten-minute slots x 31). Much
-        less means sparse coverage and the clear-sky-day selection will suffer.
-      * **``n_grid_points`` stable across months.** A grid that changes size
-        mid-year means the satellite product changed underneath you.
-    """
     aq = aq or get_aq()
     b = {**FLEET_BOX, **box}
     months = list(months) if months is not None else [6]
@@ -201,18 +121,6 @@ def probe_grid(
     """
     How many grid nodes sit in the fleet's bounding box, and what is the node
     spacing?
-
-    Two things come out of this:
-
-    1. **Extract size.** rows ~= n_grid_points x 52,560 ten-minute slots per year.
-       At ~400 nodes that is ~21 M rows; at 2,000 it is ~105 M. That is the
-       difference between a 300 MB local file and something that needs chunking.
-    2. **The true node spacing**, which settles ``se_config.BOM_GRID_SPACING_DEG``.
-       That constant is currently an unverified guess inferred from
-       ``process_bom.ipynb`` rounding coordinates to two decimal places.
-
-    Defaults cover mainland Australia. Narrow to the fleet's own box (see
-    ``postcode_grid_points``) before extracting.
     """
     aq = aq or get_aq()
     return aq(
@@ -238,8 +146,8 @@ def probe_grid(
 
 def probe_spacing(aq=None, year: int = C.STUDY_YEAR, n: int = 30) -> pd.DataFrame:
     """
-    The first ``n`` distinct latitudes, so the node spacing can be read directly
-    rather than inferred. Set ``se_config.BOM_GRID_SPACING_DEG`` from the result.
+    The first ``n`` distinct latitudes, so the node spacing can be read directly.
+    Set ``se_config.BOM_GRID_SPACING_DEG`` from the result.
     """
     aq = aq or get_aq()
     return aq(
@@ -265,19 +173,6 @@ def postcode_grid_points(
 ) -> pd.DataFrame:
     """
     Map every fleet postcode to the BOM grid nodes inside its polygon.
-
-    ``grid`` is a frame of distinct ``latitude`` / ``longitude`` from
-    ``bom_nci.solar`` (see ``fetch_grid_points``). Spatial join follows
-    ``BOM_NCI/Get_ALL_postcodes_ABS.ipynb``: build points, ``sjoin`` with
-    ``predicate="within"`` against POA-2021 in EPSG:4326.
-
-    Postcodes with NO node inside them fall back to the nearest node to the
-    polygon's representative point. Small urban postcodes are routinely smaller
-    than the grid spacing, so without this fallback a large part of the fleet
-    would silently lose its irradiance.
-
-    Returns one row per (postcode, latitude, longitude) with a ``match_type`` of
-    ``within`` or ``nearest``.
     """
     import geopandas as gpd
     from shapely.geometry import Point
@@ -328,10 +223,6 @@ def fetch_grid_points(aq=None, con=None, buffer_deg: float = 0.5,
                       year: int = C.STUDY_YEAR) -> pd.DataFrame:
     """
     Distinct BOM grid nodes within the fleet's bounding box.
-
-    The box is derived from the site dimension's postcode centroids if geography
-    has been attached (D4), otherwise from a conservative eastern-states box --
-    the fleet is NSW, SA and QLD only, so there is no reason to scan the continent.
     """
     aq = aq or get_aq()
     box = (-39.5, -9.5, 129.0, 154.5)  # lat_min, lat_max, lon_min, lon_max
@@ -379,22 +270,6 @@ def _postcode_values_sql(mapping: pd.DataFrame) -> str:
 def thin_mapping(mapping: pd.DataFrame, max_per_postcode: int) -> pd.DataFrame:
     """
     Keep only the ``max_per_postcode`` nodes closest to each postcode's centre.
-
-    Needed because Athena caps the query string at 262,144 characters and the
-    full mapping does not fit: 9,500-odd nodes render to roughly 285 KB of
-    ``VALUES`` tuples, which is why ``extract_bom`` failed with
-    "Member must have length less than or equal to 262144".
-
-    Thinning is also defensible on its own terms. Postcode 4702 (Rockhampton
-    hinterland) contains hundreds of grid nodes spread over ~200 km; averaging
-    irradiance across all of them describes a region, not the weather at the
-    inverter. The nodes nearest the polygon's centre of mass are a better proxy
-    for a site in that postcode than the full spatial average, and dense urban
-    postcodes -- where the sites actually are -- have only a handful of nodes
-    anyway and are untouched.
-
-    Distance is measured from the mean of the postcode's own nodes, which for a
-    convex polygon is close to its centroid and needs no geometry library.
     """
     frame = mapping[["latitude", "longitude", "postcode"]].drop_duplicates().copy()
     centres = frame.groupby("postcode")[["latitude", "longitude"]].transform("mean")
@@ -416,11 +291,6 @@ def thin_mapping(mapping: pd.DataFrame, max_per_postcode: int) -> pd.DataFrame:
 def fit_mapping_to_athena(mapping: pd.DataFrame, budget: int = _SQL_BUDGET) -> pd.DataFrame:
     """
     Thin the mapping until its inline VALUES clause fits Athena's query limit.
-
-    Tries progressively tighter caps and stops at the first that fits, so a
-    small fleet keeps every node and only an oversized one gets trimmed.
-    Prints what it did -- silently dropping grid nodes would change the GHI
-    series without any record of why.
     """
     nodes = mapping[["latitude", "longitude", "postcode"]].drop_duplicates()
     size = len(_postcode_values_sql(nodes))
@@ -460,35 +330,6 @@ def extract_bom(
 ) -> pd.DataFrame:
     """
     Pull ``bom_nci.solar`` for the fleet's postcodes and land it locally.
-
-    REWRITTEN 13 Aug 2026 after the first version proved unusable.
-
-    The original filtered on the BOUNDING BOX of the grid points::
-
-        WHERE latitude BETWEEN min(lat) AND max(lat)
-          AND longitude BETWEEN min(lon) AND max(lon)
-
-    A bounding box over sites in NSW, SA and QLD is most of eastern Australia, so
-    that pulled every node in the rectangle rather than the few hundred that
-    actually map to fleet postcodes. Measured: **341 million rows for January
-    alone** -- roughly 4 billion for the year, and a correspondingly large Athena
-    bill for data that would then have been thrown away.
-
-    This version does two things differently, and both matter:
-
-    1. **Filters on the explicit node list**, joined inline as a ``VALUES`` clause,
-       so only nodes that fall inside a fleet postcode are read.
-    2. **Averages to postcode INSIDE Athena**, which is what
-       ``BOM_NCI/process_bom.ipynb`` does anyway
-       (``groupby(['time','postcode']).mean()``). Aggregating at the source rather
-       than locally cuts the transferred volume by the number of nodes per
-       postcode, and the per-node values are never needed again.
-
-    Expected output: ~507 postcodes x 4,464 ten-minute slots per month, so roughly
-    **2 million rows per month** and ~27 million for the year -- a few hundred MB,
-    against the ~4 billion rows the bounding-box version would have returned.
-
-    Extracted month by month and appended, so a dropped connection costs one month.
     """
     aq = aq or get_aq()
     out_path = Path(out_path or C.store_path("bom_solar"))

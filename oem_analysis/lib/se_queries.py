@@ -1,13 +1,6 @@
 """
 Fleet exploratory queries.
 ==========================
-
-Deliverable D6. SQL over the store; returns tidy frames and nothing else. No
-plotting, no interpretation — those live in ``se_plots`` and the notebook.
-
-Every query that defines a cohort takes an ``SEAnalysisConfig`` and builds its
-predicates through ``se_contract``, so no notebook can quietly analyse a
-different population from the one its manifest claims.
 """
 
 from __future__ import annotations

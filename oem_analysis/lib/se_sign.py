@@ -1,52 +1,7 @@
 """
-Reactive-power sign convention: evidence and consequences.
+Reactive-power sign convention
 ==========================================================
 
-Deliverable D8.
-
-SUPERSEDED 13 Aug 2026 -- read this first.
-
-The original conclusion here (a global flip to -1, from a 53-site sample) was
-WRONG. The fleet-wide test in ``fleet_orientation_fit`` shows the reported sign is
-inconsistent ACROSS the fleet and does not split by phase count: 213 sites fit the
-value as delivered, 106 fit it flipped, 1,271 fit neither.
-
-``se_config.REACTIVE_POWER_SIGN`` is therefore now +1 (as delivered), and the
-residual 106 misoriented sites are triaged by ``se_adverse`` rather than pretended
-away. The functions below remain useful as evidence; the framing in terms of a
-single-phase / three-phase split does not.
-
-The question
------------
-D6 found the two cohorts moving in opposite reactive directions, yet both showing
-a |Q| minimum at 230-235 V -- almost exactly the AS/NZS 4777.2 deadband at
-220-240 V. Two near mirror-image curves. Either
-
-  (A) three-phase inverters report reactive power with the opposite polarity, and
-      flipping the sign makes them broadly conformant; or
-  (B) three-phase inverters genuinely respond in the wrong direction, which is a
-      substantial conformance finding in its own right.
-
-Why it cannot be waved through
-------------------------------
-Under the current convention the three-phase cohort scores 81.7% reduced
-non-conformance, dominated by ``Q_adverse``. Getting this wrong therefore either
-invents a fleet-wide non-conformance across 415 sites, or erases a real one. It is
-not a rounding decision.
-
-What this module provides
--------------------------
-``site_response_classification``  per-site direction of response, so the question
-                                  becomes "how many sites" rather than "what does
-                                  the median do".
-``deadband_shape``                where each cohort's |Q| minimum sits, and how
-                                  sharply it rises either side.
-``sign_flip_sensitivity``         conformance scored both ways, so the cost of
-                                  being wrong is a number rather than a worry.
-
-None of these can prove (A) or (B) on their own. They are assembled so that a
-decision can be made on evidence, and so that whichever way it goes, the reasoning
-is on the record.
 """
 
 from __future__ import annotations

@@ -1,31 +1,6 @@
 """
 Analysis configuration and Volt-VAr parameters.
 ===============================================
-
-Deliverable D5. The OEM counterparts of
-``data_query/lib/analysis_contract.AnalysisConfig`` and
-``data_query/lib/voltvar_params.VoltVarParams``.
-
-Frozen dataclasses, validated on construction, with ``with_changes()`` for
-sensitivity sweeps. Every field is a methodological choice, and every choice
-appears in ``se_contract.manifest()`` so it travels with the result.
-
-What changed in the port, and why
----------------------------------
-``AnalysisConfig`` offers ``rating_basis`` and ``empirical_limit_basis`` as a
-choice between ``ac_capacity_kw`` (nameplate) and ``s_99`` (empirical). This
-delivery has no nameplate, so both collapse to ``s_99``. The fields are KEPT
-rather than removed, so that:
-
-* the substitution is visible in the manifest instead of being invisible by
-  absence, and
-* nameplate slots straight back in if OEM ever supplies it, without
-  touching the query layer.
-
-``flex_selection`` is likewise kept but defaults to ``"include"``. Solar Analytics
-had a ``flex_export_detected`` flag from the plateau heuristic; nothing equivalent
-exists here yet. ``derating_active`` is the closest signal and gets its own
-selector, deliberately separate, because it is not the same thing.
 """
 
 from __future__ import annotations

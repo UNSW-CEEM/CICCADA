@@ -2,13 +2,7 @@
 Figures for the OEM fleet EDA.
 ====================================
 
-Deliverable D6. Every function takes a frame produced by ``se_queries`` and
-returns a matplotlib Figure. No querying, no aggregation — if a number needs
-computing it belongs in ``se_queries``, so that what is plotted is exactly what
-can be tabulated.
-
-AS/NZS 4777.2 set-points are drawn from the shared config, never hard-coded, so
-the reference lines cannot drift from the thresholds the analysis uses.
+AS/NZS 4777.2 set-points are drawn from the shared config.
 """
 
 from __future__ import annotations

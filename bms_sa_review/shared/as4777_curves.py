@@ -15,7 +15,7 @@ from shared.ciccada_config import AS4777
 # ---------------------------------------------------------------------------
 _VV = AS4777["VVAR"]      # V1..V4, Q1, Q4
 _VW = AS4777["VW"]        # V1, V2, P2
-_TOL = AS4777["TOL_FRAC"] # 0.04
+_TOL = AS4777["TOL_FRAC"] # i.e. 0.04
 _QC = AS4777["QCAP"]      # From AS477.2.2020 Figure 2.1.
 
 

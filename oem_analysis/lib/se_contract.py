@@ -1,19 +1,6 @@
 """
-Analysis contract: the manifest and the SQL predicates it describes.
+Analysis contract: manifest and the SQL predicates
 ====================================================================
-
-Deliverable D5. The OEM counterpart of
-``data_query/lib/analysis_contract.py``.
-
-Two jobs, and they are the same job seen from two sides:
-
-* ``manifest()`` renders every methodological choice as a table, so no number
-  leaves a notebook without the settings that produced it.
-* The ``*_sql()`` helpers turn those same choices into SQL predicates, so the
-  manifest cannot drift away from what the queries actually did.
-
-That coupling is the point. A manifest assembled by hand alongside independently
-written SQL is a manifest that will eventually lie.
 """
 
 from __future__ import annotations

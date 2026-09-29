@@ -2,8 +2,6 @@
 Volt-VAr-induced active power curtailment: Methods A, B and C.
 ==============================================================
 
-Deliverables D11 (Method A), D13 (Method B) and D14 (Method C).
-
 Port of ``data_query/lib/voltvar_queries.py`` + ``voltvar_metrics.py``.
 
 The three methods bracket the same quantity rather than agreeing
@@ -29,7 +27,7 @@ Because the GHI model is trained on data that may itself contain curtailment, an
 cloud enhancement is capped, this is a **lower bound**. A and B are reported as a
 range and are NOT reconciled.
 
-**Method C -- derating-flag corroboration (D14).** OEM reports
+**Method C -- derating-flag corroboration.** OEM reports
 ``derating_active`` per interval. It has no Solar Analytics counterpart and is not
 a third estimate -- it is an *independent label* against which A and B can be
 tested on the same fleet.
