@@ -26,7 +26,7 @@ from ebm_workflow.ebm_all_paths.ebm_nsw_path4 import (
 )
 
 print(
-    "Building deduplicated SAPN site data in 128 circuit buckets "
+    "Building deduplicated EBM site data in 128 circuit buckets "
     "(the 4 GB source may take several minutes)...\n"
     f"Output: {CLEANED_SITE_DATA_PATH}",
     flush=True,
