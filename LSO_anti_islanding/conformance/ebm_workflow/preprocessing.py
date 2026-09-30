@@ -1,4 +1,4 @@
-"""SAPN measurement preprocessing."""
+"""EBM measurement preprocessing."""
 
 from pathlib import Path
 
@@ -25,7 +25,7 @@ def write_cleaned_site_data(
     deduplicate=True,
     num_buckets=128,
 ):
-    """Write cleaned SAPN metrology, deduplicating one circuit-bucket at a time.
+    """Write cleaned EBM metrology, deduplicating one circuit-bucket at a time.
 
     Each bucket is selected directly from the raw parquet, passed through the
     established cleaning sequence, and appended to the same output parquet.
@@ -112,8 +112,8 @@ def write_cleaned_site_data(
         del cleaned_bucket
 
     if parquet_writer is None:
-        raise RuntimeError("SAPN preprocessing produced no cleaned rows.")
+        raise RuntimeError("EBM preprocessing produced no cleaned rows.")
 
     parquet_writer.close()
-    print(f"Saved cleaned SAPN data to {cleaned_path}.", flush=True)
+    print(f"Saved cleaned EBM data to {cleaned_path}.", flush=True)
     return cleaned_path
