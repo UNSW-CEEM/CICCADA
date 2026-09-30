@@ -1,7 +1,5 @@
 """SAPN 2022 rated-capacity policy."""
 
-import math
-
 import polars as pl
 from sapn2022_workflow.config import MAX_PV_SITE_NET_CIRCUITS
 from sapn2022_workflow.site_preparation import (
@@ -58,23 +56,22 @@ def rated_capacity_of_pv_sapn2022(
                 .filter(pl.col("site_power_kw") > 0)
             )
             if not site_power.is_empty():
-                sample_count = site_power.height
-                top_n = min(sample_count, max(20, math.ceil(sample_count * 0.01)))
-                robust_peak_kw = (
-                    site_power.sort("site_power_kw", descending=True)
-                    .head(top_n)
-                    .select(pl.col("site_power_kw").median())
-                    .item()
-                )
-                observed_kw = math.ceil(robust_peak_kw * 10.0) / 10.0
+                observed_kw = site_power.select(
+                    pl.col("site_power_kw").quantile(
+                        0.99,
+                        interpolation="linear",
+                    )
+                ).item()
 
-    # Use the higher available estimate; do not invent a default capacity.
+    # Prefer metadata unless observed power exceeds it by more than 4%.
     if metadata_kw is None:
         chosen_kw = observed_kw
     elif observed_kw is None:
         chosen_kw = metadata_kw
+    elif observed_kw <= metadata_kw * 1.04:
+        chosen_kw = metadata_kw
     else:
-        chosen_kw = max(metadata_kw, observed_kw)
+        chosen_kw = observed_kw
 
     return {
         "site_id": site_number,
