@@ -9,7 +9,7 @@ CONFORMANCE_DIR = Path(__file__).resolve().parents[1]
 if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
-from ebm_workflow.ebm_all_paths.ebm_nsw_path4 import (
+from ebm_workflow.ebm_all_paths.ebm_sapn_path3 import (
     CAPACITY_DERIVED_PATH,
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,

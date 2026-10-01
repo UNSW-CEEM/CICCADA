@@ -179,10 +179,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
                 continue
 
             mapped_day_count += 1
-            prepared_day = calculate_site_day_voltage_signals(
-                map_circuit_data_to_site(site_day_long, site_id),
-                voltage_prefix="voltage_valid",
-            )
+            site_day_wide = map_circuit_data_to_site(site_day_long, site_id)
+            prepared_day = calculate_site_day_voltage_signals(site_day_wide)
+            
             # careful that this fucntion is implemeted twice but for different purposes
             # do not delete it
             analysis_day_long = trim_site_day_analysis_window(

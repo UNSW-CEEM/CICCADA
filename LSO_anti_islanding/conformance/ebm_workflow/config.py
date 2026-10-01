@@ -1,8 +1,8 @@
-"""SAPN November 2022 workflow settings."""
+"""EBM conformance workflow settings."""
 
 from datetime import time
 
-VALID_VOLTAGE_MIN = 0.0 # 80.0
+VALID_VOLTAGE_MIN = 0.0  # 80.0
 VALID_VOLTAGE_MAX = 300.0
 VOLTAGE_ROLLING_WINDOW = "10m"
 DEDUPLICATION_ABSOLUTE_TOLERANCE_KW = 0.2

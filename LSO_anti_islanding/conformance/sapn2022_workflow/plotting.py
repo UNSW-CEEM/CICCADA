@@ -325,7 +325,7 @@ def plot_site_compliance_day(
     if lso_threshold is not None:
         thresholds_to_draw.append(
             (
-                f"LOS threshold: {float(lso_threshold):.1f} V",
+                f"LSO threshold: {float(lso_threshold):.1f} V",
                 lso_threshold,
                 PLOT_COLORS["threshold_lso"],
                 ":",
@@ -345,7 +345,7 @@ def plot_site_compliance_day(
     if los_lowest_disconnect_voltage is not None:
         thresholds_to_draw.append(
             (
-                f"LOS lowest: {float(los_lowest_disconnect_voltage):.1f} V",
+                f"LSO lowest: {float(los_lowest_disconnect_voltage):.1f} V",
                 los_lowest_disconnect_voltage,
                 PLOT_COLORS["threshold_lso"],
                 "--",
@@ -402,13 +402,13 @@ def plot_site_compliance_day(
             f"{disconnect_supported_responsible_count})"
         )
         day_breakdown_text = (
-            f"Base: LOS {los_compliant_count}/{los_responsible_count}, "
+            f"Base: LSO {los_compliant_count}/{los_responsible_count}, "
             f"OV1 {ov1_compliant_count}/{ov1_responsible_count}"
         )
         if los_disconnect_support_added_count or ov1_disconnect_support_added_count:
             day_breakdown_text = (
                 f"{day_breakdown_text} | Additional compliant: "
-                f"LOS {los_disconnect_support_added_count}, "
+                f"LSO {los_disconnect_support_added_count}, "
                 f"OV1 {ov1_disconnect_support_added_count}"
             )
 
@@ -547,7 +547,7 @@ def plot_method_threshold_overlay_day(
     save_path: str | Path | None = None,
 ):
     """
-    Plot a site-day using the comparison overlay layout and multi-method LOS
+    Plot a site-day using the comparison overlay layout and multi-method LSO
     thresholds on the same voltage axis.
 
     Expected method_thresholds entries:
@@ -722,7 +722,7 @@ def plot_method_threshold_overlay_day(
                 linewidth=1.4,
                 alpha=0.9,
                 zorder=1,
-                label=f'{method_info["label"]} LOS {threshold_value:.3f} V',
+                label=f'{method_info["label"]} LSO {threshold_value:.3f} V',
             )
 
     method_status_parts = []
