@@ -67,7 +67,7 @@ def _valid_numeric(values):
     return valid
 
 
-def plot_site_compliance_day(
+def plot_site_conformance_day(
     df: pl.DataFrame,
     site_number,
     day_label,
@@ -81,7 +81,7 @@ def plot_site_compliance_day(
     plot_no_responsible_timestamp_days: bool = False,
     save_path: str | Path | None = None,
 ):
-    """Plot one EBM site-day with power, voltage, and compliance context."""
+    """Plot one EBM site-day with power, voltage, and conformance context."""
     if df.is_empty():
         return
     power_columns = [
@@ -98,10 +98,10 @@ def plot_site_compliance_day(
         column: int(df.get_column(column).sum() or 0)
         for column in (
             "los_responsible",
-            "los_compliant",
+            "los_conformant",
             "los_disconnect_support_added",
             "ov1_responsible",
-            "ov1_compliant",
+            "ov1_conformant",
             "ov1_disconnect_support_added",
         )
     }
@@ -111,10 +111,10 @@ def plot_site_compliance_day(
         + counts["ov1_responsible"]
         + counts["ov1_disconnect_support_added"]
     )
-    compliant_count = (
-        counts["los_compliant"]
+    conformant_count = (
+        counts["los_conformant"]
         + counts["los_disconnect_support_added"]
-        + counts["ov1_compliant"]
+        + counts["ov1_conformant"]
         + counts["ov1_disconnect_support_added"]
     )
     if responsible_count == 0 and not plot_no_responsible_timestamp_days:
@@ -252,27 +252,27 @@ def plot_site_compliance_day(
                 )
 
     category_label = {
-        "compliant": "Conformant",
-        "compliant_erratic": "Conformant (erratic)",
-        "non_compliant": "Non-conformant",
+        "conformant": "Conformant",
+        "conformant_erratic": "Conformant (erratic)",
+        "non_conformant": "Non-conformant",
         "unassessed": "Unassessed",
     }.get(overall_category, str(overall_category))
     if responsible_count:
-        compliance_pct = compliant_count / responsible_count * 100.0
-        status = "Pass" if compliance_pct >= 90.0 else "Fail"
+        conformance_pct = conformant_count / responsible_count * 100.0
+        status = "Pass" if conformance_pct >= 90.0 else "Fail"
         day_summary = (
-            f"Day total: {status} {compliance_pct:.1f}% "
-            f"({compliant_count}/{responsible_count})"
+            f"Day total: {status} {conformance_pct:.1f}% "
+            f"({conformant_count}/{responsible_count})"
         )
     else:
         day_summary = "Day total: No responsible timestamps"
     detail_summary = (
-        f"Base: LSO {counts['los_compliant']}/{counts['los_responsible']}, "
-        f"OV1 {counts['ov1_compliant']}/{counts['ov1_responsible']}"
+        f"Base: LSO {counts['los_conformant']}/{counts['los_responsible']}, "
+        f"OV1 {counts['ov1_conformant']}/{counts['ov1_responsible']}"
     )
     if counts["los_disconnect_support_added"] or counts["ov1_disconnect_support_added"]:
         detail_summary += (
-            " | Additional compliant: "
+            " | Additional conformant: "
             f"LSO {counts['los_disconnect_support_added']}, "
             f"OV1 {counts['ov1_disconnect_support_added']}"
         )

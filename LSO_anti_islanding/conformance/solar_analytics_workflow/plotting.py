@@ -72,21 +72,21 @@ def _format_plot_date(day_label, timestamps=None):
         return str(day_label)
 
 
-def _day_status_label(day_compliant_ts, day_eligible_ts, threshold_pct=90.0):
-    if day_eligible_ts is None or day_compliant_ts is None:
+def _day_status_label(day_conformant_ts, day_eligible_ts, threshold_pct=90.0):
+    if day_eligible_ts is None or day_conformant_ts is None:
         return "unassessed", None
 
     day_eligible_ts = int(day_eligible_ts)
-    day_compliant_ts = int(day_compliant_ts)
+    day_conformant_ts = int(day_conformant_ts)
     if day_eligible_ts <= 0:
         return "unassessed", None
 
-    day_pct = (float(day_compliant_ts) / float(day_eligible_ts)) * 100.0
+    day_pct = (float(day_conformant_ts) / float(day_eligible_ts)) * 100.0
     day_status = "conformant" if day_pct >= threshold_pct else "non-conformant"
     return day_status, day_pct
 
 
-def plot_site_compliance_day(
+def plot_site_conformance_day(
     df: pl.DataFrame,
     site_number,
     day_label,
@@ -101,7 +101,7 @@ def plot_site_compliance_day(
     save_path: str | Path | None = None,
 ):
     """
-    Plot a single site-day using a shared two-panel compliance layout.
+    Plot a single site-day using a shared two-panel conformance layout.
     """
     if df.is_empty():
         return
@@ -117,26 +117,26 @@ def plot_site_compliance_day(
         return
 
     los_responsible_count = int(df.get_column("los_responsible").sum() or 0)
-    los_compliant_count = int(df.get_column("los_compliant").sum() or 0)
+    los_conformant_count = int(df.get_column("los_conformant").sum() or 0)
     los_disconnect_support_added_count = int(
         df.get_column("los_disconnect_support_added").sum() or 0
     )
     ov1_responsible_count = int(df.get_column("ov1_responsible").sum() or 0)
-    ov1_compliant_count = int(df.get_column("ov1_compliant").sum() or 0)
+    ov1_conformant_count = int(df.get_column("ov1_conformant").sum() or 0)
     ov1_disconnect_support_added_count = int(
         df.get_column("ov1_disconnect_support_added").sum() or 0
     )
     los_disconnect_supported_responsible_count = (
         los_responsible_count + los_disconnect_support_added_count
     )
-    los_disconnect_supported_compliant_count = (
-        los_compliant_count + los_disconnect_support_added_count
+    los_disconnect_supported_conformant_count = (
+        los_conformant_count + los_disconnect_support_added_count
     )
     ov1_disconnect_supported_responsible_count = (
         ov1_responsible_count + ov1_disconnect_support_added_count
     )
-    ov1_disconnect_supported_compliant_count = (
-        ov1_compliant_count + ov1_disconnect_support_added_count
+    ov1_disconnect_supported_conformant_count = (
+        ov1_conformant_count + ov1_disconnect_support_added_count
     )
     disconnect_supported_responsible_count = (
         los_disconnect_supported_responsible_count
@@ -381,31 +381,31 @@ def plot_site_compliance_day(
         if overall_pass is False
         else "Unassessed"
     )
-    disconnect_supported_compliant_count = (
-        los_disconnect_supported_compliant_count
-        + ov1_disconnect_supported_compliant_count
+    disconnect_supported_conformant_count = (
+        los_disconnect_supported_conformant_count
+        + ov1_disconnect_supported_conformant_count
     )
     if disconnect_supported_responsible_count == 0:
         day_label_text = "Day total: No responsible timestamps"
         day_breakdown_text = None
     else:
         day_pct = (
-            disconnect_supported_compliant_count
+            disconnect_supported_conformant_count
             / disconnect_supported_responsible_count
         ) * 100.0
         day_state = "Pass" if day_pct >= 90.0 else "Fail"
         day_label_text = (
             f"Day total: {day_state} {day_pct:.1f}% "
-            f"({disconnect_supported_compliant_count}/"
+            f"({disconnect_supported_conformant_count}/"
             f"{disconnect_supported_responsible_count})"
         )
         day_breakdown_text = (
-            f"Base: LSO {los_compliant_count}/{los_responsible_count}, "
-            f"OV1 {ov1_compliant_count}/{ov1_responsible_count}"
+            f"Base: LSO {los_conformant_count}/{los_responsible_count}, "
+            f"OV1 {ov1_conformant_count}/{ov1_responsible_count}"
         )
         if los_disconnect_support_added_count or ov1_disconnect_support_added_count:
             day_breakdown_text = (
-                f"{day_breakdown_text} | Additional compliant: "
+                f"{day_breakdown_text} | Additional conformant: "
                 f"LSO {los_disconnect_support_added_count}, "
                 f"OV1 {ov1_disconnect_support_added_count}"
             )
@@ -726,13 +726,13 @@ def plot_method_threshold_overlay_day(
     method_status_parts = []
     for method_info in method_thresholds:
         day_eligible_ts = method_info.get("day_eligible_timestamps")
-        day_compliant_ts = method_info.get("day_compliant_timestamps")
-        day_status, day_pct = _day_status_label(day_compliant_ts, day_eligible_ts)
+        day_conformant_ts = method_info.get("day_conformant_timestamps")
+        day_status, day_pct = _day_status_label(day_conformant_ts, day_eligible_ts)
         if day_pct is not None:
             method_status_parts.append(
                 f'{method_info["label"]}: site {method_info["status"]} | '
                 f'day {day_status} {day_pct:.1f}% '
-                f'({int(day_compliant_ts)}/{int(day_eligible_ts)} ts)'
+                f'({int(day_conformant_ts)}/{int(day_eligible_ts)} ts)'
             )
         else:
             method_status_parts.append(

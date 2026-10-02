@@ -72,29 +72,29 @@ iceberg_exec("""
         los_lowest_disconnect_threshold_used DOUBLE,
         ov1_lowest_disconnect_threshold_used DOUBLE,
         los_calculated_responsible_count BIGINT,
-        los_calculated_compliant_count BIGINT,
+        los_calculated_conformant_count BIGINT,
         ov1_calculated_responsible_count BIGINT,
-        ov1_calculated_compliant_count BIGINT,
+        ov1_calculated_conformant_count BIGINT,
         overall_calculated_responsible_count BIGINT,
-        overall_calculated_compliant_count BIGINT,
+        overall_calculated_conformant_count BIGINT,
         calculated_disconnected_below_threshold_count BIGINT,
         calculated_disconnected_unknown_voltage_count BIGINT,
         los_disconnect_support_added_count BIGINT,
         ov1_disconnect_support_added_count BIGINT,
         los_disconnect_supported_responsible_count BIGINT,
-        los_disconnect_supported_compliant_count BIGINT,
+        los_disconnect_supported_conformant_count BIGINT,
         ov1_disconnect_supported_responsible_count BIGINT,
-        ov1_disconnect_supported_compliant_count BIGINT,
+        ov1_disconnect_supported_conformant_count BIGINT,
         overall_disconnect_supported_responsible_count BIGINT,
-        overall_disconnect_supported_compliant_count BIGINT,
+        overall_disconnect_supported_conformant_count BIGINT,
         disconnect_supported_disconnected_below_threshold_count BIGINT,
         disconnect_supported_disconnected_unknown_voltage_count BIGINT,
         los_lowest_disconnect_responsible_count BIGINT,
-        los_lowest_disconnect_compliant_count BIGINT,
+        los_lowest_disconnect_conformant_count BIGINT,
         ov1_lowest_disconnect_responsible_count BIGINT,
-        ov1_lowest_disconnect_compliant_count BIGINT,
+        ov1_lowest_disconnect_conformant_count BIGINT,
         overall_lowest_disconnect_responsible_count BIGINT,
-        overall_lowest_disconnect_compliant_count BIGINT,
+        overall_lowest_disconnect_conformant_count BIGINT,
         lowest_disconnect_disconnected_below_threshold_count BIGINT,
         lowest_disconnect_disconnected_unknown_voltage_count BIGINT
     )
@@ -430,13 +430,13 @@ try:
             )
 
             calculated_timestamp_detail = phase_b_calculated[
-                "site_compliance_timestamp_detail"
+                "site_conformance_timestamp_detail"
             ]
             disconnect_supported_timestamp_detail = phase_b_disconnect_supported[
-                "site_compliance_timestamp_detail"
+                "site_conformance_timestamp_detail"
             ]
             lowest_disconnect_timestamp_detail = phase_b_lowest_disconnect[
-                "site_compliance_timestamp_detail"
+                "site_conformance_timestamp_detail"
             ]
             if calculated_timestamp_detail.is_empty():
                 continue
@@ -449,18 +449,18 @@ try:
                         .sum()
                         .cast(pl.Int64)
                         .alias("los_calculated_responsible_count"),
-                        pl.col("los_compliant")
+                        pl.col("los_conformant")
                         .sum()
                         .cast(pl.Int64)
-                        .alias("los_calculated_compliant_count"),
+                        .alias("los_calculated_conformant_count"),
                         pl.col("ov1_responsible")
                         .sum()
                         .cast(pl.Int64)
                         .alias("ov1_calculated_responsible_count"),
-                        pl.col("ov1_compliant")
+                        pl.col("ov1_conformant")
                         .sum()
                         .cast(pl.Int64)
-                        .alias("ov1_calculated_compliant_count"),
+                        .alias("ov1_calculated_conformant_count"),
                         pl.col("disconnected_below_threshold")
                         .sum()
                         .cast(pl.Int64)
@@ -478,9 +478,9 @@ try:
                             + pl.col("ov1_calculated_responsible_count")
                         ).alias("overall_calculated_responsible_count"),
                         (
-                            pl.col("los_calculated_compliant_count")
-                            + pl.col("ov1_calculated_compliant_count")
-                        ).alias("overall_calculated_compliant_count"),
+                            pl.col("los_calculated_conformant_count")
+                            + pl.col("ov1_calculated_conformant_count")
+                        ).alias("overall_calculated_conformant_count"),
                     ]
                 )
             )
@@ -503,11 +503,11 @@ try:
                         .sum()
                         .alias("los_disconnect_supported_responsible_count"),
                         (
-                            pl.col("los_compliant").cast(pl.Int64)
+                            pl.col("los_conformant").cast(pl.Int64)
                             + pl.col("los_disconnect_support_added").cast(pl.Int64)
                         )
                         .sum()
-                        .alias("los_disconnect_supported_compliant_count"),
+                        .alias("los_disconnect_supported_conformant_count"),
                         (
                             pl.col("ov1_responsible").cast(pl.Int64)
                             + pl.col("ov1_disconnect_support_added").cast(pl.Int64)
@@ -515,11 +515,11 @@ try:
                         .sum()
                         .alias("ov1_disconnect_supported_responsible_count"),
                         (
-                            pl.col("ov1_compliant").cast(pl.Int64)
+                            pl.col("ov1_conformant").cast(pl.Int64)
                             + pl.col("ov1_disconnect_support_added").cast(pl.Int64)
                         )
                         .sum()
-                        .alias("ov1_disconnect_supported_compliant_count"),
+                        .alias("ov1_disconnect_supported_conformant_count"),
                         pl.col("disconnected_below_threshold")
                         .sum()
                         .cast(pl.Int64)
@@ -541,9 +541,9 @@ try:
                             + pl.col("ov1_disconnect_supported_responsible_count")
                         ).alias("overall_disconnect_supported_responsible_count"),
                         (
-                            pl.col("los_disconnect_supported_compliant_count")
-                            + pl.col("ov1_disconnect_supported_compliant_count")
-                        ).alias("overall_disconnect_supported_compliant_count"),
+                            pl.col("los_disconnect_supported_conformant_count")
+                            + pl.col("ov1_disconnect_supported_conformant_count")
+                        ).alias("overall_disconnect_supported_conformant_count"),
                     ]
                 )
             )
@@ -555,18 +555,18 @@ try:
                         .sum()
                         .cast(pl.Int64)
                         .alias("los_lowest_disconnect_responsible_count"),
-                        pl.col("los_compliant")
+                        pl.col("los_conformant")
                         .sum()
                         .cast(pl.Int64)
-                        .alias("los_lowest_disconnect_compliant_count"),
+                        .alias("los_lowest_disconnect_conformant_count"),
                         pl.col("ov1_responsible")
                         .sum()
                         .cast(pl.Int64)
                         .alias("ov1_lowest_disconnect_responsible_count"),
-                        pl.col("ov1_compliant")
+                        pl.col("ov1_conformant")
                         .sum()
                         .cast(pl.Int64)
-                        .alias("ov1_lowest_disconnect_compliant_count"),
+                        .alias("ov1_lowest_disconnect_conformant_count"),
                         pl.col("disconnected_below_threshold")
                         .sum()
                         .cast(pl.Int64)
@@ -584,17 +584,17 @@ try:
                             + pl.col("ov1_lowest_disconnect_responsible_count")
                         ).alias("overall_lowest_disconnect_responsible_count"),
                         (
-                            pl.col("los_lowest_disconnect_compliant_count")
-                            + pl.col("ov1_lowest_disconnect_compliant_count")
-                        ).alias("overall_lowest_disconnect_compliant_count"),
+                            pl.col("los_lowest_disconnect_conformant_count")
+                            + pl.col("ov1_lowest_disconnect_conformant_count")
+                        ).alias("overall_lowest_disconnect_conformant_count"),
                     ]
                 )
             )
-            calculated_site_compliance = phase_b_calculated[
-                "site_compliance"
+            calculated_site_conformance = phase_b_calculated[
+                "site_conformance"
             ].to_dicts()[0]
-            lowest_site_compliance = phase_b_lowest_disconnect[
-                "site_compliance"
+            lowest_site_conformance = phase_b_lowest_disconnect[
+                "site_conformance"
             ].to_dicts()[0]
             daily_conformance = (
                 daily_calculated.join(
@@ -614,27 +614,27 @@ try:
                         pl.col("event_day").dt.day().cast(pl.Int32).alias("day"),
                         pl.lit(PRIMARY_PHASE_B_METHOD).alias("threshold_method"),
                         pl.lit(
-                            calculated_site_compliance["los_threshold_used"],
+                            calculated_site_conformance["los_threshold_used"],
                             dtype=pl.Float64,
                         ).alias("los_calculated_threshold_used"),
                         pl.lit(
-                            calculated_site_compliance["ov1_threshold_used"],
+                            calculated_site_conformance["ov1_threshold_used"],
                             dtype=pl.Float64,
                         ).alias("ov1_calculated_threshold_used"),
                         pl.lit(
-                            calculated_site_compliance["los_lowest_disconnect_voltage"],
+                            calculated_site_conformance["los_lowest_disconnect_voltage"],
                             dtype=pl.Float64,
                         ).alias("los_lowest_disconnect_voltage"),
                         pl.lit(
-                            calculated_site_compliance["ov1_lowest_disconnect_voltage"],
+                            calculated_site_conformance["ov1_lowest_disconnect_voltage"],
                             dtype=pl.Float64,
                         ).alias("ov1_lowest_disconnect_voltage"),
                         pl.lit(
-                            lowest_site_compliance["los_threshold_used"],
+                            lowest_site_conformance["los_threshold_used"],
                             dtype=pl.Float64,
                         ).alias("los_lowest_disconnect_threshold_used"),
                         pl.lit(
-                            lowest_site_compliance["ov1_threshold_used"],
+                            lowest_site_conformance["ov1_threshold_used"],
                             dtype=pl.Float64,
                         ).alias("ov1_lowest_disconnect_threshold_used"),
                     ]
@@ -653,29 +653,29 @@ try:
                         "los_lowest_disconnect_threshold_used",
                         "ov1_lowest_disconnect_threshold_used",
                         "los_calculated_responsible_count",
-                        "los_calculated_compliant_count",
+                        "los_calculated_conformant_count",
                         "ov1_calculated_responsible_count",
-                        "ov1_calculated_compliant_count",
+                        "ov1_calculated_conformant_count",
                         "overall_calculated_responsible_count",
-                        "overall_calculated_compliant_count",
+                        "overall_calculated_conformant_count",
                         "calculated_disconnected_below_threshold_count",
                         "calculated_disconnected_unknown_voltage_count",
                         "los_disconnect_support_added_count",
                         "ov1_disconnect_support_added_count",
                         "los_disconnect_supported_responsible_count",
-                        "los_disconnect_supported_compliant_count",
+                        "los_disconnect_supported_conformant_count",
                         "ov1_disconnect_supported_responsible_count",
-                        "ov1_disconnect_supported_compliant_count",
+                        "ov1_disconnect_supported_conformant_count",
                         "overall_disconnect_supported_responsible_count",
-                        "overall_disconnect_supported_compliant_count",
+                        "overall_disconnect_supported_conformant_count",
                         "disconnect_supported_disconnected_below_threshold_count",
                         "disconnect_supported_disconnected_unknown_voltage_count",
                         "los_lowest_disconnect_responsible_count",
-                        "los_lowest_disconnect_compliant_count",
+                        "los_lowest_disconnect_conformant_count",
                         "ov1_lowest_disconnect_responsible_count",
-                        "ov1_lowest_disconnect_compliant_count",
+                        "ov1_lowest_disconnect_conformant_count",
                         "overall_lowest_disconnect_responsible_count",
-                        "overall_lowest_disconnect_compliant_count",
+                        "overall_lowest_disconnect_conformant_count",
                         "lowest_disconnect_disconnected_below_threshold_count",
                         "lowest_disconnect_disconnected_unknown_voltage_count",
                     ]

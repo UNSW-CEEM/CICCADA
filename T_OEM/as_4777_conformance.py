@@ -70,3 +70,21 @@ def volt_watt_conformance(
             "conformant": pl.Boolean,
         },
     )
+
+def passive_anti_islanding(    
+    site_telemetry: pl.DataFrame,
+    system_power_kw_ac: float,
+    min_eligible_timestamps: int = 1,
+) -> pl.DataFrame:
+
+
+    return 1
+
+def passive_anti_islanding(    
+    site_telemetry: pl.DataFrame,
+    system_power_kw_ac: float,
+    min_eligible_timestamps: int = 1,
+) -> pl.DataFrame:
+
+
+    return 1

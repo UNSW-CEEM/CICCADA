@@ -8,14 +8,14 @@ from sapn2022_workflow.plotting import (
     plot_site_threshold_distribution_extremes,
 )
 
-SITE_COMPLIANCE_NAME = "site_compliance.csv"
-SITE_COMPLIANCE_FINAL_TABLE_NAME = "site_compliance_final_table.csv"
-SITE_COMPLIANCE_TIME_DISTRIBUTION_NAME = "site_compliance_time_distribution.csv"
-SITE_COMPLIANCE_TOD_DISTRIBUTION_NAME = "site_compliance_tod_distribution.csv"
+SITE_CONFORMANCE_NAME = "site_conformance.csv"
+SITE_CONFORMANCE_FINAL_TABLE_NAME = "site_conformance_final_table.csv"
+SITE_CONFORMANCE_TIME_DISTRIBUTION_NAME = "site_conformance_time_distribution.csv"
+SITE_CONFORMANCE_TOD_DISTRIBUTION_NAME = "site_conformance_tod_distribution.csv"
 SITE_LEVEL_VARIOUS_VOLTAGES_NAME = "site_level_various_voltages.csv"
 CONFORMANCE_EXCLUSIONS_NAME = "conformance_exclusions.csv"
 
-SITE_COMPLIANCE_SCHEMA = {
+SITE_CONFORMANCE_SCHEMA = {
     "site_id": pl.Int64,
     "threshold_method": pl.Utf8,
     "los_calculated_threshold_used": pl.Float64,
@@ -25,56 +25,56 @@ SITE_COMPLIANCE_SCHEMA = {
     "los_lowest_disconnect_threshold_used": pl.Float64,
     "ov1_lowest_disconnect_threshold_used": pl.Float64,
     "los_calculated_responsible_count": pl.Int64,
-    "los_calculated_compliant_count": pl.Int64,
-    "los_calculated_compliance_pct": pl.Float64,
+    "los_calculated_conformant_count": pl.Int64,
+    "los_calculated_conformance_pct": pl.Float64,
     "los_calculated_pass": pl.Boolean,
     "ov1_calculated_responsible_count": pl.Int64,
-    "ov1_calculated_compliant_count": pl.Int64,
-    "ov1_calculated_compliance_pct": pl.Float64,
+    "ov1_calculated_conformant_count": pl.Int64,
+    "ov1_calculated_conformance_pct": pl.Float64,
     "ov1_calculated_pass": pl.Boolean,
     "overall_calculated_responsible_count": pl.Int64,
-    "overall_calculated_compliant_count": pl.Int64,
-    "overall_calculated_compliance_pct": pl.Float64,
+    "overall_calculated_conformant_count": pl.Int64,
+    "overall_calculated_conformance_pct": pl.Float64,
     "overall_calculated_pass": pl.Boolean,
     "los_disconnect_support_added_count": pl.Int64,
     "ov1_disconnect_support_added_count": pl.Int64,
     "los_disconnect_supported_responsible_count": pl.Int64,
-    "los_disconnect_supported_compliant_count": pl.Int64,
-    "los_disconnect_supported_compliance_pct": pl.Float64,
+    "los_disconnect_supported_conformant_count": pl.Int64,
+    "los_disconnect_supported_conformance_pct": pl.Float64,
     "los_disconnect_supported_pass": pl.Boolean,
     "ov1_disconnect_supported_responsible_count": pl.Int64,
-    "ov1_disconnect_supported_compliant_count": pl.Int64,
-    "ov1_disconnect_supported_compliance_pct": pl.Float64,
+    "ov1_disconnect_supported_conformant_count": pl.Int64,
+    "ov1_disconnect_supported_conformance_pct": pl.Float64,
     "ov1_disconnect_supported_pass": pl.Boolean,
     "overall_disconnect_supported_responsible_count": pl.Int64,
-    "overall_disconnect_supported_compliant_count": pl.Int64,
-    "overall_disconnect_supported_compliance_pct": pl.Float64,
+    "overall_disconnect_supported_conformant_count": pl.Int64,
+    "overall_disconnect_supported_conformance_pct": pl.Float64,
     "overall_disconnect_supported_pass": pl.Boolean,
-    "overall_compliance_category": pl.Utf8,
+    "overall_conformance_category": pl.Utf8,
     "los_lowest_disconnect_responsible_count": pl.Int64,
-    "los_lowest_disconnect_compliant_count": pl.Int64,
-    "los_lowest_disconnect_compliance_pct": pl.Float64,
+    "los_lowest_disconnect_conformant_count": pl.Int64,
+    "los_lowest_disconnect_conformance_pct": pl.Float64,
     "los_lowest_disconnect_pass": pl.Boolean,
     "ov1_lowest_disconnect_responsible_count": pl.Int64,
-    "ov1_lowest_disconnect_compliant_count": pl.Int64,
-    "ov1_lowest_disconnect_compliance_pct": pl.Float64,
+    "ov1_lowest_disconnect_conformant_count": pl.Int64,
+    "ov1_lowest_disconnect_conformance_pct": pl.Float64,
     "ov1_lowest_disconnect_pass": pl.Boolean,
     "overall_lowest_disconnect_responsible_count": pl.Int64,
-    "overall_lowest_disconnect_compliant_count": pl.Int64,
-    "overall_lowest_disconnect_compliance_pct": pl.Float64,
+    "overall_lowest_disconnect_conformant_count": pl.Int64,
+    "overall_lowest_disconnect_conformance_pct": pl.Float64,
     "overall_lowest_disconnect_pass": pl.Boolean,
 }
 
-SITE_COMPLIANCE_TIME_DISTRIBUTION_SCHEMA = {
+SITE_CONFORMANCE_TIME_DISTRIBUTION_SCHEMA = {
     "site_id": pl.Int64,
     "threshold_method": pl.Utf8,
     "case": pl.Utf8,
     "eligible_timestamp_count": pl.Int64,
-    "compliant_timestamp_count": pl.Int64,
+    "conformant_timestamp_count": pl.Int64,
     "disconnect_support_timestamp_count": pl.Int64,
-    "non_compliant_timestamp_count": pl.Int64,
-    "compliant_pct": pl.Float64,
-    "non_compliant_pct": pl.Float64,
+    "non_conformant_timestamp_count": pl.Int64,
+    "conformant_pct": pl.Float64,
+    "non_conformant_pct": pl.Float64,
     "disconnected_below_threshold_count": pl.Int64,
     "disconnected_unknown_voltage_count": pl.Int64,
 }
@@ -137,51 +137,51 @@ def add_disconnect_voltage_lists(site_summary, phase_a_records):
     )
 
 
-def build_sapn_site_compliance(results):
-    site_compliance = results["site_compliance"]
+def build_sapn_site_conformance(results):
+    site_conformance = results["site_conformance"]
     site_thresholds = results["site_thresholds"]
-    if site_compliance.is_empty() and site_thresholds.is_empty():
-        return pl.DataFrame(schema=SITE_COMPLIANCE_SCHEMA)
-    if site_compliance.is_empty() or site_thresholds.is_empty():
+    if site_conformance.is_empty() and site_thresholds.is_empty():
+        return pl.DataFrame(schema=SITE_CONFORMANCE_SCHEMA)
+    if site_conformance.is_empty() or site_thresholds.is_empty():
         raise ValueError(
-            "SAPN compliance and threshold tables must contain the same sites."
+            "SAPN conformance and threshold tables must contain the same sites."
         )
 
-    combined_site_ids = site_compliance.select("site_id").join(
+    combined_site_ids = site_conformance.select("site_id").join(
         site_thresholds.select("site_id"),
         on="site_id",
         how="inner",
         validate="1:1",
     )
     if (
-        combined_site_ids.height != site_compliance.height
+        combined_site_ids.height != site_conformance.height
         or combined_site_ids.height != site_thresholds.height
     ):
         raise ValueError(
-            "SAPN compliance and threshold tables have different site IDs."
+            "SAPN conformance and threshold tables have different site IDs."
         )
 
     return (
-        site_compliance.with_columns(
+        site_conformance.with_columns(
             pl.when(
                 pl.col("overall_disconnect_supported_pass").eq(True)
                 & pl.col("overall_calculated_pass").eq(True)
             )
-            .then(pl.lit("compliant"))
+            .then(pl.lit("conformant"))
             .when(pl.col("overall_disconnect_supported_pass").eq(True))
-            .then(pl.lit("compliant_erratic"))
+            .then(pl.lit("conformant_erratic"))
             .when(pl.col("overall_disconnect_supported_pass").eq(False))
-            .then(pl.lit("non_compliant"))
+            .then(pl.lit("non_conformant"))
             .otherwise(pl.lit("unassessed"))
-            .alias("overall_compliance_category")
+            .alias("overall_conformance_category")
         )
-        .select(list(SITE_COMPLIANCE_SCHEMA))
-        .cast(SITE_COMPLIANCE_SCHEMA, strict=False)
+        .select(list(SITE_CONFORMANCE_SCHEMA))
+        .cast(SITE_CONFORMANCE_SCHEMA, strict=False)
         .sort("site_id")
     )
 
 
-def build_site_compliance_tod_distribution(timestamp_detail):
+def build_site_conformance_tod_distribution(timestamp_detail):
     """Build per-site timestamp counts in right-closed five-minute TOD bins."""
     return (
         timestamp_detail.with_columns(
@@ -201,8 +201,8 @@ def build_site_compliance_tod_distribution(timestamp_detail):
                     pl.col("los_disconnect_support_added")
                     | pl.col("ov1_disconnect_support_added")
                 ).alias("_disconnect_support"),
-                (pl.col("los_compliant") | pl.col("ov1_compliant")).alias(
-                    "_base_compliant"
+                (pl.col("los_conformant") | pl.col("ov1_conformant")).alias(
+                    "_base_conformant"
                 ),
             ]
         )
@@ -224,17 +224,17 @@ def build_site_compliance_tod_distribution(timestamp_detail):
                 .cast(pl.Int64)
                 .alias("disconnect_support_timestamp_count"),
                 (
-                    pl.col("_base_compliant").sum()
+                    pl.col("_base_conformant").sum()
                     + pl.col("_disconnect_support").sum()
                 )
                 .cast(pl.Int64)
-                .alias("compliant_timestamp_count"),
+                .alias("conformant_timestamp_count"),
                 (
                     pl.col("_eligible_threshold").sum()
-                    - pl.col("_base_compliant").sum()
+                    - pl.col("_base_conformant").sum()
                 )
                 .cast(pl.Int64)
-                .alias("non_compliant_timestamp_count"),
+                .alias("non_conformant_timestamp_count"),
                 pl.col("disconnected_below_threshold")
                 .sum()
                 .cast(pl.Int64)
@@ -268,8 +268,8 @@ def build_site_compliance_tod_distribution(timestamp_detail):
                 "eligible_timestamp_count",
                 "eligible_threshold_timestamp_count",
                 "disconnect_support_timestamp_count",
-                "compliant_timestamp_count",
-                "non_compliant_timestamp_count",
+                "conformant_timestamp_count",
+                "non_conformant_timestamp_count",
                 "disconnected_below_threshold_count",
                 "disconnected_unknown_voltage_count",
                 "large_negative_power_timestamp_count",
@@ -282,9 +282,9 @@ def build_site_compliance_tod_distribution(timestamp_detail):
     )
 
 
-def build_method_compliance_final_table(site_compliance):
+def build_method_conformance_final_table(site_conformance):
     calculated = (
-        site_compliance.group_by("threshold_method", maintain_order=True)
+        site_conformance.group_by("threshold_method", maintain_order=True)
         .agg(
             [
                 pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
@@ -312,7 +312,7 @@ def build_method_compliance_final_table(site_compliance):
         .with_columns(pl.lit("calculated").alias("Case"))
     )
     disconnect_supported = (
-        site_compliance.group_by("threshold_method", maintain_order=True)
+        site_conformance.group_by("threshold_method", maintain_order=True)
         .agg(
             [
                 pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
@@ -324,12 +324,12 @@ def build_method_compliance_final_table(site_compliance):
                 .is_null()
                 .sum()
                 .alias("Unassessed Sites"),
-                pl.col("overall_compliance_category")
-                .eq("compliant")
+                pl.col("overall_conformance_category")
+                .eq("conformant")
                 .sum()
                 .alias("Conformant Sites"),
-                pl.col("overall_compliance_category")
-                .eq("compliant_erratic")
+                pl.col("overall_conformance_category")
+                .eq("conformant_erratic")
                 .sum()
                 .alias("Conformant (Erratic) Sites"),
                 pl.col("overall_disconnect_supported_pass")
@@ -342,7 +342,7 @@ def build_method_compliance_final_table(site_compliance):
         .with_columns(pl.lit("disconnect_supported").alias("Case"))
     )
     lowest_disconnect = (
-        site_compliance.group_by("threshold_method", maintain_order=True)
+        site_conformance.group_by("threshold_method", maintain_order=True)
         .agg(
             [
                 pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),

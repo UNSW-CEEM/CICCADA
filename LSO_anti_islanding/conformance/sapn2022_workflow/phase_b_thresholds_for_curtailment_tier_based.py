@@ -1,4 +1,4 @@
-"""Build tier-based curtailment extracts from saved site compliance.
+"""Build tier-based curtailment extracts from saved site conformance.
 
 This script produces two reporting tables:
 
@@ -9,12 +9,12 @@ This script produces two reporting tables:
 
 Inputs come from three places:
 
-- ``site_compliance.csv`` for the assessed tier-based site list and
+- ``site_conformance.csv`` for the assessed tier-based site list and
   final LOS/OV1 thresholds
 - the cleaned metrology parquet plus ``circuit_details.csv`` so site-level
   power and voltage can be rebuilt from the underlying circuit data
 
-Important difference from ``site_compliance_timestamp_detail``:
+Important difference from ``site_conformance_timestamp_detail``:
 
 - this script does *not* read that file
 - it rebuilds the timestamp flags directly from cleaned metrology
@@ -47,7 +47,7 @@ from sapn2022_workflow.config import (
     PRIMARY_PHASE_B_METHOD,
 )
 from sapn2022_workflow.loading import load_sapn_cleaned_data
-from sapn2022_workflow.reporting import SITE_COMPLIANCE_NAME
+from sapn2022_workflow.reporting import SITE_CONFORMANCE_NAME
 from sapn2022_workflow.sapn_paths import (
     CIRCUIT_DETAILS_PATH,
     CLEANED_SITE_DATA_PATH,
@@ -61,7 +61,7 @@ from sapn2022_workflow.site_preparation import (
     trim_site_day_analysis_window,
 )
 
-SITE_COMPLIANCE_PATH = CONFORMANCE_OUTPUT_DIR / SITE_COMPLIANCE_NAME
+SITE_CONFORMANCE_PATH = CONFORMANCE_OUTPUT_DIR / SITE_CONFORMANCE_NAME
 CLEANED_DATA_PATH = CLEANED_SITE_DATA_PATH  # this is the cleaned circuit data parquet
 OUTPUT_DIR = (
     CONFORMANCE_DIR / "updated results" / "phase b info for curtailment" / "tier based"
@@ -100,13 +100,13 @@ BUCKET_OUTPUT_SCHEMA = {
 
 def _load_assessed_sites() -> pl.DataFrame:
     """Load assessed sites plus the thresholds needed to rebuild curtailment flags."""
-    if not SITE_COMPLIANCE_PATH.exists():
+    if not SITE_CONFORMANCE_PATH.exists():
         raise FileNotFoundError(
-            f"Missing required input: {SITE_COMPLIANCE_PATH}. Run conformance "
-            "first to generate site compliance."
+            f"Missing required input: {SITE_CONFORMANCE_PATH}. Run conformance "
+            "first to generate site conformance."
         )
 
-    compliance_df = pl.read_csv(SITE_COMPLIANCE_PATH, null_values=[""])
+    conformance_df = pl.read_csv(SITE_CONFORMANCE_PATH, null_values=[""])
     required_columns = {
         "site_id",
         "threshold_method",
@@ -114,14 +114,14 @@ def _load_assessed_sites() -> pl.DataFrame:
         "los_calculated_threshold_used",
         "ov1_calculated_threshold_used",
     }
-    missing_columns = required_columns.difference(compliance_df.columns)
+    missing_columns = required_columns.difference(conformance_df.columns)
     if missing_columns:
         raise ValueError(
-            "Site compliance is missing required columns: " f"{sorted(missing_columns)}"
+            "Site conformance is missing required columns: " f"{sorted(missing_columns)}"
         )
 
     assessed_sites = (
-        compliance_df.filter(
+        conformance_df.filter(
             (pl.col("threshold_method") == PRIMARY_PHASE_B_METHOD)
             & pl.col("overall_disconnect_supported_pass").is_not_null()
         )
@@ -144,7 +144,7 @@ def _load_assessed_sites() -> pl.DataFrame:
 
     if assessed_sites["site_id"].n_unique() != assessed_sites.height:
         raise ValueError(
-            "Site compliance contains duplicate assessed tier-based sites."
+            "Site conformance contains duplicate assessed tier-based sites."
         )
 
     missing_thresholds = assessed_sites.filter(
