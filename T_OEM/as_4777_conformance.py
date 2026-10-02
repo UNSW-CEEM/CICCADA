@@ -71,16 +71,78 @@ def volt_watt_conformance(
         },
     )
 
-def passive_anti_islanding(    
+
+def passive_anti_islanding(
     site_telemetry: pl.DataFrame,
     system_power_kw_ac: float,
     min_eligible_timestamps: int = 1,
 ) -> pl.DataFrame:
+    """Return site-level passive anti-islanding conformance."""
+    scored_telemetry = (
+        site_telemetry.sort("timestamp")
+        .with_columns(
+            (pl.col("inverter_ac_real_power") / 1000.0).alias(
+                "inverter_ac_real_power_kw"
+            ),
+            (pl.col("inverter_ac_real_power").shift(-1) / 1000.0).alias(
+                "next_inverter_ac_real_power_kw"
+            ),
+            (pl.col("timestamp").shift(-1) - pl.col("timestamp"))
+            .dt.total_seconds()
+            .alias("seconds_to_next_timestamp"),
+        )
+        .filter(
+            (pl.col("grid_voltage") >= 265.0)
+            & pl.col("grid_voltage").is_not_null()
+            & pl.col("inverter_ac_real_power").is_not_null()
+        )
+        .with_columns(
+            (
+                (pl.col("inverter_ac_real_power_kw") <= 0.04 * system_power_kw_ac)
+                | (
+                    pl.col("next_inverter_ac_real_power_kw").is_not_null()
+                    & pl.col("seconds_to_next_timestamp").is_not_null()
+                    & (pl.col("seconds_to_next_timestamp") <= 60)
+                    & (
+                        pl.col("next_inverter_ac_real_power_kw")
+                        <= 0.04 * system_power_kw_ac
+                    )
+                )
+            )
+            .fill_null(False)
+            .alias("conformant")
+        )
+    )
+
+    num_eligible_timestamps = scored_telemetry.height
+    num_conformant_timestamps = scored_telemetry["conformant"].sum()
+
+    if num_eligible_timestamps < min_eligible_timestamps:
+        conformant_percentage = None
+        conformant = None
+    else:
+        conformant_percentage = (
+            100.0 * num_conformant_timestamps / num_eligible_timestamps
+        )
+        conformant = conformant_percentage >= 90.0
+
+    return pl.DataFrame(
+        {
+            "num_eligible_timestamps": [num_eligible_timestamps],
+            "num_conformant_timestamps": [num_conformant_timestamps],
+            "conformant_percentage": [conformant_percentage],
+            "conformant": [conformant],
+        },
+        schema={
+            "num_eligible_timestamps": pl.Int64,
+            "num_conformant_timestamps": pl.Int64,
+            "conformant_percentage": pl.Float64,
+            "conformant": pl.Boolean,
+        },
+    )
 
 
-    return 1
-
-def passive_anti_islanding(    
+def limit_for_sustained_operation(
     site_telemetry: pl.DataFrame,
     system_power_kw_ac: float,
     min_eligible_timestamps: int = 1,
