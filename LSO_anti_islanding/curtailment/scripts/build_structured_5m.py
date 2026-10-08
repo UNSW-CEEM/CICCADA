@@ -89,9 +89,7 @@ SAPN_CLEANED_DATA_PATH = (
     SAPN_ROOT / "Nov2022" / "ebm_1_20221112_20221119_data_cleaned_sa.parquet"
 )
 SAPN2022_TRAIN_SITE_METADATA_PATH = SAPN2022_TRAIN_ROOT / "site_metadata.csv"
-SAPN2022_TRAIN_CIRCUIT_METADATA_PATH = (
-    SAPN2022_TRAIN_ROOT / "circuit_metadata.csv"
-)
+SAPN2022_TRAIN_CIRCUIT_METADATA_PATH = SAPN2022_TRAIN_ROOT / "circuit_metadata.csv"
 SAPN2022_TRAIN_DATA_DIR = SAPN2022_TRAIN_ROOT / "curtailment training data parquet"
 SITE_COHORT_CSV = PROJECT_ROOT / "confidence_tier_site_ids.csv"
 USE_SITE_COHORT = True

@@ -187,16 +187,16 @@ def build_site_conformance_tod_distribution(timestamp_detail):
         timestamp_detail.with_columns(
             [
                 (
-                    (
-                        pl.col("local_tstamp") - pl.duration(microseconds=1)
-                    ).dt.truncate("5m")
+                    (pl.col("local_tstamp") - pl.duration(microseconds=1)).dt.truncate(
+                        "5m"
+                    )
                     + pl.duration(minutes=5)
                 )
                 .dt.strftime("%H:%M")
                 .alias("time_of_day_bin"),
-                (
-                    pl.col("los_responsible") | pl.col("ov1_responsible")
-                ).alias("_eligible_threshold"),
+                (pl.col("los_responsible") | pl.col("ov1_responsible")).alias(
+                    "_eligible_threshold"
+                ),
                 (
                     pl.col("los_disconnect_support_added")
                     | pl.col("ov1_disconnect_support_added")
@@ -223,16 +223,10 @@ def build_site_conformance_tod_distribution(timestamp_detail):
                 .sum()
                 .cast(pl.Int64)
                 .alias("disconnect_support_timestamp_count"),
-                (
-                    pl.col("_base_conformant").sum()
-                    + pl.col("_disconnect_support").sum()
-                )
+                (pl.col("_base_conformant").sum() + pl.col("_disconnect_support").sum())
                 .cast(pl.Int64)
                 .alias("conformant_timestamp_count"),
-                (
-                    pl.col("_eligible_threshold").sum()
-                    - pl.col("_base_conformant").sum()
-                )
+                (pl.col("_eligible_threshold").sum() - pl.col("_base_conformant").sum())
                 .cast(pl.Int64)
                 .alias("non_conformant_timestamp_count"),
                 pl.col("disconnected_below_threshold")
@@ -391,11 +385,7 @@ def build_method_conformance_final_table(site_conformance):
                 (pl.col("Non-Conformant Sites") / pl.col("Sites Assessed") * 100.0)
                 .round(2)
                 .alias("Non-Conformant Percentage (% of Assessed)"),
-                (
-                    pl.col("Total Conformant Sites")
-                    / pl.col("Sites Assessed")
-                    * 100.0
-                )
+                (pl.col("Total Conformant Sites") / pl.col("Sites Assessed") * 100.0)
                 .round(2)
                 .alias("Total Conformance Percentage (% of Assessed)"),
             ]

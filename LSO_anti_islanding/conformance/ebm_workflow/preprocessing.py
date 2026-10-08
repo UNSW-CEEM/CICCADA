@@ -4,7 +4,6 @@ from pathlib import Path
 
 import polars as pl
 import pyarrow.parquet as pq
-
 from ebm_workflow.data_cleaning import (
     addLocalTStamp,
     addPolarityToPower,
@@ -33,13 +32,9 @@ def write_cleaned_site_data(
     raw_path = Path(raw_path)
     if not raw_path.exists():
         raw_source_glob = Path(raw_source_glob)
-        source_files = sorted(
-            raw_source_glob.parent.glob(raw_source_glob.name)
-        )
+        source_files = sorted(raw_source_glob.parent.glob(raw_source_glob.name))
         if not source_files:
-            raise FileNotFoundError(
-                f"No raw data files match {raw_source_glob}."
-            )
+            raise FileNotFoundError(f"No raw data files match {raw_source_glob}.")
 
         source_formats = {path.suffix.lower() for path in source_files}
         if source_formats == {".csv"}:

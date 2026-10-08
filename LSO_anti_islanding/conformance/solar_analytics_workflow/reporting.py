@@ -177,42 +177,44 @@ def build_site_conformance_table(
             "overall_disconnect_supported_pass",
         ]
     )
-    lowest_disconnect_conformance = phase_b_lowest_disconnect[
-        "site_conformance"
-    ].select(
-        [
-            "los_threshold_used",
-            "ov1_threshold_used",
-            "los_responsible_count",
-            "los_conformant_count",
-            "los_conformance_pct",
-            "los_pass",
-            "ov1_responsible_count",
-            "ov1_conformant_count",
-            "ov1_conformance_pct",
-            "ov1_pass",
-            "overall_responsible_count",
-            "overall_conformant_count",
-            "overall_conformance_pct",
-            "overall_pass",
-        ]
-    ).rename(
-        {
-            "los_threshold_used": "los_lowest_disconnect_threshold_used",
-            "ov1_threshold_used": "ov1_lowest_disconnect_threshold_used",
-            "los_responsible_count": "los_lowest_disconnect_responsible_count",
-            "los_conformant_count": "los_lowest_disconnect_conformant_count",
-            "los_conformance_pct": "los_lowest_disconnect_conformance_pct",
-            "los_pass": "los_lowest_disconnect_pass",
-            "ov1_responsible_count": "ov1_lowest_disconnect_responsible_count",
-            "ov1_conformant_count": "ov1_lowest_disconnect_conformant_count",
-            "ov1_conformance_pct": "ov1_lowest_disconnect_conformance_pct",
-            "ov1_pass": "ov1_lowest_disconnect_pass",
-            "overall_responsible_count": "overall_lowest_disconnect_responsible_count",
-            "overall_conformant_count": "overall_lowest_disconnect_conformant_count",
-            "overall_conformance_pct": "overall_lowest_disconnect_conformance_pct",
-            "overall_pass": "overall_lowest_disconnect_pass",
-        }
+    lowest_disconnect_conformance = (
+        phase_b_lowest_disconnect["site_conformance"]
+        .select(
+            [
+                "los_threshold_used",
+                "ov1_threshold_used",
+                "los_responsible_count",
+                "los_conformant_count",
+                "los_conformance_pct",
+                "los_pass",
+                "ov1_responsible_count",
+                "ov1_conformant_count",
+                "ov1_conformance_pct",
+                "ov1_pass",
+                "overall_responsible_count",
+                "overall_conformant_count",
+                "overall_conformance_pct",
+                "overall_pass",
+            ]
+        )
+        .rename(
+            {
+                "los_threshold_used": "los_lowest_disconnect_threshold_used",
+                "ov1_threshold_used": "ov1_lowest_disconnect_threshold_used",
+                "los_responsible_count": "los_lowest_disconnect_responsible_count",
+                "los_conformant_count": "los_lowest_disconnect_conformant_count",
+                "los_conformance_pct": "los_lowest_disconnect_conformance_pct",
+                "los_pass": "los_lowest_disconnect_pass",
+                "ov1_responsible_count": "ov1_lowest_disconnect_responsible_count",
+                "ov1_conformant_count": "ov1_lowest_disconnect_conformant_count",
+                "ov1_conformance_pct": "ov1_lowest_disconnect_conformance_pct",
+                "ov1_pass": "ov1_lowest_disconnect_pass",
+                "overall_responsible_count": "overall_lowest_disconnect_responsible_count",
+                "overall_conformant_count": "overall_lowest_disconnect_conformant_count",
+                "overall_conformance_pct": "overall_lowest_disconnect_conformance_pct",
+                "overall_pass": "overall_lowest_disconnect_pass",
+            }
+        )
     )
     return pl.concat(
         [
@@ -263,9 +265,7 @@ def build_site_conformance_tod_distribution(timestamp_detail):
     return (
         timestamp_detail.with_columns(
             [
-                pl.col("local_tstamp")
-                .dt.strftime("%H:%M")
-                .alias("time_of_day_bin"),
+                pl.col("local_tstamp").dt.strftime("%H:%M").alias("time_of_day_bin"),
                 (pl.col("los_responsible") | pl.col("ov1_responsible")).alias(
                     "_eligible_threshold"
                 ),
@@ -295,16 +295,10 @@ def build_site_conformance_tod_distribution(timestamp_detail):
                 .sum()
                 .cast(pl.Int64)
                 .alias("disconnect_support_timestamp_count"),
-                (
-                    pl.col("_base_conformant").sum()
-                    + pl.col("_disconnect_support").sum()
-                )
+                (pl.col("_base_conformant").sum() + pl.col("_disconnect_support").sum())
                 .cast(pl.Int64)
                 .alias("conformant_timestamp_count"),
-                (
-                    pl.col("_eligible_threshold").sum()
-                    - pl.col("_base_conformant").sum()
-                )
+                (pl.col("_eligible_threshold").sum() - pl.col("_base_conformant").sum())
                 .cast(pl.Int64)
                 .alias("non_conformant_timestamp_count"),
                 pl.col("disconnected_below_threshold")

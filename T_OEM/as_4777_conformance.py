@@ -9,9 +9,9 @@ def volt_watt_conformance(
     min_eligible_timestamps: int = 1,
 ) -> pl.DataFrame:
     """Return site-level Volt-Watt conformance from interval telemetry.
-       At the moment voltages V>253 are assessed including V>=260
-       if combining with other standards, needs modification or 
-       some sort of superseding standards
+    At the moment voltages V>253 are assessed including V>=260
+    if combining with other standards, needs modification or
+    some sort of superseding standards
     """
     scored_telemetry = (
         site_telemetry.with_columns(
@@ -38,8 +38,7 @@ def volt_watt_conformance(
         )
         .with_columns(
             (
-                pl.col("inverter_ac_real_power_kw")
-                <= pl.col("volt_watt_ceiling_kw")
+                pl.col("inverter_ac_real_power_kw") <= pl.col("volt_watt_ceiling_kw")
             ).alias("conformant")
         )
     )
@@ -183,10 +182,7 @@ def limit_for_sustained_operation(
         )
         .with_columns(
             (
-                (
-                    pl.col("inverter_ac_real_power_kw")
-                    <= 0.04 * system_power_kw_ac
-                )
+                (pl.col("inverter_ac_real_power_kw") <= 0.04 * system_power_kw_ac)
                 | (
                     pl.col("next_inverter_ac_real_power_kw").is_not_null()
                     & pl.col("seconds_to_next_timestamp").is_not_null()
@@ -303,10 +299,7 @@ def combined_conformance(
                     pl.col("_next_inverter_ac_real_power").is_not_null()
                     & pl.col("_seconds_to_next_timestamp").is_not_null()
                     & (pl.col("_seconds_to_next_timestamp") <= 60)
-                    & (
-                        pl.col("_next_inverter_ac_real_power")
-                        <= tolerance_w
-                    )
+                    & (pl.col("_next_inverter_ac_real_power") <= tolerance_w)
                 )
             )
             .otherwise(None)
@@ -319,10 +312,7 @@ def combined_conformance(
                     pl.col("_next_inverter_ac_real_power").is_not_null()
                     & pl.col("_seconds_to_next_timestamp").is_not_null()
                     & (pl.col("_seconds_to_next_timestamp") <= 60)
-                    & (
-                        pl.col("_next_inverter_ac_real_power")
-                        <= tolerance_w
-                    )
+                    & (pl.col("_next_inverter_ac_real_power") <= tolerance_w)
                 )
             )
             .otherwise(None)
@@ -340,11 +330,7 @@ def combined_conformance(
                     system_power_kw_ac
                     * 1000.0
                     * pl.when(pl.col("grid_voltage") < 260.0)
-                    .then(
-                        1.0
-                        - (pl.col("grid_voltage") - 253.0)
-                        * (0.8 / 7.0)
-                    )
+                    .then(1.0 - (pl.col("grid_voltage") - 253.0) * (0.8 / 7.0))
                     .otherwise(0.2)
                     + tolerance_w
                 )
@@ -398,18 +384,12 @@ def combined_conformance(
     scored_telemetry = scored_telemetry.with_columns(
         pl.when(
             pl.any_horizontal(
-                [
-                    pl.col(column).is_not_null()
-                    for column in component_result_columns
-                ]
+                [pl.col(column).is_not_null() for column in component_result_columns]
             )
         )
         .then(
             pl.all_horizontal(
-                [
-                    pl.col(column).fill_null(True)
-                    for column in component_result_columns
-                ]
+                [pl.col(column).fill_null(True) for column in component_result_columns]
             )
         )
         .otherwise(None)

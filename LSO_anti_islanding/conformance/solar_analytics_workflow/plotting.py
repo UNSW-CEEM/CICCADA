@@ -238,9 +238,7 @@ def plot_site_conformance_day(
                 zorder=0,
                 linewidth=0,
             )
-        if base_responsible_mask is not None and bool(
-            np.any(base_responsible_mask)
-        ):
+        if base_responsible_mask is not None and bool(np.any(base_responsible_mask)):
             axis.fill_between(
                 x,
                 0,
@@ -485,9 +483,7 @@ def plot_site_conformance_day(
                     legend_entries[label] = handle
 
     if base_responsible_mask is not None and bool(np.any(base_responsible_mask)):
-        legend_entries[
-            "Timestamps at/above calculated threshold (LOS/OV1)"
-        ] = Patch(
+        legend_entries["Timestamps at/above calculated threshold (LOS/OV1)"] = Patch(
             facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none"
         )
     if additional_responsible_mask is not None and bool(
@@ -495,9 +491,7 @@ def plot_site_conformance_day(
     ):
         legend_entries[
             "Additional disconnected timestamps at/above lowest-disconnect value"
-        ] = Patch(
-            facecolor=PLOT_COLORS["shade_extra"], alpha=0.18, edgecolor="none"
-        )
+        ] = Patch(facecolor=PLOT_COLORS["shade_extra"], alpha=0.18, edgecolor="none")
     if disconnected_below_threshold_mask is not None and bool(
         np.any(disconnected_below_threshold_mask)
     ):
