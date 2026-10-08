@@ -485,13 +485,17 @@ def plot_site_conformance_day(
                     legend_entries[label] = handle
 
     if base_responsible_mask is not None and bool(np.any(base_responsible_mask)):
-        legend_entries["Region exceeding thresholds"] = Patch(
+        legend_entries[
+            "Timestamps at/above calculated threshold (LOS/OV1)"
+        ] = Patch(
             facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none"
         )
     if additional_responsible_mask is not None and bool(
         np.any(additional_responsible_mask)
     ):
-        legend_entries["Additional responsible (lowest-disconnect criterion)"] = Patch(
+        legend_entries[
+            "Additional disconnected timestamps at/above lowest-disconnect value"
+        ] = Patch(
             facecolor=PLOT_COLORS["shade_extra"], alpha=0.18, edgecolor="none"
         )
     if disconnected_below_threshold_mask is not None and bool(
@@ -627,7 +631,7 @@ def plot_method_threshold_overlay_day(
         if event_spans:
             overlay_spans.append(
                 {
-                    "label": "Region exceeding thresholds",
+                    "label": "Timestamps at/above calculated threshold (LOS/OV1)",
                     "color": PLOT_COLORS["shade"],
                     "alpha": 0.22,
                     "spans": event_spans,

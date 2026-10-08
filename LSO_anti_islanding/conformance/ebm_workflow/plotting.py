@@ -330,9 +330,14 @@ def plot_site_conformance_day(
         for handle, label in zip(handles, labels, strict=True):
             legend_entries.setdefault(label, handle)
     for label, mask, color, alpha in (
-        ("EVM event", base_mask, PLOT_COLORS["shade"], 0.18),
         (
-            "Additional responsible (lowest-disconnect criterion)",
+            "Timestamps at/above calculated threshold (LOS/OV1)",
+            base_mask,
+            PLOT_COLORS["shade"],
+            0.18,
+        ),
+        (
+            "Additional disconnected timestamps at/above lowest-disconnect value",
             support_mask,
             PLOT_COLORS["shade_extra"],
             0.18,
