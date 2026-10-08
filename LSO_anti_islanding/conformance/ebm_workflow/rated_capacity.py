@@ -1,20 +1,19 @@
-"""SAPN 2022 rated-capacity policy."""
+"""EBM rated-capacity policy."""
 
 import polars as pl
-from sapn2022_workflow.config import MAX_PV_SITE_NET_CIRCUITS
-from sapn2022_workflow.site_preparation import (
+from ebm_workflow.config import MAX_PV_SITE_NET_CIRCUITS
+from ebm_workflow.site_preparation import (
     map_circuit_data_to_site,
     select_site_pv_data,
 )
 
 
-def rated_capacity_of_pv_sapn2022(
+def rated_capacity_of_pv_ebm(
     site_details,
     site_number,
     aligned_site_data=None,
 ):
-    """Return the metadata, calculated, and chosen SAPN capacities for one site."""
-    # Read the site's valid AC capacity from metadata.
+    """Return the metadata, calculated, and chosen EBM capacities for one site."""
     metadata_kw = None
     site_row = site_details.filter(pl.col("site_id") == site_number).select(
         "capacity_kw"
@@ -37,7 +36,6 @@ def rated_capacity_of_pv_sapn2022(
             and not column.endswith("_logic")
         ]
         if power_cols:
-            # Sum complete, aligned multiphase readings from the cleaned data.
             complete_power = pl.all_horizontal(
                 [pl.col(column).is_not_null() for column in power_cols]
             )
@@ -63,7 +61,6 @@ def rated_capacity_of_pv_sapn2022(
                     )
                 ).item()
 
-    # Prefer metadata unless observed power exceeds it by more than 4%.
     if metadata_kw is None:
         chosen_kw = observed_kw
     elif observed_kw is None:
@@ -86,18 +83,18 @@ def generate_rated_capacity(
     circuit_details,
     all_data,
     candidate_site_ids,
-    pv_site_net_counts,
+    pv_site_counts,
     output_path,
 ):
-    """Calculate and write the SAPN rated-capacity CSV."""
+    """Calculate and write the EBM rated-capacity CSV."""
     candidate_site_id_set = set(candidate_site_ids)
     capacity_rows = []
     for site_id in site_details["site_id"]:
         aligned_site_data = None
-        pv_site_net_count = pv_site_net_counts.get(site_id, 0)
+        pv_site_count = pv_site_counts.get(site_id, 0)
         if (
             site_id in candidate_site_id_set
-            and 0 < pv_site_net_count <= MAX_PV_SITE_NET_CIRCUITS
+            and 0 < pv_site_count <= MAX_PV_SITE_NET_CIRCUITS
         ):
             site_data = select_site_pv_data(
                 all_data,
@@ -105,10 +102,9 @@ def generate_rated_capacity(
                 site_id,
             )
             if not site_data.is_empty():
-                # Capacity uses every cleaned PV timestamp, without conformance prep.
                 aligned_site_data = map_circuit_data_to_site(site_data, site_id)
         capacity_rows.append(
-            rated_capacity_of_pv_sapn2022(
+            rated_capacity_of_pv_ebm(
                 site_details,
                 site_id,
                 aligned_site_data=aligned_site_data,

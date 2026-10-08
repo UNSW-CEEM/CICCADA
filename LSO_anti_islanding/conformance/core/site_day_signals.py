@@ -10,8 +10,7 @@ def build_site_day_signals(
     power_measurement_error=0.04,
 ):
     """Return the prepared one-day signal frame shared by Phase A and Phase B."""
-    df = circuit_data.clone()
-    df = df.with_columns(
+    df = circuit_data.with_columns(
         (
             pl.col("local_tstamp").cast(pl.Datetime).shift(-1)
             - pl.col("local_tstamp").cast(pl.Datetime)
@@ -20,94 +19,89 @@ def build_site_day_signals(
         .fill_null(0)
         .alias("dt_next_s")
     )
-    df = df.with_columns(pl.col("^power(_.*)?$").shift(-1).name.suffix("_next"))
-    df = df.with_columns(pl.col("local_tstamp").shift(-1).alias("ts_next"))
-
     power_cols = [
         column
         for column in df.columns
         if column.startswith("power")
         and not column.endswith("_next")
-        and not column.endswith("_logic")
-    ]
-    power_cols_next = [
-        column
-        for column in df.columns
-        if column.startswith("power")
-        and column.endswith("_next")
-        and not column.endswith("_logic_next")
     ]
     if not power_cols:
         return pl.DataFrame()
 
     p_disconnect = power_measurement_error * PRated
-    logic_current = []
-    logic_next = []
-    for column in power_cols:
-        logic_name = f"{column}_logic"
-        logic_next_name = f"{column}_logic_next"
-        df = df.with_columns(
-            pl.when(pl.col(column) < 0)
-            .then(pl.lit(0.0))
-            .otherwise(pl.col(column))
-            .alias(logic_name)
+    df = df.with_columns(
+        pl.when(
+            pl.all_horizontal(
+                [pl.col(column).is_not_null() for column in power_cols]
+            )
         )
-        logic_current.append(logic_name)
+        .then(pl.sum_horizontal([pl.col(column) for column in power_cols]))
+        .otherwise(pl.lit(None, dtype=pl.Float64))
+        .alias("raw_site_net_power")
+    )
 
-        next_name = f"{column}_next"
-        if next_name in power_cols_next:
-            df = df.with_columns(
-                pl.when(pl.col(next_name) < 0)
-                .then(pl.lit(0.0))
-                .otherwise(pl.col(next_name))
-                .alias(logic_next_name)
-            )
-        else:
-            df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias(logic_next_name))
-        logic_next.append(logic_next_name)
-
+    large_negative_at_timestamp = pl.col("raw_site_net_power").is_not_null() & (
+        pl.any_horizontal(
+            [(pl.col(column) < -p_disconnect).fill_null(False) for column in power_cols]
+        )
+        | (pl.col("raw_site_net_power") < -p_disconnect)
+    )
     df = df.with_columns(
-        [
-            pl.when(
-                pl.all_horizontal(
-                    [pl.col(column).is_not_null() for column in logic_current]
-                )
-            )
-            .then(pl.sum_horizontal([pl.col(column) for column in logic_current]))
-            .otherwise(pl.lit(None, dtype=pl.Float64))
-            .alias("site_power"),
-            pl.when(
-                pl.all_horizontal(
-                    [pl.col(column).is_not_null() for column in logic_next]
-                )
-            )
-            .then(pl.sum_horizontal([pl.col(column) for column in logic_next]))
-            .otherwise(pl.lit(None, dtype=pl.Float64))
-            .alias("site_power_next"),
-        ]
+        large_negative_at_timestamp.fill_null(False).alias(
+            "large_negative_power_timestamp"
+        )
+    )
+    df = df.with_columns(
+        pl.when(
+            pl.col("raw_site_net_power").is_null()
+            | pl.col("large_negative_power_timestamp")
+        )
+        .then(pl.lit(None, dtype=pl.Float64))
+        .when(pl.col("raw_site_net_power") < 0)
+        .then(pl.lit(0.0))
+        .otherwise(pl.col("raw_site_net_power"))
+        .alias("site_power_calculated")
+    )
+
+    any_negative_current = pl.any_horizontal(
+        [(pl.col(column) < 0).fill_null(False) for column in power_cols]
     )
     df = df.with_columns(
         [
-            pl.when(pl.col("site_power").is_not_null())
-            .then(
-                pl.all_horizontal(
-                    [pl.col(column) <= p_disconnect for column in logic_current]
-                )
-                & (pl.col("site_power") <= p_disconnect)
+            (
+                pl.col("site_power_calculated").is_not_null()
+                & (pl.col("raw_site_net_power") <= 0)
+                & any_negative_current
             )
-            .otherwise(pl.lit(None, dtype=pl.Boolean))
-            .alias("is_disc"),
-            pl.when(pl.col("site_power_next").is_not_null())
-            .then(
-                pl.all_horizontal(
-                    [pl.col(column) <= p_disconnect for column in logic_next]
-                )
-                & (pl.col("site_power_next") <= p_disconnect)
+            .fill_null(False)
+            .alias("within_tolerance_negative_power_timestamp"),
+            (
+                pl.col("site_power_calculated").is_not_null()
+                & (pl.col("raw_site_net_power") > 0)
             )
-            .otherwise(pl.lit(None, dtype=pl.Boolean))
-            .alias("is_disc_next"),
+            .fill_null(False)
+            .alias("positive_site_power_timestamp"),
+            (
+                pl.col("site_power_calculated").is_not_null()
+                & (pl.col("raw_site_net_power") == 0)
+                & ~any_negative_current
+            )
+            .fill_null(False)
+            .alias("zero_site_power_timestamp"),
         ]
     )
+    df = df.with_columns(
+        pl.when(pl.col("site_power_calculated").is_not_null())
+        .then(
+            pl.all_horizontal(
+                [pl.col(column) <= p_disconnect for column in power_cols]
+            )
+            & (pl.col("site_power_calculated") <= p_disconnect)
+        )
+        .otherwise(pl.lit(None, dtype=pl.Boolean))
+        .alias("is_disc")
+    )
+    df = df.with_columns(pl.col("is_disc").shift(-1).alias("is_disc_next"))
     df = df.with_columns(
         [
             (
@@ -117,12 +111,14 @@ def build_site_day_signals(
                     | pl.col("is_disc_next").is_not_null()
                 )
             ).alias("_power_assessable"),
-            (pl.col("site_power").shift(1) - pl.col("site_power")).alias(
-                "site_power_drop"
-            ),
-            (pl.col("site_power") - pl.col("site_power").shift(1)).alias(
-                "site_power_rise"
-            ),
+            (
+                pl.col("site_power_calculated").shift(1)
+                - pl.col("site_power_calculated")
+            ).alias("site_power_drop"),
+            (
+                pl.col("site_power_calculated")
+                - pl.col("site_power_calculated").shift(1)
+            ).alias("site_power_rise"),
         ]
     )
     return df.with_columns(

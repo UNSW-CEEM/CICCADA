@@ -35,7 +35,8 @@ EXCLUDED_LOCAL_DAYS = {
     date(2022, 11, 18),
 }
 
-# The local SAPN/EVM files inspected for this workflow do not include reactive
+# The local SAPN2022 training/validation files inspected for this workflow do
+# not include reactive
 # power. The original Solar Analytics filter uses S_norm to remove apparent
 # power limited rows; setting it to 1.0 preserves all rows for that filter while
 # making the bypass explicit in the structured data.
@@ -58,21 +59,21 @@ def date_range(start_date, end_date):
         current += timedelta(days=1)
 
 
-def evm_training_parquets(evm_training_dir, start_date, end_date):
-    """Return the pre-converted EVM training parquets in the folder.
+def sapn2022_train_parquets(sapn2022_train_data_dir, start_date, end_date):
+    """Return the pre-converted SAPN2022 training parquets in the folder.
 
-    The parquet files should preserve the original EVM CSV row grain and
-    columns. This script intentionally does not own the CSV-to-parquet
-    conversion step.
+    The parquet files should preserve the original SAPN2022 training CSV row
+    grain and columns. This script intentionally does not own the
+    CSV-to-parquet conversion step.
 
     File discovery is deliberately folder-based rather than filename-date based.
     The actual training date window is applied later after parsing utc_tstamp,
     which is safer than assuming every parquet filename follows a date pattern.
     """
-    files = sorted(Path(evm_training_dir).glob("*.parquet"))
+    files = sorted(Path(sapn2022_train_data_dir).glob("*.parquet"))
     if not files:
         raise FileNotFoundError(
-            f"No EVM training parquet files found in {evm_training_dir}"
+            f"No SAPN2022 training parquet files found in {sapn2022_train_data_dir}"
         )
     return files
 
@@ -151,16 +152,16 @@ def read_sapn_circuit_details(path):
     )
 
 
-def read_evm_site_metadata(path):
-    """Read EVM site metadata and rename fields to avoid SAPN/EVM ambiguity."""
+def read_sapn2022_train_site_metadata(path):
+    """Read SAPN2022 training site metadata and rename source fields."""
     return (
         pl.read_csv(path)
         .rename(
             {
-                "postcode": "evm_postcode",
+                "postcode": "sapn2022_train_postcode",
                 "latitude": "site_latitude",
                 "longitude": "site_longitude",
-                "ac_capacity_kw": "evm_ac_capacity_kw",
+                "ac_capacity_kw": "sapn2022_train_ac_capacity_kw",
             }
         )
         .with_columns(
@@ -168,14 +169,16 @@ def read_evm_site_metadata(path):
                 pl.col("site_id").cast(pl.Int64),
                 pl.col("site_latitude").cast(pl.Float64, strict=False),
                 pl.col("site_longitude").cast(pl.Float64, strict=False),
-                pl.col("evm_ac_capacity_kw").cast(pl.Float64, strict=False),
+                pl.col("sapn2022_train_ac_capacity_kw").cast(
+                    pl.Float64, strict=False
+                ),
             ]
         )
     )
 
 
-def read_evm_circuit_metadata(path):
-    """Read EVM circuit metadata using the same names as SAPN circuit metadata."""
+def read_sapn2022_train_circuit_metadata(path):
+    """Read SAPN2022 training circuit metadata using standardised names."""
     return (
         pl.read_csv(path)
         .rename(
@@ -209,7 +212,11 @@ def read_site_cohort(path):
 
 
 def build_eligible_sites(
-    site_details, circuit_details, evm_sites, site_cohort=None, limit_sites=None
+    site_details,
+    circuit_details,
+    sapn2022_train_sites,
+    site_cohort=None,
+    limit_sites=None,
 ):
     """Validate which sites can be used in the structured-data build.
 
@@ -223,7 +230,8 @@ def build_eligible_sites(
     - SAPN site metadata has exactly one row for the site_id.
     - SAPN circuit metadata has at least one pv_site_net circuit for the site.
     - SAPN circuit metadata has no more than three pv_site_net circuits.
-    - EVM site metadata has latitude and longitude for the same site_id.
+    - SAPN2022 training site metadata has latitude and longitude for the same
+      site_id.
     - If a cohort CSV is supplied, the site_id appears in that cohort.
     """
     # Count SAPN site metadata rows. A duplicate/missing site metadata row makes
@@ -253,13 +261,13 @@ def build_eligible_sites(
             how="left",
         )
         .join(
-            evm_sites.select(
+            sapn2022_train_sites.select(
                 [
                     "site_id",
                     "site_latitude",
                     "site_longitude",
-                    "evm_postcode",
-                    "evm_ac_capacity_kw",
+                    "sapn2022_train_postcode",
+                    "sapn2022_train_ac_capacity_kw",
                 ]
             ),
             on="site_id",
@@ -276,7 +284,7 @@ def build_eligible_sites(
             .when(
                 pl.col("site_latitude").is_null() | pl.col("site_longitude").is_null()
             )
-            .then(pl.lit("missing_evm_lat_lon"))
+            .then(pl.lit("missing_sapn2022_train_lat_lon"))
             .otherwise(pl.lit("eligible"))
             .alias("eligibility_status")
         )
@@ -345,7 +353,8 @@ def map_sites_to_bom_grid(eligible_sites, bom_points_csv):
 
     for row in eligible_sites.iter_rows(named=True):
         # Original Trino metadata already had n_lat/n_long. Locally SAPN
-        # metadata does not, so derive it from the EVM site lat/lon.
+        # metadata does not, so derive it from the SAPN2022 training site
+        # lat/lon.
         site_lat = row["site_latitude"]
         site_lon = row["site_longitude"]
 
@@ -381,20 +390,22 @@ def resolve_capacity(eligible_sites, site_metrology):
     """
     metadata = (
         eligible_sites.lazy()
-        .select(["site_id", "ac_cap_w", "evm_ac_capacity_kw"])
+        .select(["site_id", "ac_cap_w", "sapn2022_train_ac_capacity_kw"])
         .with_columns(
             [
                 (pl.col("ac_cap_w").cast(pl.Float64, strict=False) / 1000.0).alias(
                     "sapn_ac_capacity_kw"
                 ),
-                pl.col("evm_ac_capacity_kw").cast(pl.Float64, strict=False),
+                pl.col("sapn2022_train_ac_capacity_kw").cast(
+                    pl.Float64, strict=False
+                ),
             ]
         )
         .with_columns(
             pl.when(pl.col("sapn_ac_capacity_kw") > 0)
             .then(pl.col("sapn_ac_capacity_kw"))
-            .when(pl.col("evm_ac_capacity_kw") > 0)
-            .then(pl.col("evm_ac_capacity_kw"))
+            .when(pl.col("sapn2022_train_ac_capacity_kw") > 0)
+            .then(pl.col("sapn2022_train_ac_capacity_kw"))
             .otherwise(None)
             .alias("metadata_capacity_kw")
         )

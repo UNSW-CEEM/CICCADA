@@ -111,16 +111,21 @@ def prepare_sapn_metrology(sapn_data_path, start_date, end_date):
     )
 
 
-def prepare_evm_metrology(evm_parquets, evm_circuits, start_date, end_date):
-    if not evm_parquets:
+def prepare_sapn2022_train_metrology(
+    sapn2022_train_parquets,
+    sapn2022_train_circuits,
+    start_date,
+    end_date,
+):
+    if not sapn2022_train_parquets:
         raise FileNotFoundError(
-            "No EVM training parquet files found for the selected date range"
+            "No SAPN2022 training parquet files found for the selected date range"
         )
 
-    raw = pl.scan_parquet([str(path) for path in evm_parquets])
+    raw = pl.scan_parquet([str(path) for path in sapn2022_train_parquets])
     return _prepare_cleaned_metrology(
         raw,
-        evm_circuits,
+        sapn2022_train_circuits,
         POWER_W_TO_KW,
         start_date,
         end_date,

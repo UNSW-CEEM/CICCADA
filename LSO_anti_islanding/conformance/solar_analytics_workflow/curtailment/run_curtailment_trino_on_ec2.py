@@ -76,26 +76,26 @@ WITH (
 TRINO_SITE_BATCH_SIZE = 10
 CONFORMANCE_TABLE = "iceberg.solar_analytics_iceberg.lso_anti_islanding_conformance"
 
-site_compliance = pl.read_database(
+site_conformance = pl.read_database(
     query=f"""
         SELECT
             site_id,
-            los_threshold_used,
-            ov1_threshold_used
+            los_calculated_threshold_used AS los_threshold_used,
+            ov1_calculated_threshold_used AS ov1_threshold_used
         FROM {CONFORMANCE_TABLE}
-        WHERE assessment_status <> 'unassessed'
+        WHERE disconnect_supported_assessment_status <> 'unassessed'
     """,
     connection=engine,
 )
 
 acceptable_site_ids = (
-    site_compliance.get_column("site_id")
+    site_conformance.get_column("site_id")
     .drop_nulls()
     .cast(pl.Int64)
     .unique(maintain_order=True)
 )
 if len(acceptable_site_ids) == 0:
-    raise ValueError("No acceptable sites found in site compliance.")
+    raise ValueError("No acceptable sites found in site conformance.")
 
 acceptable_site_ids_sql = ", ".join(acceptable_site_ids.cast(pl.String).to_list())
 

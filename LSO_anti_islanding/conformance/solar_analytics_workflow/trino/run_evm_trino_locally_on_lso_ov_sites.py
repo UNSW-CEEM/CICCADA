@@ -1,3 +1,9 @@
+# script good for plotting and saving plots locally
+# and local csvs similar to sapn2022 workflow
+
+# need the file lso_anti_islanding_conformance from trino
+# make sure it is updated
+
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +15,7 @@ if str(CONFORMANCE_DIR) not in sys.path:
     sys.path.insert(0, str(CONFORMANCE_DIR))
 
 from core.phase_a import SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA, run_phase_a_for_site
-from core.phase_b import evaluate_compliance_for_day, run_phase_b_for_site
+from core.phase_b import evaluate_conformance_for_day, run_phase_b_for_site
 from core.site_day_signals import build_site_day_signals
 from solar_analytics_workflow.config import (
     DAY_ANALYSIS_START,
@@ -29,11 +35,22 @@ from solar_analytics_workflow.data_cleaning import (
     deduplicateMeasurements,
 )
 from solar_analytics_workflow.plotting import (
-    plot_site_compliance_day,
+    plot_site_conformance_day,
     plot_site_threshold_distribution,
 )
 from solar_analytics_workflow.preprocessing import STATE_TIMEZONES
 from solar_analytics_workflow.rated_capacity import add_s_rated_capacity
+from solar_analytics_workflow.reporting import (
+    SITE_CONFORMANCE_SCHEMA as REPORTING_SITE_CONFORMANCE_SCHEMA,
+)
+from solar_analytics_workflow.reporting import (
+    SITE_CONFORMANCE_TIME_DISTRIBUTION_SCHEMA,
+    SITE_CONFORMANCE_TOD_DISTRIBUTION_NAME,
+    SITE_CONFORMANCE_TOD_DISTRIBUTION_SCHEMA,
+    build_method_conformance_final_table,
+    build_site_conformance_table,
+    build_site_conformance_tod_distribution,
+)
 from solar_analytics_workflow.site_day_filtering import (
     summarize_solar_analytics_day_eligibility,
 )
@@ -64,41 +81,38 @@ CLEANED_DATA_SCHEMA = {
     "voltage_valid": pl.Float64,
 }
 
-SITE_COMPLIANCE_SCHEMA = {
-    "site_id": pl.Int64,
-    "threshold_method": pl.Utf8,
-    "assessment_status": pl.Utf8,
-    "overall_pass": pl.Boolean,
-    "los_responsible_count": pl.Int64,
-    "los_compliant_count": pl.Int64,
-    "los_pass": pl.Boolean,
-    "los_compliance_pct": pl.Float64,
-    "los_threshold_used": pl.Float64,
-    "ov1_responsible_count": pl.Int64,
-    "ov1_compliant_count": pl.Int64,
-    "ov1_pass": pl.Boolean,
-    "ov1_compliance_pct": pl.Float64,
-    "ov1_threshold_used": pl.Float64,
+SITE_CONFORMANCE_SCHEMA = {
+    **REPORTING_SITE_CONFORMANCE_SCHEMA,
+    "disconnect_supported_assessment_status": pl.Utf8,
 }
 
 LIMITED_OUTPUT_DIR = TRINO_LIMITED_OUTPUT_DIR
 LIMITED_SITE_PLOT_DIR = LIMITED_OUTPUT_DIR / "overall_site_plots"
 LIMITED_THRESHOLD_PLOT_DIR = LIMITED_OUTPUT_DIR / "threshold_distribution_plots"
-LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "solA_conformance_trino_limited_summary.csv"
+LIMITED_SUMMARY_PATH = LIMITED_OUTPUT_DIR / "site_conformance.csv"
+LIMITED_TIME_DISTRIBUTION_PATH = (
+    LIMITED_OUTPUT_DIR / "site_conformance_time_distribution.csv"
+)
+LIMITED_TOD_DISTRIBUTION_PATH = (
+    LIMITED_OUTPUT_DIR / SITE_CONFORMANCE_TOD_DISTRIBUTION_NAME
+)
+LIMITED_COMPLETED_SITES_PATH = LIMITED_OUTPUT_DIR / "completed_sites.csv"
+# need the file lso_anti_islanding_conformance from trino
+# make sure it is updated
 ASSESSMENT_SUMMARY_PATH = TRINO_OUTPUT_DIR / "solA_conformance_trino_summary.csv"
-MAX_ASSESSED_SITES = 1000
+MAX_ASSESSED_SITES = 1500 # 1500
 
 
-def _site_compliance_report_row(site_result):
-    """Build the limited tier-based compliance row for one completed site."""
-    site_compliance = site_result["site_compliance"]
-    if site_compliance.is_empty():
+def _site_conformance_report_row(site_result):
+    """Build the limited tier-based conformance row for one completed site."""
+    site_conformance = site_result["site_conformance"]
+    if site_conformance.is_empty():
         return None
-    if site_compliance.height != 1:
+    if site_conformance.height != 1:
         raise ValueError("Expected exactly one primary Phase B result per site.")
 
-    compliance = site_compliance.to_dicts()[0]
-    overall_pass = compliance["overall_pass"]
+    conformance = site_conformance.to_dicts()[0]
+    overall_pass = conformance["overall_disconnect_supported_pass"]
     if overall_pass is None:
         assessment_status = "unassessed"
     elif overall_pass:
@@ -107,20 +121,8 @@ def _site_compliance_report_row(site_result):
         assessment_status = "non-conformant"
 
     return {
-        "site_id": compliance["site_id"],
-        "threshold_method": compliance["threshold_method"],
-        "assessment_status": assessment_status,
-        "overall_pass": overall_pass,
-        "los_responsible_count": compliance["los_responsible_count"],
-        "los_compliant_count": compliance["los_compliant_count"],
-        "los_pass": compliance["los_pass"],
-        "los_compliance_pct": compliance["los_compliance_pct"],
-        "los_threshold_used": compliance["los_threshold_used"],
-        "ov1_responsible_count": compliance["ov1_responsible_count"],
-        "ov1_compliant_count": compliance["ov1_compliant_count"],
-        "ov1_pass": compliance["ov1_pass"],
-        "ov1_compliance_pct": compliance["ov1_compliance_pct"],
-        "ov1_threshold_used": compliance["ov1_threshold_used"],
+        **conformance,
+        "disconnect_supported_assessment_status": assessment_status,
     }
 
 
@@ -316,18 +318,82 @@ WHERE m.inverter_count = 1
 
 # Keep one Trino connection open
 LIMITED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-site_compliance_rows = []
+
+if LIMITED_COMPLETED_SITES_PATH.exists():
+    completed_sites = pl.read_csv(
+        LIMITED_COMPLETED_SITES_PATH,
+        schema_overrides={"site_id": pl.Int64},
+    )
+else:
+    completed_sites = pl.DataFrame(schema={"site_id": pl.Int64})
+    completed_sites.write_csv(LIMITED_COMPLETED_SITES_PATH)
+completed_site_ids = completed_sites.get_column("site_id")
+
+if LIMITED_SUMMARY_PATH.exists():
+    site_conformance = pl.read_csv(
+        LIMITED_SUMMARY_PATH,
+        schema_overrides=SITE_CONFORMANCE_SCHEMA,
+    ).filter(pl.col("site_id").is_in(completed_site_ids.implode()))
+else:
+    site_conformance = pl.DataFrame(schema=SITE_CONFORMANCE_SCHEMA)
+site_conformance.write_csv(LIMITED_SUMMARY_PATH)
+site_conformance_rows = site_conformance.to_dicts()
+
+if LIMITED_TIME_DISTRIBUTION_PATH.exists():
+    time_distribution = pl.read_csv(
+        LIMITED_TIME_DISTRIBUTION_PATH,
+        schema_overrides=SITE_CONFORMANCE_TIME_DISTRIBUTION_SCHEMA,
+    ).filter(pl.col("site_id").is_in(completed_site_ids.implode()))
+else:
+    time_distribution = pl.DataFrame(schema=SITE_CONFORMANCE_TIME_DISTRIBUTION_SCHEMA)
+time_distribution.write_csv(LIMITED_TIME_DISTRIBUTION_PATH)
+site_conformance_time_distribution_rows = (
+    [time_distribution] if not time_distribution.is_empty() else []
+)
+
+if LIMITED_TOD_DISTRIBUTION_PATH.exists():
+    tod_distribution = pl.read_csv(
+        LIMITED_TOD_DISTRIBUTION_PATH,
+        schema_overrides=SITE_CONFORMANCE_TOD_DISTRIBUTION_SCHEMA,
+    ).filter(pl.col("site_id").is_in(completed_site_ids.implode()))
+else:
+    tod_distribution = pl.DataFrame(schema=SITE_CONFORMANCE_TOD_DISTRIBUTION_SCHEMA)
+tod_distribution.write_csv(LIMITED_TOD_DISTRIBUTION_PATH)
+site_conformance_tod_distribution_rows = (
+    [tod_distribution] if not tod_distribution.is_empty() else []
+)
+
 site_level_various_voltage_rows = []
+if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+    site_level_various_voltages_path = (
+        LIMITED_OUTPUT_DIR / "site_level_various_voltages.csv"
+    )
+    if site_level_various_voltages_path.exists():
+        site_level_various_voltages = pl.read_csv(
+            site_level_various_voltages_path,
+            schema_overrides=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA,
+        ).filter(pl.col("site_id").is_in(completed_site_ids.implode()))
+    else:
+        site_level_various_voltages = pl.DataFrame(
+            schema=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA
+        )
+    site_level_various_voltages.write_csv(site_level_various_voltages_path)
+    if not site_level_various_voltages.is_empty():
+        site_level_various_voltage_rows.append(site_level_various_voltages)
+
+build_method_conformance_final_table(site_conformance).write_csv(
+    LIMITED_OUTPUT_DIR / "site_conformance_final_table.csv",
+)
 phase_a_record_frames = []
 assessed_site_ids = (
     pl.read_csv(
         ASSESSMENT_SUMMARY_PATH,
         schema_overrides={
             "site_id": pl.Int64,
-            "overall_pass": pl.Boolean,
+            "overall_disconnect_supported_pass": pl.Boolean,
         },
     )
-    .filter(pl.col("overall_pass").is_not_null())
+    .filter(pl.col("overall_disconnect_supported_pass").is_not_null())
     .select("site_id")
     .drop_nulls()
     .unique(maintain_order=True)
@@ -405,7 +471,16 @@ with local_trino_engine(
     ).sort("site_id")
     if MAX_ASSESSED_SITES is not None:
         selected_sites = selected_sites.head(MAX_ASSESSED_SITES)
-    print(f"Selected assessed sites: {selected_sites.height}", flush=True)
+    selected_cohort_size = selected_sites.height
+    completed_selected_sites = selected_sites.filter(
+        pl.col("site_id").is_in(completed_site_ids.implode())
+    ).height
+    selected_sites = selected_sites.filter(
+        ~pl.col("site_id").is_in(completed_site_ids.implode())
+    )
+    print(f"Selected assessed cohort: {selected_cohort_size}", flush=True)
+    print(f"Completed sites skipped: {completed_selected_sites}", flush=True)
+    print(f"Sites remaining: {selected_sites.height}", flush=True)
 
     selected_site_ids = selected_sites.get_column("site_id")
     circuit_data = circuit_data.filter(
@@ -454,11 +529,6 @@ with local_trino_engine(
                 )
                 continue
 
-            print(
-                f"Cleaned site {site['site_id']}: "
-                f"{site_timeseries_data.height} rows",
-                flush=True,
-            )
             processed_sites += 1
 
             eligible_analysis_days = []
@@ -534,37 +604,92 @@ with local_trino_engine(
                 site_level_various_voltage_rows.append(
                     phase_a_result["site_level_various_voltages"]
                 )
-            phase_b_result = run_phase_b_for_site(
+            phase_b_calculated = run_phase_b_for_site(
                 site["site_id"],
                 prepared_site_days,
                 site_thresholds=phase_a_result["site_thresholds"],
                 threshold_method=PRIMARY_PHASE_B_METHOD,
+                threshold_source="calculated",
+                disconnect_support=False,
+                tau=0.0,
+            )
+            phase_b_disconnect_supported = run_phase_b_for_site(
+                site["site_id"],
+                prepared_site_days,
+                site_thresholds=phase_a_result["site_thresholds"],
+                threshold_method=PRIMARY_PHASE_B_METHOD,
+                threshold_source="calculated",
+                disconnect_support=True,
+                tau=0.0,
+            )
+            phase_b_lowest_disconnect = run_phase_b_for_site(
+                site["site_id"],
+                prepared_site_days,
+                site_thresholds=phase_a_result["site_thresholds"],
+                threshold_method=PRIMARY_PHASE_B_METHOD,
+                threshold_source="lowest_disconnect",
+                disconnect_support=False,
+                tau=0.0,
+            )
+
+            site_conformance_frame = build_site_conformance_table(
+                phase_b_calculated,
+                phase_b_disconnect_supported,
+                phase_b_lowest_disconnect,
             )
             site_result = {
-                "site_compliance": phase_b_result["site_compliance"],
+                "site_conformance": site_conformance_frame,
             }
 
-            compliance = phase_b_result["site_compliance"].to_dicts()[0]
-            if GENERATE_SITE_PLOTS and compliance["overall_pass"] is not None:
+            tod_distribution = build_site_conformance_tod_distribution(
+                phase_b_disconnect_supported["site_conformance_timestamp_detail"]
+            )
+            site_conformance_tod_distribution_rows.append(tod_distribution)
+
+            conformance = site_conformance_frame.to_dicts()[0]
+            print(
+                f"[{completed_phase_sites + 1}/{selected_sites.height}] "
+                f"Completed conformance for site {site['site_id']}: "
+                f"{conformance['overall_disconnect_supported_conformance_pct']:.1f}% "
+                f"conformant, pass={conformance['overall_disconnect_supported_pass']}",
+                flush=True,
+            )
+            if (
+                GENERATE_SITE_PLOTS
+                and conformance["overall_disconnect_supported_pass"] is not None
+            ):
                 plot_folder = (
-                    "compliant"
-                    if compliance["overall_pass"] is True
-                    else "non_compliant"
+                    "conformant"
+                    if conformance["overall_disconnect_supported_pass"] is True
+                    else "non_conformant"
                 )
                 for day_info in prepared_site_days:
-                    evaluated_day = evaluate_compliance_for_day(
+                    evaluated_day = evaluate_conformance_for_day(
                         day_info["signal_frame"],
-                        los_threshold=compliance["los_threshold_used"],
-                        ov1_threshold=compliance["ov1_threshold_used"],
+                        los_threshold=conformance["los_calculated_threshold_used"],
+                        ov1_threshold=conformance["ov1_calculated_threshold_used"],
+                        disconnect_support=True,
+                        los_lowest_disconnect_voltage=conformance[
+                            "los_lowest_disconnect_voltage"
+                        ],
+                        ov1_lowest_disconnect_voltage=conformance[
+                            "ov1_lowest_disconnect_voltage"
+                        ],
                     )
-                    plot_site_compliance_day(
+                    plot_site_conformance_day(
                         evaluated_day,
                         site["site_id"],
                         day_info["analysis_date"],
                         p_rated=s_rated,
-                        lso_threshold=compliance["los_threshold_used"],
-                        ov1_threshold=compliance["ov1_threshold_used"],
-                        overall_pass=compliance["overall_pass"],
+                        lso_threshold=conformance["los_calculated_threshold_used"],
+                        ov1_threshold=conformance["ov1_calculated_threshold_used"],
+                        los_lowest_disconnect_voltage=conformance[
+                            "los_lowest_disconnect_threshold_used"
+                        ],
+                        ov1_lowest_disconnect_voltage=conformance[
+                            "ov1_lowest_disconnect_threshold_used"
+                        ],
+                        overall_pass=conformance["overall_disconnect_supported_pass"],
                         plot_no_responsible_timestamp_days=(
                             PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS
                         ),
@@ -576,26 +701,175 @@ with local_trino_engine(
                         ),
                     )
 
-            compliance_row = _site_compliance_report_row(site_result)
-            if compliance_row is not None:
-                site_compliance_rows.append(compliance_row)
+            conformance_row = _site_conformance_report_row(site_result)
+            if conformance_row is not None:
+                site_conformance_rows.append(conformance_row)
+
+            calculated_distribution = phase_b_calculated["site_conformance"].select(
+                [
+                    "site_id",
+                    "threshold_method",
+                    pl.lit("calculated").alias("case"),
+                    pl.col("overall_responsible_count").alias(
+                        "eligible_timestamp_count"
+                    ),
+                    pl.col("overall_conformant_count").alias(
+                        "conformant_timestamp_count"
+                    ),
+                    pl.lit(0, dtype=pl.Int64).alias(
+                        "disconnect_support_timestamp_count"
+                    ),
+                    (
+                        pl.col("overall_responsible_count")
+                        - pl.col("overall_conformant_count")
+                    ).alias("non_conformant_timestamp_count"),
+                    pl.col("overall_conformance_pct").alias("conformant_pct"),
+                    (100.0 - pl.col("overall_conformance_pct")).alias(
+                        "non_conformant_pct"
+                    ),
+                    "disconnected_below_threshold_count",
+                    "disconnected_unknown_voltage_count",
+                ]
+            )
+            disconnect_supported_distribution = phase_b_disconnect_supported[
+                "site_conformance"
+            ].select(
+                [
+                    "site_id",
+                    "threshold_method",
+                    pl.lit("disconnect_supported").alias("case"),
+                    pl.col("overall_disconnect_supported_responsible_count").alias(
+                        "eligible_timestamp_count"
+                    ),
+                    pl.col("overall_disconnect_supported_conformant_count").alias(
+                        "conformant_timestamp_count"
+                    ),
+                    (
+                        pl.col("los_disconnect_support_added_count")
+                        + pl.col("ov1_disconnect_support_added_count")
+                    ).alias("disconnect_support_timestamp_count"),
+                    (
+                        pl.col("overall_disconnect_supported_responsible_count")
+                        - pl.col("overall_disconnect_supported_conformant_count")
+                    ).alias("non_conformant_timestamp_count"),
+                    pl.col("overall_disconnect_supported_conformance_pct").alias(
+                        "conformant_pct"
+                    ),
+                    (
+                        100.0
+                        - pl.col("overall_disconnect_supported_conformance_pct")
+                    ).alias("non_conformant_pct"),
+                    "disconnected_below_threshold_count",
+                    "disconnected_unknown_voltage_count",
+                ]
+            )
+            lowest_disconnect_distribution = phase_b_lowest_disconnect[
+                "site_conformance"
+            ].select(
+                [
+                    "site_id",
+                    "threshold_method",
+                    pl.lit("lowest_disconnect").alias("case"),
+                    pl.col("overall_responsible_count").alias(
+                        "eligible_timestamp_count"
+                    ),
+                    pl.col("overall_conformant_count").alias(
+                        "conformant_timestamp_count"
+                    ),
+                    pl.lit(0, dtype=pl.Int64).alias(
+                        "disconnect_support_timestamp_count"
+                    ),
+                    (
+                        pl.col("overall_responsible_count")
+                        - pl.col("overall_conformant_count")
+                    ).alias("non_conformant_timestamp_count"),
+                    pl.col("overall_conformance_pct").alias("conformant_pct"),
+                    (100.0 - pl.col("overall_conformance_pct")).alias(
+                        "non_conformant_pct"
+                    ),
+                    "disconnected_below_threshold_count",
+                    "disconnected_unknown_voltage_count",
+                ]
+            )
+            site_conformance_time_distribution_rows.extend(
+                [
+                    calculated_distribution,
+                    disconnect_supported_distribution,
+                    lowest_disconnect_distribution,
+                ]
+            )
 
             phase_a_records = phase_a_result["records"]
             if not phase_a_records.is_empty():
                 phase_a_record_frames.append(phase_a_records)
 
+            with LIMITED_SUMMARY_PATH.open("ab") as output_file:
+                pl.DataFrame(
+                    [conformance_row],
+                    schema=SITE_CONFORMANCE_SCHEMA,
+                ).write_csv(output_file, include_header=False)
+            with LIMITED_TIME_DISTRIBUTION_PATH.open("ab") as output_file:
+                pl.concat(
+                    [
+                        calculated_distribution,
+                        disconnect_supported_distribution,
+                        lowest_disconnect_distribution,
+                    ],
+                    how="vertical",
+                ).write_csv(output_file, include_header=False)
+            with LIMITED_TOD_DISTRIBUTION_PATH.open("ab") as output_file:
+                tod_distribution.write_csv(output_file, include_header=False)
+            site_conformance = pl.DataFrame(
+                site_conformance_rows,
+                schema=SITE_CONFORMANCE_SCHEMA,
+            )
+            build_method_conformance_final_table(site_conformance).write_csv(
+                LIMITED_OUTPUT_DIR / "site_conformance_final_table.csv",
+            )
+            if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
+                with (
+                    LIMITED_OUTPUT_DIR / "site_level_various_voltages.csv"
+                ).open("ab") as output_file:
+                    phase_a_result["site_level_various_voltages"].write_csv(
+                        output_file,
+                        include_header=False,
+                    )
+            with LIMITED_COMPLETED_SITES_PATH.open("ab") as output_file:
+                pl.DataFrame(
+                    {"site_id": [site["site_id"]]},
+                    schema={"site_id": pl.Int64},
+                ).write_csv(output_file, include_header=False)
+
             completed_phase_sites += 1
             del site_result
             del site_timeseries_data
 
-site_compliance = pl.DataFrame(
-    site_compliance_rows,
-    schema=SITE_COMPLIANCE_SCHEMA,
+site_conformance = pl.DataFrame(
+    site_conformance_rows,
+    schema=SITE_CONFORMANCE_SCHEMA,
 )
-if not site_compliance.is_empty():
-    site_compliance = site_compliance.sort("site_id")
-site_compliance.write_csv(LIMITED_SUMMARY_PATH)
-print(f"Saved limited site compliance to {LIMITED_SUMMARY_PATH}")
+if not site_conformance.is_empty():
+    site_conformance = site_conformance.sort("site_id")
+site_conformance.write_csv(LIMITED_SUMMARY_PATH)
+print(f"Saved limited site conformance to {LIMITED_SUMMARY_PATH}")
+time_distribution = (
+    pl.concat(site_conformance_time_distribution_rows, how="vertical")
+    if site_conformance_time_distribution_rows
+    else pl.DataFrame(schema=SITE_CONFORMANCE_TIME_DISTRIBUTION_SCHEMA)
+)
+time_distribution.write_csv(LIMITED_TIME_DISTRIBUTION_PATH)
+tod_distribution = (
+    pl.concat(site_conformance_tod_distribution_rows, how="vertical")
+    if site_conformance_tod_distribution_rows
+    else pl.DataFrame(schema=SITE_CONFORMANCE_TOD_DISTRIBUTION_SCHEMA)
+)
+if not tod_distribution.is_empty():
+    tod_distribution = tod_distribution.sort(["site_id", "time_of_day_bin"])
+tod_distribution.write_csv(LIMITED_TOD_DISTRIBUTION_PATH)
+site_conformance_final_table = build_method_conformance_final_table(site_conformance)
+site_conformance_final_table.write_csv(
+    LIMITED_OUTPUT_DIR / "site_conformance_final_table.csv",
+)
 if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
     site_level_various_voltages = (
         pl.concat(site_level_various_voltage_rows, how="vertical")
@@ -608,7 +882,9 @@ if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
 
 _generate_threshold_distribution_plots(phase_a_record_frames)
 
-print(f"Selected sites: {selected_sites.height}")
+print(f"Selected cohort: {selected_cohort_size}")
+print(f"Previously completed sites skipped: {completed_selected_sites}")
+print(f"Sites attempted in this run: {selected_sites.height}")
 print(f"Selected PV circuits: {circuit_data['c_id'].n_unique()}")
 print(f"Sites processed through conformance: {processed_sites}")
 print(f"Sites completing Phase A and Phase B: {completed_phase_sites}")

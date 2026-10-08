@@ -12,13 +12,15 @@ from matplotlib.ticker import MultipleLocator
 
 PLOT_COLORS = {
     "power_total": "#2e7d32",
-    "power_channels": ["#2e7d32", "#2e7d32", "#2e7d32", "#2e7d32"],
+    "power_channels": ["#1565C0", "#4A148C", "#A67C00"],
     "voltage_inst": "#b45309",
     "voltage_avg": "#1a1a1a",
     "threshold_lso": "#1a1a1a",
     "threshold_ov1": "#c62828",
     "grid": "#ebebeb",
     "shade": "#7c3aed",
+    "shade_extra": "#0891b2",
+    "shade_missing_voltage": "#dc2626",
 }
 
 
@@ -70,21 +72,21 @@ def _format_plot_date(day_label, timestamps=None):
         return str(day_label)
 
 
-def _day_status_label(day_compliant_ts, day_eligible_ts, threshold_pct=90.0):
-    if day_eligible_ts is None or day_compliant_ts is None:
+def _day_status_label(day_conformant_ts, day_eligible_ts, threshold_pct=90.0):
+    if day_eligible_ts is None or day_conformant_ts is None:
         return "unassessed", None
 
     day_eligible_ts = int(day_eligible_ts)
-    day_compliant_ts = int(day_compliant_ts)
+    day_conformant_ts = int(day_conformant_ts)
     if day_eligible_ts <= 0:
         return "unassessed", None
 
-    day_pct = (float(day_compliant_ts) / float(day_eligible_ts)) * 100.0
+    day_pct = (float(day_conformant_ts) / float(day_eligible_ts)) * 100.0
     day_status = "conformant" if day_pct >= threshold_pct else "non-conformant"
     return day_status, day_pct
 
 
-def plot_site_compliance_day(
+def plot_site_conformance_day(
     df: pl.DataFrame,
     site_number,
     day_label,
@@ -92,12 +94,14 @@ def plot_site_compliance_day(
     p_rated: float,
     lso_threshold: float | None,
     ov1_threshold: float | None,
-    overall_pass,
+    overall_category: str,
+    los_lowest_disconnect_voltage: float | None = None,
+    ov1_lowest_disconnect_voltage: float | None = None,
     plot_no_responsible_timestamp_days: bool = False,
     save_path: str | Path | None = None,
 ):
     """
-    Plot a single site-day using a shared two-panel compliance layout.
+    Plot a single site-day using a shared two-panel conformance layout.
     """
     if df.is_empty():
         return
@@ -113,17 +117,43 @@ def plot_site_compliance_day(
         return
 
     los_responsible_count = int(df.get_column("los_responsible").sum() or 0)
-    los_compliant_count = int(df.get_column("los_compliant").sum() or 0)
+    los_conformant_count = int(df.get_column("los_conformant").sum() or 0)
+    los_disconnect_support_added_count = int(
+        df.get_column("los_disconnect_support_added").sum() or 0
+    )
     ov1_responsible_count = int(df.get_column("ov1_responsible").sum() or 0)
-    ov1_compliant_count = int(df.get_column("ov1_compliant").sum() or 0)
-    total_responsible_count = los_responsible_count + ov1_responsible_count
-    if total_responsible_count == 0 and not plot_no_responsible_timestamp_days:
+    ov1_conformant_count = int(df.get_column("ov1_conformant").sum() or 0)
+    ov1_disconnect_support_added_count = int(
+        df.get_column("ov1_disconnect_support_added").sum() or 0
+    )
+    los_disconnect_supported_responsible_count = (
+        los_responsible_count + los_disconnect_support_added_count
+    )
+    los_disconnect_supported_conformant_count = (
+        los_conformant_count + los_disconnect_support_added_count
+    )
+    ov1_disconnect_supported_responsible_count = (
+        ov1_responsible_count + ov1_disconnect_support_added_count
+    )
+    ov1_disconnect_supported_conformant_count = (
+        ov1_conformant_count + ov1_disconnect_support_added_count
+    )
+    disconnect_supported_responsible_count = (
+        los_disconnect_supported_responsible_count
+        + ov1_disconnect_supported_responsible_count
+    )
+    if (
+        disconnect_supported_responsible_count == 0
+        and not plot_no_responsible_timestamp_days
+    ):
         return
 
     plot_df = df.sort("local_tstamp")
-    if "site_power" not in plot_df.columns:
+    if "site_power_calculated" not in plot_df.columns:
         plot_df = plot_df.with_columns(
-            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias("site_power")
+            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias(
+                "site_power_calculated"
+            )
         )
 
     x = plot_df["local_tstamp"].to_list()
@@ -137,16 +167,30 @@ def plot_site_compliance_day(
         if "vinst_max" in plot_df.columns
         else [None] * plot_df.height
     )
-    event_active = None
-    disconnected_below_lso_ov1_threshold_mask = None
+    base_responsible_mask = None
+    additional_responsible_mask = None
+    disconnected_missing_voltage_mask = None
+    disconnected_below_threshold_mask = None
     if {"los_responsible", "ov1_responsible"}.issubset(set(plot_df.columns)):
-        event_active = (
+        base_responsible_mask = (
             plot_df["los_responsible"].fill_null(False).cast(pl.Boolean)
             | plot_df["ov1_responsible"].fill_null(False).cast(pl.Boolean)
         ).to_numpy()
-        disconnected_below_lso_ov1_threshold_mask = (
-            plot_df["is_disc"].fill_null(False).cast(pl.Boolean).to_numpy()
-            & ~event_active
+        additional_responsible_mask = (
+            plot_df["los_disconnect_support_added"].fill_null(False).cast(pl.Boolean)
+            | plot_df["ov1_disconnect_support_added"].fill_null(False).cast(pl.Boolean)
+        ).to_numpy()
+        disconnected_missing_voltage_mask = (
+            plot_df["disconnected_unknown_voltage"]
+            .fill_null(False)
+            .cast(pl.Boolean)
+            .to_numpy()
+        )
+        disconnected_below_threshold_mask = (
+            plot_df["disconnected_below_threshold"]
+            .fill_null(False)
+            .cast(pl.Boolean)
+            .to_numpy()
         )
     is_single_phase = len(power_cols) == 1
 
@@ -166,28 +210,58 @@ def plot_site_compliance_day(
 
     for axis in plot_power_axes:
         axis.set_facecolor("white")
-        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
-            np.any(disconnected_below_lso_ov1_threshold_mask)
+        if disconnected_below_threshold_mask is not None and bool(
+            np.any(disconnected_below_threshold_mask)
         ):
             axis.fill_between(
                 x,
                 0,
                 1,
-                where=disconnected_below_lso_ov1_threshold_mask,
+                where=disconnected_below_threshold_mask,
                 transform=axis.get_xaxis_transform(),
                 color="#9ca3af",
                 alpha=0.22,
                 zorder=0,
                 linewidth=0,
             )
-        if event_active is not None and bool(np.any(event_active)):
+        if disconnected_missing_voltage_mask is not None and bool(
+            np.any(disconnected_missing_voltage_mask)
+        ):
             axis.fill_between(
                 x,
                 0,
                 1,
-                where=event_active,
+                where=disconnected_missing_voltage_mask,
+                transform=axis.get_xaxis_transform(),
+                color=PLOT_COLORS["shade_missing_voltage"],
+                alpha=0.22,
+                zorder=0,
+                linewidth=0,
+            )
+        if base_responsible_mask is not None and bool(
+            np.any(base_responsible_mask)
+        ):
+            axis.fill_between(
+                x,
+                0,
+                1,
+                where=base_responsible_mask,
                 transform=axis.get_xaxis_transform(),
                 color=PLOT_COLORS["shade"],
+                alpha=0.18,
+                zorder=0,
+                linewidth=0,
+            )
+        if additional_responsible_mask is not None and bool(
+            np.any(additional_responsible_mask)
+        ):
+            axis.fill_between(
+                x,
+                0,
+                1,
+                where=additional_responsible_mask,
+                transform=axis.get_xaxis_transform(),
+                color=PLOT_COLORS["shade_extra"],
                 alpha=0.18,
                 zorder=0,
                 linewidth=0,
@@ -219,7 +293,7 @@ def plot_site_compliance_day(
 
         ax_bottom.plot(
             x,
-            plot_df["site_power"].to_list(),
+            plot_df["site_power_calculated"].to_list(),
             color=PLOT_COLORS["power_total"],
             linewidth=2.2,
             zorder=4,
@@ -251,10 +325,11 @@ def plot_site_compliance_day(
     if lso_threshold is not None:
         thresholds_to_draw.append(
             (
-                f"LOS threshold: {float(lso_threshold):.1f} V",
+                f"LSO threshold: {float(lso_threshold):.1f} V",
                 lso_threshold,
                 PLOT_COLORS["threshold_lso"],
                 ":",
+                1.5,
             )
         )
     if ov1_threshold is not None:
@@ -264,45 +339,87 @@ def plot_site_compliance_day(
                 ov1_threshold,
                 PLOT_COLORS["threshold_ov1"],
                 "-.",
+                1.5,
+            )
+        )
+    if los_lowest_disconnect_voltage is not None:
+        thresholds_to_draw.append(
+            (
+                f"LSO lowest: {float(los_lowest_disconnect_voltage):.1f} V",
+                los_lowest_disconnect_voltage,
+                PLOT_COLORS["threshold_lso"],
+                "--",
+                1.1,
+            )
+        )
+    if ov1_lowest_disconnect_voltage is not None:
+        thresholds_to_draw.append(
+            (
+                f"OV1 lowest: {float(ov1_lowest_disconnect_voltage):.1f} V",
+                ov1_lowest_disconnect_voltage,
+                PLOT_COLORS["threshold_ov1"],
+                "--",
+                1.1,
             )
         )
 
     for v_ax in voltage_axes:
-        for label, value, color, style in thresholds_to_draw:
+        for label, value, color, style, linewidth in thresholds_to_draw:
             v_ax.axhline(
                 value,
                 color=color,
                 linestyle=style,
-                linewidth=1.5,
+                linewidth=linewidth,
                 alpha=0.95,
                 label=label,
             )
 
     overall_label = (
         "Conformant"
-        if overall_pass is True
+        if overall_category == "conformant"
+        else "Conformant (erratic)"
+        if overall_category == "conformant_erratic"
         else "Non-conformant"
-        if overall_pass is False
+        if overall_category == "non_conformant"
         else "Unassessed"
     )
-    total_compliant_count = los_compliant_count + ov1_compliant_count
-    if total_responsible_count == 0:
-        day_label_text = "No responsible timestamps"
+    disconnect_supported_conformant_count = (
+        los_disconnect_supported_conformant_count
+        + ov1_disconnect_supported_conformant_count
+    )
+    if disconnect_supported_responsible_count == 0:
+        day_label_text = "Day total: No responsible timestamps"
+        day_breakdown_text = None
     else:
-        day_pct = (total_compliant_count / total_responsible_count) * 100.0
-        day_state = "Day pass" if day_pct >= 90.0 else "Day fail"
+        day_pct = (
+            disconnect_supported_conformant_count
+            / disconnect_supported_responsible_count
+        ) * 100.0
+        day_state = "Pass" if day_pct >= 90.0 else "Fail"
         day_label_text = (
-            f"{day_state} {day_pct:.1f}% | "
-            f"LOS {los_compliant_count}/{los_responsible_count} responsible | "
-            f"OV1 {ov1_compliant_count}/{ov1_responsible_count} responsible"
+            f"Day total: {day_state} {day_pct:.1f}% "
+            f"({disconnect_supported_conformant_count}/"
+            f"{disconnect_supported_responsible_count})"
         )
+        day_breakdown_text = (
+            f"Base: LSO {los_conformant_count}/{los_responsible_count}, "
+            f"OV1 {ov1_conformant_count}/{ov1_responsible_count}"
+        )
+        if los_disconnect_support_added_count or ov1_disconnect_support_added_count:
+            day_breakdown_text = (
+                f"{day_breakdown_text} | Additional conformant: "
+                f"LSO {los_disconnect_support_added_count}, "
+                f"OV1 {ov1_disconnect_support_added_count}"
+            )
 
     plot_date = _format_plot_date(day_label, x)
-    title = f"Site example | Date: {plot_date} | {overall_label}"
+    title = f"Site {site_number} | Date: {plot_date} | Site: {overall_label}"
     if day_label_text:
         title = f"{title}\n{day_label_text}"
+    if day_breakdown_text:
+        title = f"{title}\n{day_breakdown_text}"
 
-    title_axis.set_title(title, pad=12)
+    fig.suptitle(title, x=0.5, y=0.985, ha="center")
     if is_single_phase:
         ax_main.set_ylabel("Power (kW)")
         ax_main.set_xlabel("Time")
@@ -318,7 +435,7 @@ def plot_site_compliance_day(
         p_ax.spines["right"].set_visible(False)
 
     all_voltage_vals = [v for v in [*v10m_vals, *vinst_vals] if v is not None]
-    for _, value, _, _ in thresholds_to_draw:
+    for _, value, _, _, _ in thresholds_to_draw:
         if value is not None:
             all_voltage_vals.append(value)
     if all_voltage_vals:
@@ -355,64 +472,61 @@ def plot_site_compliance_day(
         mdates.DateFormatter("%H:%M", tz=plot_timezone)
     )
 
+    legend_entries = {}
     if is_single_phase:
-        lines, labels = ax_main.get_legend_handles_labels()
-        v_lines, v_labels = voltage_axes[0].get_legend_handles_labels()
-        if event_active is not None and bool(np.any(event_active)):
-            v_lines = v_lines + [
-                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
-            ]
-            v_labels = v_labels + ["Responsible timestamp"]
-        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
-            np.any(disconnected_below_lso_ov1_threshold_mask)
-        ):
-            v_lines = v_lines + [
-                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
-            ]
-            v_labels = v_labels + ["Disconnected below threshold"]
-        ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
+        for axis in (ax_main, voltage_axes[0]):
+            axis_lines, axis_labels = axis.get_legend_handles_labels()
+            for handle, label in zip(axis_lines, axis_labels, strict=True):
+                if label not in legend_entries:
+                    legend_entries[label] = handle
     else:
-        top_lines, top_labels = ax_top.get_legend_handles_labels()
-        top_v_lines, top_v_labels = voltage_axes[0].get_legend_handles_labels()
-        if event_active is not None and bool(np.any(event_active)):
-            top_v_lines = top_v_lines + [
-                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
-            ]
-            top_v_labels = top_v_labels + ["Responsible timestamp"]
-        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
-            np.any(disconnected_below_lso_ov1_threshold_mask)
-        ):
-            top_v_lines = top_v_lines + [
-                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
-            ]
-            top_v_labels = top_v_labels + ["Disconnected below threshold"]
-        ax_top.legend(
-            top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
+        for axis in (ax_top, ax_bottom, voltage_axes[0]):
+            axis_lines, axis_labels = axis.get_legend_handles_labels()
+            for handle, label in zip(axis_lines, axis_labels, strict=True):
+                if label not in legend_entries:
+                    legend_entries[label] = handle
+
+    if base_responsible_mask is not None and bool(np.any(base_responsible_mask)):
+        legend_entries[
+            "Timestamps at/above calculated threshold (LOS/OV1)"
+        ] = Patch(
+            facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none"
+        )
+    if additional_responsible_mask is not None and bool(
+        np.any(additional_responsible_mask)
+    ):
+        legend_entries[
+            "Additional disconnected timestamps at/above lowest-disconnect value"
+        ] = Patch(
+            facecolor=PLOT_COLORS["shade_extra"], alpha=0.18, edgecolor="none"
+        )
+    if disconnected_below_threshold_mask is not None and bool(
+        np.any(disconnected_below_threshold_mask)
+    ):
+        legend_entries["Disconnected (below threshold)"] = Patch(
+            facecolor="#9ca3af", alpha=0.22, edgecolor="none"
+        )
+    if disconnected_missing_voltage_mask is not None and bool(
+        np.any(disconnected_missing_voltage_mask)
+    ):
+        legend_entries["Disconnected (missing voltage)"] = Patch(
+            facecolor=PLOT_COLORS["shade_missing_voltage"],
+            alpha=0.22,
+            edgecolor="none",
         )
 
-        bottom_lines, bottom_labels = ax_bottom.get_legend_handles_labels()
-        bottom_v_lines, bottom_v_labels = voltage_axes[1].get_legend_handles_labels()
-        if event_active is not None and bool(np.any(event_active)):
-            bottom_v_lines = bottom_v_lines + [
-                Patch(facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none")
-            ]
-            bottom_v_labels = bottom_v_labels + ["Responsible timestamp"]
-        if disconnected_below_lso_ov1_threshold_mask is not None and bool(
-            np.any(disconnected_below_lso_ov1_threshold_mask)
-        ):
-            bottom_v_lines = bottom_v_lines + [
-                Patch(facecolor="#9ca3af", alpha=0.22, edgecolor="none")
-            ]
-            bottom_v_labels = bottom_v_labels + ["Disconnected below threshold"]
-        ax_bottom.legend(
-            bottom_lines + bottom_v_lines,
-            bottom_labels + bottom_v_labels,
-            loc="upper left",
-            ncol=2,
-        )
+    fig.legend(
+        list(legend_entries.values()),
+        list(legend_entries.keys()),
+        loc="upper left",
+        bbox_to_anchor=(0.02, 0.885 if is_single_phase else 0.925),
+        borderaxespad=0,
+        frameon=False,
+        ncol=4 if len(legend_entries) > 8 else 3,
+    )
 
     fig.autofmt_xdate()
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0, 1, 0.80 if is_single_phase else 0.88))
 
     if save_path is not None:
         save_path = Path(save_path)
@@ -437,7 +551,7 @@ def plot_method_threshold_overlay_day(
     save_path: str | Path | None = None,
 ):
     """
-    Plot a site-day using the comparison overlay layout and multi-method LOS
+    Plot a site-day using the comparison overlay layout and multi-method LSO
     thresholds on the same voltage axis.
 
     Expected method_thresholds entries:
@@ -460,9 +574,11 @@ def plot_method_threshold_overlay_day(
         return
 
     plot_df = df.sort("local_tstamp")
-    if "site_power" not in plot_df.columns:
+    if "site_power_calculated" not in plot_df.columns:
         plot_df = plot_df.with_columns(
-            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias("site_power")
+            pl.sum_horizontal([pl.col(c) for c in power_cols]).alias(
+                "site_power_calculated"
+            )
         )
 
     x = plot_df["local_tstamp"].to_list()
@@ -517,7 +633,7 @@ def plot_method_threshold_overlay_day(
         if event_spans:
             overlay_spans.append(
                 {
-                    "label": "Responsible timestamp",
+                    "label": "Timestamps at/above calculated threshold (LOS/OV1)",
                     "color": PLOT_COLORS["shade"],
                     "alpha": 0.22,
                     "spans": event_spans,
@@ -574,7 +690,7 @@ def plot_method_threshold_overlay_day(
 
         ax_bottom.plot(
             x,
-            plot_df["site_power"].to_list(),
+            plot_df["site_power_calculated"].to_list(),
             color=PLOT_COLORS["power_total"],
             linewidth=1.8,
             zorder=4,
@@ -610,19 +726,19 @@ def plot_method_threshold_overlay_day(
                 linewidth=1.4,
                 alpha=0.9,
                 zorder=1,
-                label=f'{method_info["label"]} LOS {threshold_value:.3f} V',
+                label=f'{method_info["label"]} LSO {threshold_value:.3f} V',
             )
 
     method_status_parts = []
     for method_info in method_thresholds:
         day_eligible_ts = method_info.get("day_eligible_timestamps")
-        day_compliant_ts = method_info.get("day_compliant_timestamps")
-        day_status, day_pct = _day_status_label(day_compliant_ts, day_eligible_ts)
+        day_conformant_ts = method_info.get("day_conformant_timestamps")
+        day_status, day_pct = _day_status_label(day_conformant_ts, day_eligible_ts)
         if day_pct is not None:
             method_status_parts.append(
                 f'{method_info["label"]}: site {method_info["status"]} | '
                 f'day {day_status} {day_pct:.1f}% '
-                f'({int(day_compliant_ts)}/{int(day_eligible_ts)} ts)'
+                f'({int(day_conformant_ts)}/{int(day_eligible_ts)} ts)'
             )
         else:
             method_status_parts.append(
@@ -630,7 +746,7 @@ def plot_method_threshold_overlay_day(
             )
     method_status_text = " | ".join(method_status_parts)
     plot_date = _format_plot_date(day_label, x)
-    title = f"Site example | Date: {plot_date}"
+    title = f"Site {site_number} | Date: {plot_date}"
     if method_status_text:
         title = f"{title}\n{method_status_text}"
 

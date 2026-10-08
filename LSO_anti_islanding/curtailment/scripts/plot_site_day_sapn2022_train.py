@@ -1,4 +1,4 @@
-"""Plot single-site, single-day EVM nonconformance traces."""
+"""Plot single-site, single-day SAPN2022 training nonconformance traces."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ PLOT_COLUMNS = [
     "uncurtailed_P",
     "los_or_ov1_flag",
     "voltage_10m_avg",
-    "nonconformance_EVM",
+    "nonconformance_sapn2022_train",
 ]
 
 
@@ -164,13 +164,13 @@ def _read_bucket_rows(
     )
 
 
-def prepare_site_day_evm_data(
+def prepare_site_day_sapn2022_train_data(
     site_id: int,
     local_date: int | str | date,
     all_uncurtailed_path: Path = DEFAULT_ALL_UNCURTAILED,
     eligible_buckets5m_path: Path = DEFAULT_ELIGIBLE_BUCKETS5M,
 ) -> pl.DataFrame:
-    """Build the joined dataframe used by the EVM day plot.
+    """Build the joined dataframe used by the SAPN2022 training day plot.
 
     This function:
     - reads full-timeline `P_kw`, `los_or_ov1_flag`, and `v10m_avg_avg`
@@ -178,7 +178,7 @@ def prepare_site_day_evm_data(
     - reads optional `uncurtailed_P` from `all_uncurtailedPV_5m`
     - keeps only the requested site and local day within 06:00-18:00
     - left-joins `uncurtailed_P` onto the full bucket timeline
-    - derives `voltage_10m_avg` and `nonconformance_EVM`
+    - derives `voltage_10m_avg` and `nonconformance_sapn2022_train`
     """
     target_date = _coerce_local_date(local_date)
     all_uncurtailed_path = Path(all_uncurtailed_path)
@@ -226,7 +226,7 @@ def prepare_site_day_evm_data(
                 pl.when(pl.col("los_or_ov1_flag") == 1)
                 .then(pl.col("site_power_kw_avg"))
                 .otherwise(pl.lit(0.0))
-                .alias("nonconformance_EVM"),
+                .alias("nonconformance_sapn2022_train"),
             ]
         )
         .select(PLOT_COLUMNS)
@@ -245,7 +245,7 @@ def site_with_days(site_id: int, curtailment_summary: pl.DataFrame) -> list[int]
     )
 
 
-def plot_site_day_evm(
+def plot_site_day_sapn2022_train(
     site_id: int,
     local_date: int | str | date,
     all_uncurtailed_path: Path = DEFAULT_ALL_UNCURTAILED,
@@ -254,7 +254,7 @@ def plot_site_day_evm(
     save_path: Path | None = None,
     dpi: int = 300,
 ) -> tuple[Figure, tuple[Axes, Axes]]:
-    """Create a single-site, single-day EVM plot and optionally save it.
+    """Create a single-site, single-day SAPN2022 training plot and optionally save it.
 
     The returned figure and axes let you inspect or tweak the plot after calling
     the function. If `save_plot` is True, the PNG is written either to the
@@ -266,10 +266,10 @@ def plot_site_day_evm(
             PROJECT_ROOT
             / "outputs"
             / "plots"
-            / f"site_{site_id}_{target_date.day}_evm_day_plot.png"
+            / f"site_{site_id}_{target_date.day}_sapn2022_train_day_plot.png"
         )
 
-    plot_df = prepare_site_day_evm_data(
+    plot_df = prepare_site_day_sapn2022_train_data(
         site_id=site_id,
         local_date=target_date,
         all_uncurtailed_path=Path(all_uncurtailed_path),
@@ -297,10 +297,10 @@ def plot_site_day_evm(
         )
         ax_left.plot(
             plot_pd["local_tstamp"],
-            plot_pd["nonconformance_EVM"],
+            plot_pd["nonconformance_sapn2022_train"],
             color=NONCONFORMANCE_COLOR,
             linewidth=2.2,
-            label="nonconformance_EVM",
+            label="nonconformance_sapn2022_train",
             alpha=0.85,
             zorder=3,
         )
@@ -357,10 +357,15 @@ def plot_site_day_evm(
             [
                 left_lookup["P_kw"],
                 left_lookup["uncurtailed_P"],
-                left_lookup["nonconformance_EVM"],
+                left_lookup["nonconformance_sapn2022_train"],
                 handles_right[0],
             ],
-            ["P_kw", "uncurtailed_P", "nonconformance_EVM", "voltage_10m_avg"],
+            [
+                "P_kw",
+                "uncurtailed_P",
+                "nonconformance_sapn2022_train",
+                "voltage_10m_avg",
+            ],
             loc="upper left",
             bbox_to_anchor=(0.0, -0.18),
             ncol=4,
@@ -393,7 +398,7 @@ def main():
     for site_id in site_ids:
         days = site_with_days(site_id, curtailment_summary)
         for day in days:
-            fig, _ = plot_site_day_evm(
+            fig, _ = plot_site_day_sapn2022_train(
                 site_id=site_id,
                 local_date=day,
                 save_plot=True,
