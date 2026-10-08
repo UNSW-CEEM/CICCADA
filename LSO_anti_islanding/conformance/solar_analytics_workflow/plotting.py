@@ -411,7 +411,7 @@ def plot_site_conformance_day(
             )
 
     plot_date = _format_plot_date(day_label, x)
-    title = f"Site example | Date: {plot_date} | Site: {overall_label}"
+    title = f"Site {site_number} | Date: {plot_date} | Site: {overall_label}"
     if day_label_text:
         title = f"{title}\n{day_label_text}"
     if day_breakdown_text:
@@ -744,7 +744,7 @@ def plot_method_threshold_overlay_day(
             )
     method_status_text = " | ".join(method_status_parts)
     plot_date = _format_plot_date(day_label, x)
-    title = f"Site example | Date: {plot_date}"
+    title = f"Site {site_number} | Date: {plot_date}"
     if method_status_text:
         title = f"{title}\n{method_status_text}"
 
