@@ -88,7 +88,8 @@ def classify_disconnects_as_los_or_ov1(
     edge_result,
     PRated,
     *,
-    los_lo=251.1,
+    los_lo=251.1, # 3% 3error
+    # los_lo=244, # 3% 3error
     los_hi_strict=259.0,
     los_hi_cap=260.3,
 ):
@@ -132,6 +133,8 @@ def classify_disconnects_as_los_or_ov1(
         mechanism = None
         disconnect_voltage = None
         grey_non_sustained = False
+
+        # uncomment the following block for inclduding grey band
         vinst_in_ov1_region = vinst is not None and (
             los_hi_strict <= vinst <= los_hi_cap
         )
@@ -151,6 +154,15 @@ def classify_disconnects_as_los_or_ov1(
                 mechanism = "LOS"
                 disconnect_voltage = v10m
 
+        # comment below and uncoment above to implement grey band
+        # if vinst is not None and vinst >= los_hi_strict:
+        #     mechanism = "OV1"
+        #     disconnect_voltage = vinst
+        # elif v10m is not None and (los_lo <= v10m <= los_hi_strict):
+        #     mechanism = "LOS"
+        #     disconnect_voltage = v10m
+        ####
+        
         if mechanism is None or disconnect_voltage is None:
             continue
 
