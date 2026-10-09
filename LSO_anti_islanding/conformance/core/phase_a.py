@@ -1,5 +1,7 @@
 """Linear disconnect-edge detection, attribution, and threshold learning."""
 
+import json
+from statistics import median
 from typing import Any
 
 import polars as pl
@@ -8,16 +10,25 @@ MAX_DISCONNECT_EDGE_GAP_SECONDS = 300
 
 SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
     "site_id": pl.Int64,
+    "outlier_aware_thresholds": pl.Boolean,
     "los_threshold": pl.Float64,
     "los_lowest_disconnect_voltage": pl.Float64,
     "los_median_all_disconnect_voltages": pl.Float64,
     "los_lowest_reconnect_voltage": pl.Float64,
     "los_median_all_reconnect_voltages": pl.Float64,
+    "los_cluster_type": pl.Utf8,
+    "los_primary_cluster_count": pl.Int64,
+    "los_outlier_voltages": pl.Utf8,
+    "los_secondary_clusters": pl.Utf8,
     "ov1_threshold": pl.Float64,
     "ov1_lowest_disconnect_voltage": pl.Float64,
     "ov1_median_all_disconnect_voltages": pl.Float64,
     "ov1_lowest_reconnect_voltage": pl.Float64,
     "ov1_median_all_reconnect_voltages": pl.Float64,
+    "ov1_cluster_type": pl.Utf8,
+    "ov1_primary_cluster_count": pl.Int64,
+    "ov1_outlier_voltages": pl.Utf8,
+    "ov1_secondary_clusters": pl.Utf8,
 }
 
 
@@ -88,7 +99,7 @@ def classify_disconnects_as_los_or_ov1(
     edge_result,
     PRated,
     *,
-    los_lo=251.1, # 3% 3error
+    los_lo=251.1,  # 3% 3error
     # los_lo=244, # 3% 3error
     los_hi_strict=259.0,
     los_hi_cap=260.3,
@@ -162,7 +173,7 @@ def classify_disconnects_as_los_or_ov1(
         #     mechanism = "LOS"
         #     disconnect_voltage = v10m
         ####
-        
+
         if mechanism is None or disconnect_voltage is None:
             continue
 
@@ -195,9 +206,43 @@ def classify_disconnects_as_los_or_ov1(
     return pl.DataFrame(records, schema=record_schema, strict=False)
 
 
-def learn_site_thresholds(records: pl.DataFrame):
+def _partition_voltage_intervals(values, width):
+    """Greedily partition sorted voltages into strongest fixed-width intervals."""
+    remaining_values = list(values)
+    clusters = []
+
+    while remaining_values:
+        winning_left = 0
+        winning_right = 1
+        right = 0
+        for left, start_v in enumerate(remaining_values):
+            right = max(right, left)
+            while (
+                right < len(remaining_values)
+                and remaining_values[right] <= start_v + width
+            ):
+                right += 1
+            if right - left > winning_right - winning_left:
+                winning_left = left
+                winning_right = right
+
+        clusters.append(remaining_values[winning_left:winning_right])
+        remaining_values = (
+            remaining_values[:winning_left] + remaining_values[winning_right:]
+        )
+
+    return clusters
+
+
+def learn_site_thresholds(
+    records: pl.DataFrame,
+    *,
+    outlier_aware_thresholds=False,
+):
     """Learn thresholds and summarize all paired site voltages by mechanism."""
-    site_voltages = {}
+    site_voltages = {
+        "outlier_aware_thresholds": bool(outlier_aware_thresholds),
+    }
     for mechanism, voltage_column, prefix, default in (
         ("LOS", "v10m_disc", "los", 258.0),
         ("OV1", "vinst_disc", "ov1", 265.0),
@@ -216,54 +261,115 @@ def learn_site_thresholds(records: pl.DataFrame):
         reconnect_values = sorted(float(value) for value in reconnect_values)
         voltage_range = None if not values else max(values) - min(values)
 
-        winning_values = []
-        right = 0
-        for left, start_v in enumerate(values):
-            right = max(right, left)
-            while right < len(values) and values[right] <= start_v + 0.5:
-                right += 1
-            candidate = values[left:right]
-            if len(candidate) > len(winning_values):
-                winning_values = candidate
+        half_volt_clusters = _partition_voltage_intervals(values, 0.5)
+        winning_values = half_volt_clusters[0] if half_volt_clusters else []
+        winning_median = float(median(winning_values)) if winning_values else None
+        all_disconnect_median = float(median(values)) if values else None
+        all_reconnect_median = (
+            float(median(reconnect_values)) if reconnect_values else None
+        )
 
-        winning_median = None
-        if winning_values:
-            middle_index = len(winning_values) // 2
-            if len(winning_values) % 2 == 1:
-                winning_median = winning_values[middle_index]
-            else:
-                winning_median = (
-                    winning_values[middle_index - 1] + winning_values[middle_index]
-                ) / 2.0
-
-        all_disconnect_median = None
-        if values:
-            middle_index = len(values) // 2
-            if len(values) % 2 == 1:
-                all_disconnect_median = values[middle_index]
-            else:
-                all_disconnect_median = (
-                    values[middle_index - 1] + values[middle_index]
-                ) / 2.0
-
-        all_reconnect_median = None
-        if reconnect_values:
-            middle_index = len(reconnect_values) // 2
-            if len(reconnect_values) % 2 == 1:
-                all_reconnect_median = reconnect_values[middle_index]
-            else:
-                all_reconnect_median = (
-                    reconnect_values[middle_index - 1] + reconnect_values[middle_index]
-                ) / 2.0
-
-        learned = (
+        range_gated_threshold_learned = (
             len(winning_values) >= 3
             and voltage_range is not None
             and voltage_range <= 2.0
         )
+
+        primary_cluster = []
+        remaining_clusters = []
+        cluster_type = "no_cluster"
+
+        if len(winning_values) >= 3:
+            largest_count = len(winning_values)
+            equally_largest_clusters = [
+                cluster
+                for cluster in half_volt_clusters
+                if len(cluster) == largest_count
+            ]
+            combined_equal_clusters = sorted(
+                value for cluster in equally_largest_clusters for value in cluster
+            )
+
+            if (
+                len(equally_largest_clusters) > 1
+                and combined_equal_clusters[-1] - combined_equal_clusters[0] <= 1.0
+            ):
+                # Equal leading clusters that fit within 1 V form one wide cluster.
+                primary_cluster = combined_equal_clusters
+                remaining_clusters = half_volt_clusters[len(equally_largest_clusters) :]
+                cluster_type = "wide_cluster"
+            else:
+                # A tie outside 1 V is resolved conservatively to the lower median.
+                selected_primary_index = min(
+                    (
+                        index
+                        for index, cluster in enumerate(half_volt_clusters)
+                        if len(cluster) == largest_count
+                    ),
+                    key=lambda index: float(median(half_volt_clusters[index])),
+                )
+                primary_cluster = half_volt_clusters[selected_primary_index]
+                remaining_clusters = [
+                    cluster
+                    for index, cluster in enumerate(half_volt_clusters)
+                    if index != selected_primary_index
+                ]
+        else:
+            one_volt_clusters = _partition_voltage_intervals(values, 1.0)
+            if one_volt_clusters and len(one_volt_clusters[0]) >= 3:
+                primary_cluster = one_volt_clusters[0]
+                remaining_values = sorted(
+                    value for cluster in one_volt_clusters[1:] for value in cluster
+                )
+                remaining_clusters = _partition_voltage_intervals(
+                    remaining_values,
+                    0.5,
+                )
+                cluster_type = "wide_cluster"
+            else:
+                remaining_clusters = half_volt_clusters
+
+        outlier_values = sorted(
+            cluster[0] for cluster in remaining_clusters if len(cluster) == 1
+        )
+        secondary_clusters = [
+            cluster for cluster in remaining_clusters if len(cluster) >= 2
+        ]
+        primary_median = float(median(primary_cluster)) if primary_cluster else None
+
+        if primary_cluster and cluster_type != "wide_cluster":
+            if secondary_clusters:
+                maximum_separation = max(
+                    abs(float(median(cluster)) - primary_median)
+                    for cluster in secondary_clusters
+                )
+                cluster_type = (
+                    "multimodal_large_separation"
+                    if maximum_separation > 2.0
+                    else "multimodal"
+                )
+            elif outlier_values:
+                cluster_type = "clustered_with_outliers"
+            else:
+                cluster_type = "clustered"
+
+        if outlier_aware_thresholds:
+            threshold = primary_median if primary_median is not None else default
+        elif range_gated_threshold_learned:
+            threshold = winning_median
+        else:
+            threshold = default
+        secondary_cluster_summary = [
+            {
+                "count": len(cluster),
+                "median": float(median(cluster)),
+            }
+            for cluster in secondary_clusters
+        ]
+
         site_voltages.update(
             {
-                f"{prefix}_threshold": winning_median if learned else default,
+                f"{prefix}_threshold": threshold,
                 f"{prefix}_lowest_disconnect_voltage": (
                     min(values) if values else None
                 ),
@@ -272,13 +378,26 @@ def learn_site_thresholds(records: pl.DataFrame):
                     min(reconnect_values) if reconnect_values else None
                 ),
                 f"{prefix}_median_all_reconnect_voltages": all_reconnect_median,
+                f"{prefix}_cluster_type": cluster_type,
+                f"{prefix}_primary_cluster_count": len(primary_cluster),
+                f"{prefix}_outlier_voltages": json.dumps(outlier_values),
+                f"{prefix}_secondary_clusters": json.dumps(
+                    secondary_cluster_summary,
+                    separators=(",", ":"),
+                ),
             }
         )
 
     return site_voltages
 
 
-def run_phase_a_for_site(site_id, prepared_site_days, PRated):
+def run_phase_a_for_site(
+    site_id,
+    prepared_site_days,
+    PRated,
+    *,
+    outlier_aware_thresholds=False,
+):
     """Run Phase A for one site and produce thresholds plus voltage summaries."""
     records_all = []
     for prepared_day in prepared_site_days:
@@ -294,7 +413,10 @@ def run_phase_a_for_site(site_id, prepared_site_days, PRated):
     site_records = (
         pl.concat(records_all, how="vertical") if records_all else pl.DataFrame()
     )
-    site_voltage_values = learn_site_thresholds(site_records)
+    site_voltage_values = learn_site_thresholds(
+        site_records,
+        outlier_aware_thresholds=outlier_aware_thresholds,
+    )
     site_level_various_voltages = pl.DataFrame(
         [{"site_id": site_id, **site_voltage_values}],
         schema=SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA,
