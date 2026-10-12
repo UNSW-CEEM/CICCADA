@@ -362,7 +362,9 @@ def learn_site_thresholds(
             else:
                 cluster_type = "clustered"
 
-        if outlier_aware_thresholds:
+        if outlier_aware_thresholds and cluster_type == "multimodal_large_separation":
+            threshold = default
+        elif outlier_aware_thresholds:
             threshold = threshold_median if threshold_median is not None else default
         elif range_gated_threshold_learned:
             threshold = winning_median
