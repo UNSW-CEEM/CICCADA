@@ -238,9 +238,7 @@ def plot_site_conformance_day(
                 zorder=0,
                 linewidth=0,
             )
-        if base_responsible_mask is not None and bool(
-            np.any(base_responsible_mask)
-        ):
+        if base_responsible_mask is not None and bool(np.any(base_responsible_mask)):
             axis.fill_between(
                 x,
                 0,
@@ -485,9 +483,7 @@ def plot_site_conformance_day(
                     legend_entries[label] = handle
 
     if base_responsible_mask is not None and bool(np.any(base_responsible_mask)):
-        legend_entries[
-            "Timestamps at/above calculated threshold (LOS/OV1)"
-        ] = Patch(
+        legend_entries["Timestamps at/above calculated threshold (LOS/OV1)"] = Patch(
             facecolor=PLOT_COLORS["shade"], alpha=0.18, edgecolor="none"
         )
     if additional_responsible_mask is not None and bool(
@@ -495,9 +491,7 @@ def plot_site_conformance_day(
     ):
         legend_entries[
             "Additional disconnected timestamps at/above lowest-disconnect value"
-        ] = Patch(
-            facecolor=PLOT_COLORS["shade_extra"], alpha=0.18, edgecolor="none"
-        )
+        ] = Patch(facecolor=PLOT_COLORS["shade_extra"], alpha=0.18, edgecolor="none")
     if disconnected_below_threshold_mask is not None and bool(
         np.any(disconnected_below_threshold_mask)
     ):
@@ -724,7 +718,7 @@ def plot_method_threshold_overlay_day(
                 linewidth=1.4,
                 alpha=0.9,
                 zorder=1,
-                label=f'{method_info["label"]} LSO {threshold_value:.3f} V',
+                label=f"{method_info['label']} LSO {threshold_value:.3f} V",
             )
 
     method_status_parts = []
@@ -734,13 +728,13 @@ def plot_method_threshold_overlay_day(
         day_status, day_pct = _day_status_label(day_conformant_ts, day_eligible_ts)
         if day_pct is not None:
             method_status_parts.append(
-                f'{method_info["label"]}: site {method_info["status"]} | '
-                f'day {day_status} {day_pct:.1f}% '
-                f'({int(day_conformant_ts)}/{int(day_eligible_ts)} ts)'
+                f"{method_info['label']}: site {method_info['status']} | "
+                f"day {day_status} {day_pct:.1f}% "
+                f"({int(day_conformant_ts)}/{int(day_eligible_ts)} ts)"
             )
         else:
             method_status_parts.append(
-                f'{method_info["label"]}: site {method_info["status"]} | day {day_status}'
+                f"{method_info['label']}: site {method_info['status']} | day {day_status}"
             )
     method_status_text = " | ".join(method_status_parts)
     plot_date = _format_plot_date(day_label, x)
@@ -810,7 +804,7 @@ def plot_method_threshold_overlay_day(
                 for overlay_info in overlay_spans
             ]
             v_labels = v_labels + [
-                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+                f"{overlay_info['label']} EVM window" for overlay_info in overlay_spans
             ]
         ax_main.legend(lines + v_lines, labels + v_labels, loc="upper left", ncol=2)
     else:
@@ -826,7 +820,7 @@ def plot_method_threshold_overlay_day(
                 for overlay_info in overlay_spans
             ]
             top_v_labels = top_v_labels + [
-                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+                f"{overlay_info['label']} EVM window" for overlay_info in overlay_spans
             ]
         ax_top.legend(
             top_lines + top_v_lines, top_labels + top_v_labels, loc="upper left", ncol=2
@@ -844,7 +838,7 @@ def plot_method_threshold_overlay_day(
                 for overlay_info in overlay_spans
             ]
             bottom_v_labels = bottom_v_labels + [
-                f'{overlay_info["label"]} EVM window' for overlay_info in overlay_spans
+                f"{overlay_info['label']} EVM window" for overlay_info in overlay_spans
             ]
         ax_bottom.legend(
             bottom_lines + bottom_v_lines,
