@@ -345,10 +345,11 @@ def learn_site_thresholds(
 
         if primary_cluster:
             if secondary_clusters:
-                maximum_separation = max(
-                    abs(float(median(cluster)) - primary_median)
-                    for cluster in secondary_clusters
-                )
+                cluster_medians = [
+                    primary_median,
+                    *(float(median(cluster)) for cluster in secondary_clusters),
+                ]
+                maximum_separation = max(cluster_medians) - min(cluster_medians)
                 cluster_type = (
                     "multimodal_large_separation"
                     if maximum_separation > 2.0
