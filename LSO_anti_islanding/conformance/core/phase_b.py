@@ -53,9 +53,7 @@ def select_thresholds_for_conformance(
                 "site_id",
                 pl.lit(threshold_method, dtype=pl.Utf8).alias("threshold_method"),
                 pl.lit(258.0, dtype=pl.Float64).alias("los_threshold_used"),
-                pl.lit(265.0 - tau, dtype=pl.Float64).alias(
-                    "ov1_threshold_used"
-                ),
+                pl.lit(265.0 - tau, dtype=pl.Float64).alias("ov1_threshold_used"),
                 "los_lowest_disconnect_voltage",
                 "ov1_lowest_disconnect_voltage",
             ]
@@ -102,10 +100,7 @@ def evaluate_conformance_for_day(
         frame = frame.with_columns(
             (
                 pl.col("eligible_for_disconnect_support")
-                & (
-                    pl.col("site_power_calculated")
-                    <= pl.lit(1e-8, dtype=pl.Float64)
-                )
+                & (pl.col("site_power_calculated") <= pl.lit(1e-8, dtype=pl.Float64))
                 & pl.col("ov1_signals_available")
                 & (
                     pl.col("vinst_max")
@@ -118,10 +113,7 @@ def evaluate_conformance_for_day(
         frame = frame.with_columns(
             (
                 pl.col("eligible_for_disconnect_support")
-                & (
-                    pl.col("site_power_calculated")
-                    <= pl.lit(1e-8, dtype=pl.Float64)
-                )
+                & (pl.col("site_power_calculated") <= pl.lit(1e-8, dtype=pl.Float64))
                 & (~pl.col("ov1_disconnect_support_added"))
                 & pl.col("los_signals_available")
                 & (
@@ -163,8 +155,7 @@ def evaluate_conformance_for_day(
         (
             pl.col("is_disc").fill_null(False)
             & (
-                pl.col("site_power_calculated")
-                <= pl.lit(1e-8, dtype=pl.Float64)
+                pl.col("site_power_calculated") <= pl.lit(1e-8, dtype=pl.Float64)
             )  # added this so discnnction in this case is really when gernation is 0
             & ~(
                 pl.col("los_responsible")
@@ -227,10 +218,7 @@ def aggregate_all_daily_conformance_for_site(site_id, evaluated_site_days):
             .sum()
             .cast(pl.Int64)
             .alias("ov1_responsible_count"),
-            pl.col("ov1_conformant")
-            .sum()
-            .cast(pl.Int64)
-            .alias("ov1_conformant_count"),
+            pl.col("ov1_conformant").sum().cast(pl.Int64).alias("ov1_conformant_count"),
             pl.col("los_disconnect_support_added")
             .sum()
             .cast(pl.Int64)
@@ -265,16 +253,10 @@ def score_site_conformance(
         how="inner",
     ).with_columns(
         [
-            (
-                pl.col("los_responsible_count")
-                + pl.col("ov1_responsible_count")
-            )
+            (pl.col("los_responsible_count") + pl.col("ov1_responsible_count"))
             .cast(pl.Int64)
             .alias("overall_responsible_count"),
-            (
-                pl.col("los_conformant_count")
-                + pl.col("ov1_conformant_count")
-            )
+            (pl.col("los_conformant_count") + pl.col("ov1_conformant_count"))
             .cast(pl.Int64)
             .alias("overall_conformant_count"),
             (
@@ -461,12 +443,8 @@ def run_phase_b_for_site(
         threshold_source=threshold_source,
         tau=tau,
     )
-    los_threshold_used = selected_thresholds.get_column(
-        "los_threshold_used"
-    ).item()
-    ov1_threshold_used = selected_thresholds.get_column(
-        "ov1_threshold_used"
-    ).item()
+    los_threshold_used = selected_thresholds.get_column("los_threshold_used").item()
+    ov1_threshold_used = selected_thresholds.get_column("ov1_threshold_used").item()
     los_lowest_disconnect_voltage = selected_thresholds.get_column(
         "los_lowest_disconnect_voltage"
     ).item()

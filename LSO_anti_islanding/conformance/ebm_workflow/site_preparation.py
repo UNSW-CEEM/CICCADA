@@ -14,8 +14,11 @@ def select_site_pv_data(all_data, circuit_details, site_number):
     )
     pv_circuit_ids = (
         circuit_details_df.filter(
-            (pl.col("site_id") == site_number) & 
-            ((pl.col("con_type") == "pv_site_net") | (pl.col("con_type") == "pv_site"))
+            (pl.col("site_id") == site_number)
+            & (
+                (pl.col("con_type") == "pv_site_net")
+                | (pl.col("con_type") == "pv_site")
+            )
         )
         .select("c_id")
         .unique()
@@ -143,8 +146,10 @@ def calculate_site_day_voltage_signals(
         ]
     )
 
+
 DAY_ANALYSIS_START = time(6, 0)
-DAY_END            = time(18, 0)
+DAY_END = time(18, 0)
+
 
 def trim_site_day_analysis_window(
     site_day_df,
