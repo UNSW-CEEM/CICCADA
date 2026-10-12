@@ -252,7 +252,14 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         for day_info in eligible_analysis_days
     ]
 
-    phase_a = run_phase_a_for_site(site_id, prepared_site_days, rated_capacity)
+# set outlier_aware_thresholds == TRUE for new method
+# set outlier_aware_thresholds == FALSE for old method
+    phase_a = run_phase_a_for_site(
+        site_id,
+        prepared_site_days,
+        rated_capacity,
+        outlier_aware_thresholds=True,
+    )
     site_threshold_rows.append(phase_a["site_thresholds"])
     site_level_various_voltage_rows.append(phase_a["site_level_various_voltages"])
     if not phase_a["records"].is_empty():

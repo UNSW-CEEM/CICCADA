@@ -276,8 +276,10 @@ def learn_site_thresholds(
         )
 
         primary_cluster = []
+        threshold_cluster = []
         remaining_clusters = []
         cluster_type = "no_cluster"
+        used_one_volt_fallback = False
 
         if len(winning_values) >= 3:
             largest_count = len(winning_values)
@@ -289,35 +291,37 @@ def learn_site_thresholds(
             combined_equal_clusters = sorted(
                 value for cluster in equally_largest_clusters for value in cluster
             )
+            selected_primary_index = min(
+                (
+                    index
+                    for index, cluster in enumerate(half_volt_clusters)
+                    if len(cluster) == largest_count
+                ),
+                key=lambda index: float(median(half_volt_clusters[index])),
+            )
+            primary_cluster = half_volt_clusters[selected_primary_index]
+            remaining_clusters = [
+                cluster
+                for index, cluster in enumerate(half_volt_clusters)
+                if index != selected_primary_index
+            ]
 
             if (
                 len(equally_largest_clusters) > 1
                 and combined_equal_clusters[-1] - combined_equal_clusters[0] <= 1.0
             ):
-                # Equal leading clusters that fit within 1 V form one wide cluster.
-                primary_cluster = combined_equal_clusters
-                remaining_clusters = half_volt_clusters[len(equally_largest_clusters) :]
-                cluster_type = "wide_cluster"
+                # Preserve the existing threshold while diagnosing the equal
+                # 0.5 V clusters as separate modes.
+                threshold_cluster = combined_equal_clusters
             else:
-                # A tie outside 1 V is resolved conservatively to the lower median.
-                selected_primary_index = min(
-                    (
-                        index
-                        for index, cluster in enumerate(half_volt_clusters)
-                        if len(cluster) == largest_count
-                    ),
-                    key=lambda index: float(median(half_volt_clusters[index])),
-                )
-                primary_cluster = half_volt_clusters[selected_primary_index]
-                remaining_clusters = [
-                    cluster
-                    for index, cluster in enumerate(half_volt_clusters)
-                    if index != selected_primary_index
-                ]
+                # Preserve the selected primary; ties resolve to the lower median.
+                threshold_cluster = primary_cluster
         else:
             one_volt_clusters = _partition_voltage_intervals(values, 1.0)
             if one_volt_clusters and len(one_volt_clusters[0]) >= 3:
                 primary_cluster = one_volt_clusters[0]
+                threshold_cluster = primary_cluster
+                used_one_volt_fallback = True
                 remaining_values = sorted(
                     value for cluster in one_volt_clusters[1:] for value in cluster
                 )
@@ -325,7 +329,6 @@ def learn_site_thresholds(
                     remaining_values,
                     0.5,
                 )
-                cluster_type = "wide_cluster"
             else:
                 remaining_clusters = half_volt_clusters
 
@@ -336,8 +339,11 @@ def learn_site_thresholds(
             cluster for cluster in remaining_clusters if len(cluster) >= 2
         ]
         primary_median = float(median(primary_cluster)) if primary_cluster else None
+        threshold_median = (
+            float(median(threshold_cluster)) if threshold_cluster else None
+        )
 
-        if primary_cluster and cluster_type != "wide_cluster":
+        if primary_cluster:
             if secondary_clusters:
                 maximum_separation = max(
                     abs(float(median(cluster)) - primary_median)
@@ -348,13 +354,15 @@ def learn_site_thresholds(
                     if maximum_separation > 2.0
                     else "multimodal"
                 )
+            elif used_one_volt_fallback:
+                cluster_type = "wide_cluster"
             elif outlier_values:
                 cluster_type = "clustered_with_outliers"
             else:
                 cluster_type = "clustered"
 
         if outlier_aware_thresholds:
-            threshold = primary_median if primary_median is not None else default
+            threshold = threshold_median if threshold_median is not None else default
         elif range_gated_threshold_learned:
             threshold = winning_median
         else:
