@@ -53,6 +53,11 @@ def plot_site_conformance_days(
                 "csip_conformant",
                 "as_4777_conformant",
             )
+            .join(
+                site_metadata.lazy().select("pseudonym", "calc_capacity"),
+                on="pseudonym",
+                how="left",
+            )
             .with_columns(
                 pl.col("timestamp")
                 .dt.convert_time_zone(timezone_name)
@@ -140,6 +145,20 @@ def plot_site_conformance_days(
                 (pl.col("csip_export_limit_w_ffill") / 1000).alias(
                     "csip_export_limit_kw"
                 ),
+                pl.when(pl.col("volt_watt_conformant").is_not_null())
+                .then(
+                    pl.col("calc_capacity")
+                    * pl.when(pl.col("grid_voltage") < 260.0)
+                    .then(
+                        1.0
+                        - (pl.col("grid_voltage") - 253.0)
+                        * (0.8 / 7.0)
+                    )
+                    .otherwise(0.2)
+                    + 0.04 * pl.col("calc_capacity")
+                )
+                .otherwise(None)
+                .alias("volt_watt_ceiling_kw"),
             )
             passive_eligible = int(
                 site_day["passive_anti_islanding_conformant"].is_not_null().sum()
@@ -184,11 +203,9 @@ def plot_site_conformance_days(
                 volt_watt_mask = (
                     segment["volt_watt_conformant"].is_not_null().to_numpy()
                 )
+                segment_has_volt_watt = bool(volt_watt_mask.any())
                 has_cessation_shading = has_cessation_shading or bool(
                     cessation_mask.any()
-                )
-                has_volt_watt_shading = has_volt_watt_shading or bool(
-                    volt_watt_mask.any()
                 )
                 for shading_mask, shading_color in (
                     (cessation_mask, "#7c3aed"),
@@ -252,6 +269,20 @@ def plot_site_conformance_days(
                         else "_nolegend_"
                     ),
                 )
+                if segment_has_volt_watt:
+                    power_axis.plot(
+                        timestamps,
+                        segment["volt_watt_ceiling_kw"].to_list(),
+                        color="#0891b2",
+                        linewidth=1.6,
+                        linestyle="--",
+                        label=(
+                            "Volt-Watt conformance ceiling"
+                            if not has_volt_watt_shading
+                            else "_nolegend_"
+                        ),
+                    )
+                    has_volt_watt_shading = True
                 if performance["solar_coupling"] == "dc_only":
                     power_axis.plot(
                         timestamps,
