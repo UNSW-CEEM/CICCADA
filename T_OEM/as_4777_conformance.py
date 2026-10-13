@@ -235,6 +235,7 @@ def combined_conformance(
     system_power_kw_ac: float,
     solar_coupling: str,
     v_nom_max: float = 258.0,
+    csip_export_limit_usable: bool = True,
 ) -> pl.DataFrame:
     """Return timestamp-level results for coordinated conformance checks.
 
@@ -244,6 +245,8 @@ def combined_conformance(
     the sustained-operation limit supersedes normal-operation checks when the
     10-minute average voltage reaches ``v_nom_max``. During normal operation,
     Volt-Watt and (for DC-only systems) CSIP are assessed independently.
+    Set ``csip_export_limit_usable`` false when the raw CSIP signal has no
+    finite, positive export limit; CSIP results will then remain null.
 
     A nullable Boolean is returned for each check: true or false when the check
     applies, and null when it does not. ``as_4777_conformant`` contains the
@@ -355,7 +358,7 @@ def combined_conformance(
         )
     )
 
-    if solar_coupling == "dc_only":
+    if solar_coupling == "dc_only" and csip_export_limit_usable:
         scored_telemetry = scored_telemetry.with_columns(
             pl.when(
                 pl.col("_normal_operation")
