@@ -191,7 +191,10 @@ def plot_site_conformance_days(
                 height_ratios=(1, 1),
             )
             has_cessation_shading = False
-            has_volt_watt_shading = False
+            has_volt_watt_assessment = False
+            has_volt_watt_ceiling = False
+            has_volt_watt_conformant = False
+            has_volt_watt_non_conformant = False
             for segment_number, segment in enumerate(
                 site_day.partition_by("plot_segment", maintain_order=True)
             ):
@@ -204,12 +207,19 @@ def plot_site_conformance_days(
                     segment["volt_watt_conformant"].is_not_null().to_numpy()
                 )
                 segment_has_volt_watt = bool(volt_watt_mask.any())
+                has_volt_watt_assessment = (
+                    has_volt_watt_assessment or segment_has_volt_watt
+                )
                 has_cessation_shading = has_cessation_shading or bool(
                     cessation_mask.any()
                 )
-                for shading_mask, shading_color in (
-                    (cessation_mask, "#7c3aed"),
-                    (volt_watt_mask, "#0891b2"),
+                for shading_mask, shading_color, shading_axes in (
+                    (
+                        cessation_mask,
+                        "#7c3aed",
+                        (voltage_axis, power_axis),
+                    ),
+                    (volt_watt_mask, "#0891b2", (voltage_axis,)),
                 ):
                     shading_start = None
                     for mask_index, applicable in enumerate(shading_mask):
@@ -227,7 +237,7 @@ def plot_site_conformance_days(
                                 shading_end = timestamps[mask_index] + final_interval
                             else:
                                 shading_end = timestamps[mask_index]
-                            for axis in (voltage_axis, power_axis):
+                            for axis in shading_axes:
                                 axis.axvspan(
                                     shading_start,
                                     shading_end,
@@ -275,14 +285,59 @@ def plot_site_conformance_days(
                         segment["volt_watt_ceiling_kw"].to_list(),
                         color="#0891b2",
                         linewidth=1.6,
-                        linestyle="--",
+                        linestyle="-",
                         label=(
                             "Volt-Watt conformance ceiling"
-                            if not has_volt_watt_shading
+                            if not has_volt_watt_ceiling
                             else "_nolegend_"
                         ),
                     )
-                    has_volt_watt_shading = True
+                    has_volt_watt_ceiling = True
+                    conformant_volt_watt = segment.filter(
+                        pl.col("volt_watt_conformant")
+                    )
+                    non_conformant_volt_watt = segment.filter(
+                        pl.col("volt_watt_conformant").not_()
+                    )
+                    if conformant_volt_watt.height:
+                        power_axis.scatter(
+                            conformant_volt_watt["local_timestamp"].to_list(),
+                            conformant_volt_watt[
+                                "inverter_ac_real_power_kw"
+                            ].to_list(),
+                            color="#15803d",
+                            edgecolors="white",
+                            linewidths=0.5,
+                            marker="o",
+                            s=28,
+                            zorder=4,
+                            label=(
+                                "Volt-Watt conformant"
+                                if not has_volt_watt_conformant
+                                else "_nolegend_"
+                            ),
+                        )
+                        has_volt_watt_conformant = True
+                    if non_conformant_volt_watt.height:
+                        power_axis.scatter(
+                            non_conformant_volt_watt[
+                                "local_timestamp"
+                            ].to_list(),
+                            non_conformant_volt_watt[
+                                "inverter_ac_real_power_kw"
+                            ].to_list(),
+                            color="#dc2626",
+                            linewidths=1.4,
+                            marker="x",
+                            s=36,
+                            zorder=4,
+                            label=(
+                                "Volt-Watt non-conformant"
+                                if not has_volt_watt_non_conformant
+                                else "_nolegend_"
+                            ),
+                        )
+                        has_volt_watt_non_conformant = True
                 if performance["solar_coupling"] == "dc_only":
                     power_axis.plot(
                         timestamps,
@@ -339,11 +394,11 @@ def plot_site_conformance_days(
                     Patch(facecolor="#7c3aed", alpha=0.18, edgecolor="none")
                 )
                 voltage_labels.append("Sustained operation / passive anti-islanding")
-            if has_volt_watt_shading:
+            if has_volt_watt_assessment:
                 voltage_handles.append(
                     Patch(facecolor="#0891b2", alpha=0.18, edgecolor="none")
                 )
-                voltage_labels.append("Volt-Watt operation")
+                voltage_labels.append("Volt-Watt assessment period")
             figure.legend(
                 voltage_handles,
                 voltage_labels,
