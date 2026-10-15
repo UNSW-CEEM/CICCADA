@@ -16,7 +16,7 @@ def plot_site_conformance_days(
     site_metadata: pl.DataFrame,
     output_directory: str | Path = "site_level_plots",
 ) -> int:
-    """Save 06:00-18:00 local-time plots for AS/NZS-eligible site-days."""
+    """Save 06:00-18:00 local-time plots by applicable AS/NZS mechanism."""
     output_directory = Path(output_directory)
     performance_by_site = {
         row["pseudonym"]: row
@@ -51,7 +51,6 @@ def plot_site_conformance_days(
                 "sustained_operation_conformant",
                 "volt_watt_conformant",
                 "csip_conformant",
-                "as_4777_conformant",
             )
             .join(
                 site_metadata.lazy().select("pseudonym", "calc_capacity"),
@@ -71,7 +70,13 @@ def plot_site_conformance_days(
             .with_columns(pl.col("local_timestamp").dt.date().alias("local_date"))
         )
         eligible_site_days = (
-            local_results.filter(pl.col("as_4777_conformant").is_not_null())
+            local_results.filter(
+                pl.any_horizontal(
+                    pl.col("passive_anti_islanding_conformant").is_not_null(),
+                    pl.col("sustained_operation_conformant").is_not_null(),
+                    pl.col("volt_watt_conformant").is_not_null(),
+                )
+            )
             .select("pseudonym", "local_date")
             .unique()
         )
@@ -90,40 +95,29 @@ def plot_site_conformance_days(
         ):
             pseudonym, local_date = group_key
             performance = performance_by_site[pseudonym]
-            combined_status = performance["combined_conformant_standard_level"]
-            if combined_status is True:
-                status_directory = "conformant"
-                combined_status_label = "Conformant"
-            elif combined_status is False:
-                status_directory = "non_conformant"
-                combined_status_label = "Non-conformant"
-            else:
-                status_directory = "null_less_eligible_timestamps"
-                combined_status_label = "N/A (insufficient eligible timestamps)"
-
-            as_eligible = performance["as_4777_num_eligible_timestamps"]
-            as_percentage = performance["as_4777_conformant_percentage"]
-            if as_eligible < 20:
-                as_status_label = "N/A (<20 eligible)"
-            elif as_percentage >= 90:
-                as_status_label = "Pass"
-            else:
-                as_status_label = "Fail"
-            as_percentage_label = (
-                f"{as_percentage:.2f}%" if as_percentage is not None else "N/A"
-            )
-
-            csip_eligible = performance["csip_num_eligible_timestamps"]
-            csip_percentage = performance["csip_conformant_percentage"]
-            if csip_eligible < 20:
-                csip_status_label = "N/A (<20 eligible)"
-            elif csip_percentage >= 90:
-                csip_status_label = "Pass"
-            else:
-                csip_status_label = "Fail"
-            csip_percentage_label = (
-                f"{csip_percentage:.2f}%" if csip_percentage is not None else "N/A"
-            )
+            passive_site_eligible = performance[
+                "passive_anti_islanding_num_eligible_timestamps"
+            ]
+            passive_site_conformant = performance[
+                "passive_anti_islanding_num_conformant_timestamps"
+            ]
+            sustained_site_eligible = performance[
+                "sustained_operation_num_eligible_timestamps"
+            ]
+            sustained_site_conformant = performance[
+                "sustained_operation_num_conformant_timestamps"
+            ]
+            volt_watt_site_eligible = performance[
+                "volt_watt_num_eligible_timestamps"
+            ]
+            volt_watt_site_conformant = performance[
+                "volt_watt_num_conformant_timestamps"
+            ]
+            csip_site_eligible = performance["csip_num_eligible_timestamps"]
+            csip_site_conformant = performance[
+                "csip_num_conformant_timestamps"
+            ]
+            capacity = site_day["calc_capacity"][0]
 
             site_day = site_day.sort("local_timestamp").with_columns(
                 (
@@ -182,6 +176,29 @@ def plot_site_conformance_days(
             csip_day_conformant = int(
                 site_day["csip_conformant"].fill_null(False).sum()
             )
+            save_directories = []
+            for mechanism, day_eligible in (
+                ("volt_watt", volt_watt_eligible),
+                ("sustained_operation", sustained_eligible),
+                ("passive_anti_islanding", passive_eligible),
+            ):
+                if day_eligible == 0:
+                    continue
+                mechanism_eligible = performance[
+                    f"{mechanism}_num_eligible_timestamps"
+                ]
+                mechanism_percentage = performance[
+                    f"{mechanism}_conformant_percentage"
+                ]
+                if mechanism_eligible < 20:
+                    mechanism_status = "insufficient_evidence"
+                elif mechanism_percentage >= 90:
+                    mechanism_status = "conformant"
+                else:
+                    mechanism_status = "non_conformant"
+                save_directories.append(
+                    output_directory / mechanism / mechanism_status
+                )
 
             figure, (voltage_axis, power_axis) = plt.subplots(
                 2,
@@ -206,20 +223,52 @@ def plot_site_conformance_days(
                 volt_watt_mask = (
                     segment["volt_watt_conformant"].is_not_null().to_numpy()
                 )
+                volt_watt_conformant_mask = (
+                    segment["volt_watt_conformant"].fill_null(False).to_numpy()
+                )
+                volt_watt_non_conformant_mask = (
+                    ~segment["volt_watt_conformant"].fill_null(True)
+                ).to_numpy()
+                displayed_volt_watt_conformant_mask = (
+                    volt_watt_conformant_mask & ~cessation_mask
+                )
+                displayed_volt_watt_non_conformant_mask = (
+                    volt_watt_non_conformant_mask & ~cessation_mask
+                )
                 segment_has_volt_watt = bool(volt_watt_mask.any())
                 has_volt_watt_assessment = (
                     has_volt_watt_assessment or segment_has_volt_watt
                 )
+                has_volt_watt_conformant = has_volt_watt_conformant or bool(
+                    displayed_volt_watt_conformant_mask.any()
+                )
+                has_volt_watt_non_conformant = (
+                    has_volt_watt_non_conformant
+                    or bool(displayed_volt_watt_non_conformant_mask.any())
+                )
                 has_cessation_shading = has_cessation_shading or bool(
                     cessation_mask.any()
                 )
-                for shading_mask, shading_color, shading_axes in (
+                for shading_mask, shading_color, shading_alpha, shading_axes in (
                     (
                         cessation_mask,
                         "#7c3aed",
+                        0.18,
                         (voltage_axis, power_axis),
                     ),
-                    (volt_watt_mask, "#0891b2", (voltage_axis,)),
+                    (volt_watt_mask, "#0891b2", 0.18, (voltage_axis,)),
+                    (
+                        displayed_volt_watt_conformant_mask,
+                        "#16a34a",
+                        0.14,
+                        (power_axis,),
+                    ),
+                    (
+                        displayed_volt_watt_non_conformant_mask,
+                        "#dc2626",
+                        0.20,
+                        (power_axis,),
+                    ),
                 ):
                     shading_start = None
                     for mask_index, applicable in enumerate(shading_mask):
@@ -242,7 +291,7 @@ def plot_site_conformance_days(
                                     shading_start,
                                     shading_end,
                                     color=shading_color,
-                                    alpha=0.18,
+                                    alpha=shading_alpha,
                                     zorder=0,
                                     linewidth=0,
                                 )
@@ -283,66 +332,21 @@ def plot_site_conformance_days(
                     power_axis.plot(
                         timestamps,
                         segment["volt_watt_ceiling_kw"].to_list(),
-                        color="#0891b2",
+                        color="#d97706",
                         linewidth=1.6,
                         linestyle="-",
                         label=(
-                            "Volt-Watt conformance ceiling"
+                            "Volt-Watt ceiling"
                             if not has_volt_watt_ceiling
                             else "_nolegend_"
                         ),
                     )
                     has_volt_watt_ceiling = True
-                    conformant_volt_watt = segment.filter(
-                        pl.col("volt_watt_conformant")
-                    )
-                    non_conformant_volt_watt = segment.filter(
-                        pl.col("volt_watt_conformant").not_()
-                    )
-                    if conformant_volt_watt.height:
-                        power_axis.scatter(
-                            conformant_volt_watt["local_timestamp"].to_list(),
-                            conformant_volt_watt[
-                                "inverter_ac_real_power_kw"
-                            ].to_list(),
-                            color="#15803d",
-                            edgecolors="white",
-                            linewidths=0.5,
-                            marker="o",
-                            s=28,
-                            zorder=4,
-                            label=(
-                                "Volt-Watt conformant"
-                                if not has_volt_watt_conformant
-                                else "_nolegend_"
-                            ),
-                        )
-                        has_volt_watt_conformant = True
-                    if non_conformant_volt_watt.height:
-                        power_axis.scatter(
-                            non_conformant_volt_watt[
-                                "local_timestamp"
-                            ].to_list(),
-                            non_conformant_volt_watt[
-                                "inverter_ac_real_power_kw"
-                            ].to_list(),
-                            color="#dc2626",
-                            linewidths=1.4,
-                            marker="x",
-                            s=36,
-                            zorder=4,
-                            label=(
-                                "Volt-Watt non-conformant"
-                                if not has_volt_watt_non_conformant
-                                else "_nolegend_"
-                            ),
-                        )
-                        has_volt_watt_non_conformant = True
                 if performance["solar_coupling"] == "dc_only":
                     power_axis.plot(
                         timestamps,
                         segment["site_export_power_kw"].to_list(),
-                        color="#2e7d32",
+                        color="#374151",
                         linewidth=1.3,
                         label=(
                             "Site export power" if segment_number == 0 else "_nolegend_"
@@ -386,7 +390,26 @@ def plot_site_conformance_days(
             power_axis.set_xlabel(f"Local time ({timezone_name})", fontsize=12)
             voltage_axis.grid(True, color="#e5e7eb", linewidth=0.8)
             power_axis.grid(True, color="#e5e7eb", linewidth=0.8)
-            power_axis.legend(loc="best", ncol=3, fontsize=11)
+            power_handles, power_labels = power_axis.get_legend_handles_labels()
+            if has_volt_watt_conformant:
+                power_handles.append(
+                    Patch(facecolor="#16a34a", alpha=0.14, edgecolor="none")
+                )
+                power_labels.append("Volt-Watt conformant")
+            if has_volt_watt_non_conformant:
+                power_handles.append(
+                    Patch(facecolor="#dc2626", alpha=0.20, edgecolor="none")
+                )
+                power_labels.append("Volt-Watt non-conformant")
+            power_axis.legend(
+                power_handles,
+                power_labels,
+                loc="lower center",
+                bbox_to_anchor=(0.5, 1.02),
+                frameon=False,
+                ncol=3,
+                fontsize=11,
+            )
 
             voltage_handles, voltage_labels = voltage_axis.get_legend_handles_labels()
             if has_cessation_shading:
@@ -399,11 +422,11 @@ def plot_site_conformance_days(
                     Patch(facecolor="#0891b2", alpha=0.18, edgecolor="none")
                 )
                 voltage_labels.append("Volt-Watt assessment period")
-            figure.legend(
+            voltage_axis.legend(
                 voltage_handles,
                 voltage_labels,
-                loc="upper center",
-                bbox_to_anchor=(0.5, 0.90),
+                loc="lower center",
+                bbox_to_anchor=(0.5, 1.02),
                 frameon=False,
                 ncol=4,
                 fontsize=11,
@@ -423,11 +446,14 @@ def plot_site_conformance_days(
 
             figure.suptitle(
                 f"Site {pseudonym} | {local_date:%d/%m/%Y} | "
-                f"Overall standard-level status: {combined_status_label}\n"
-                f"Site totals - AS/NZS 4777: {as_percentage_label} "
-                f"({as_eligible} eligible) - {as_status_label} | "
-                f"CSIP: {csip_percentage_label} "
-                f"({csip_eligible} eligible) - {csip_status_label}\n"
+                f"Capacity: {capacity:.2f} kW\n"
+                f"Site conformant/eligible - Volt-Watt: "
+                f"{volt_watt_site_conformant}/{volt_watt_site_eligible} | "
+                f"Sustained operation: "
+                f"{sustained_site_conformant}/{sustained_site_eligible} | "
+                f"Passive anti-islanding: "
+                f"{passive_site_conformant}/{passive_site_eligible} | "
+                f"CSIP: {csip_site_conformant}/{csip_site_eligible}\n"
                 f"Day conformant/eligible - Volt-Watt: "
                 f"{volt_watt_conformant}/{volt_watt_eligible} | "
                 f"Sustained operation: "
@@ -439,15 +465,17 @@ def plot_site_conformance_days(
                 fontsize=14,
             )
             figure.autofmt_xdate()
-            figure.tight_layout(rect=(0, 0, 1, 0.82))
+            figure.tight_layout(h_pad=4.0)
 
-            save_directory = output_directory / status_directory
-            save_directory.mkdir(parents=True, exist_ok=True)
-            figure.savefig(
-                save_directory / f"{pseudonym}_{local_date.isoformat()}.png",
-                dpi=150,
-                bbox_inches="tight",
-            )
+            dc_suffix = "_dc" if performance["solar_coupling"] == "dc_only" else ""
+            plot_filename = f"{pseudonym}_{local_date.isoformat()}{dc_suffix}.png"
+            for save_directory in save_directories:
+                save_directory.mkdir(parents=True, exist_ok=True)
+                figure.savefig(
+                    save_directory / plot_filename,
+                    dpi=150,
+                    bbox_inches="tight",
+                )
             plt.close(figure)
             plot_count += 1
 

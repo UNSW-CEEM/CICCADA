@@ -241,18 +241,21 @@ def combined_conformance(
 
     The input is expected to contain telemetry that has already passed the
     coupling-specific inverter, battery, and solar consistency checks. Passive
-    anti-islanding supersedes all other checks at 265 V or above. Otherwise,
-    the sustained-operation limit supersedes normal-operation checks when the
-    10-minute average voltage reaches ``v_nom_max``. During normal operation,
-    Volt-Watt and (for DC-only systems) CSIP are assessed independently.
+    anti-islanding supersedes the sustained-operation check at 265 V or above.
+    Otherwise, the sustained-operation check applies when the 10-minute
+    average voltage reaches ``v_nom_max``. 
+    Volt-Watt and CSIP (for DC-only systems)
+    are assessed independently of those two checks.
     Set ``csip_export_limit_usable`` false when the raw CSIP signal has no
     finite, positive export limit; CSIP results will then remain null.
 
-    A nullable Boolean is returned for each check: true or false when the check
-    applies, and null when it does not. ``as_4777_conformant`` contains the
-    applicable AS 4777 result. ``combined_conformant`` is true only when the
-    AS 4777 and CSIP results that apply both pass, and null when neither applies.
+    A nullable Boolean is returned for each check: 
+    true or false when the check applies, and null when it does not. 
+    ``as_4777_conformant`` contains the conjunction of all 
+    applicable AS 4777 results and is null when no AS 4777 check applies. 
+    CSIP remains a separate result.
     """
+
     input_columns = site_telemetry.columns
     tolerance_w = system_power_kw_ac * 1000.0 * 0.04
 
@@ -293,12 +296,6 @@ def combined_conformance(
             .alias("_sustained_operation_applicable")
         )
         .with_columns(
-            (
-                ~pl.col("_passive_anti_islanding_applicable")
-                & ~pl.col("_sustained_operation_applicable")
-            ).alias("_normal_operation")
-        )
-        .with_columns(
             pl.when(pl.col("_passive_anti_islanding_applicable"))
             .then(
                 (pl.col("inverter_ac_real_power") <= tolerance_w)
@@ -332,8 +329,7 @@ def combined_conformance(
             .cast(pl.Boolean)
             .alias("sustained_operation_conformant"),
             pl.when(
-                pl.col("_normal_operation")
-                & (pl.col("grid_voltage") > 253.0)
+                (pl.col("grid_voltage") > 253.0)
                 & pl.col("grid_voltage").is_not_null()
                 & pl.col("inverter_ac_real_power").is_not_null()
             )
@@ -361,8 +357,7 @@ def combined_conformance(
     if solar_coupling == "dc_only" and csip_export_limit_usable:
         scored_telemetry = scored_telemetry.with_columns(
             pl.when(
-                pl.col("_normal_operation")
-                & pl.col("site_instant_power").is_not_null()
+                pl.col("site_instant_power").is_not_null()
                 & pl.col("csip_export_limit_w_ffill").is_not_null()
             )
             .then(
@@ -378,24 +373,13 @@ def combined_conformance(
             pl.lit(None, dtype=pl.Boolean).alias("csip_conformant")
         )
 
-    individual_result_columns = [
+    as_4777_result_columns = [
         "passive_anti_islanding_conformant",
         "sustained_operation_conformant",
         "volt_watt_conformant",
-        "csip_conformant",
     ]
-    scored_telemetry = scored_telemetry.with_columns(
-        pl.coalesce(
-            [
-                pl.col("passive_anti_islanding_conformant"),
-                pl.col("sustained_operation_conformant"),
-                pl.col("volt_watt_conformant"),
-            ]
-        ).alias("as_4777_conformant")
-    )
-
-    component_result_columns = [
-        "as_4777_conformant",
+    individual_result_columns = [
+        *as_4777_result_columns,
         "csip_conformant",
     ]
     scored_telemetry = scored_telemetry.with_columns(
@@ -403,7 +387,7 @@ def combined_conformance(
             pl.any_horizontal(
                 [
                     pl.col(column).is_not_null()
-                    for column in component_result_columns
+                    for column in as_4777_result_columns
                 ]
             )
         )
@@ -411,13 +395,13 @@ def combined_conformance(
             pl.all_horizontal(
                 [
                     pl.col(column).fill_null(True)
-                    for column in component_result_columns
+                    for column in as_4777_result_columns
                 ]
             )
         )
         .otherwise(None)
         .cast(pl.Boolean)
-        .alias("combined_conformant")
+        .alias("as_4777_conformant")
     )
 
     return scored_telemetry.select(
@@ -426,6 +410,5 @@ def combined_conformance(
             "grid_voltage_10m_avg",
             *individual_result_columns,
             "as_4777_conformant",
-            "combined_conformant",
         ]
     )
