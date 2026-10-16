@@ -10,6 +10,15 @@ import polars as pl
 from matplotlib.patches import Patch
 
 
+def _calculate_day_conformance_percentage(
+    conformant: int, eligible: int
+) -> float | None:
+    """Return the daily conformant percentage, or None when none are eligible."""
+    if eligible == 0:
+        return None
+    return conformant / eligible * 100
+
+
 def plot_site_conformance_days(
     combined_conformance_results: pl.DataFrame,
     site_conformance_performance: pl.DataFrame,
@@ -101,11 +110,17 @@ def plot_site_conformance_days(
             passive_site_conformant = performance[
                 "passive_anti_islanding_num_conformant_timestamps"
             ]
+            passive_site_percentage = performance[
+                "passive_anti_islanding_conformant_percentage"
+            ]
             sustained_site_eligible = performance[
                 "sustained_operation_num_eligible_timestamps"
             ]
             sustained_site_conformant = performance[
                 "sustained_operation_num_conformant_timestamps"
+            ]
+            sustained_site_percentage = performance[
+                "sustained_operation_conformant_percentage"
             ]
             volt_watt_site_eligible = performance[
                 "volt_watt_num_eligible_timestamps"
@@ -113,10 +128,14 @@ def plot_site_conformance_days(
             volt_watt_site_conformant = performance[
                 "volt_watt_num_conformant_timestamps"
             ]
+            volt_watt_site_percentage = performance[
+                "volt_watt_conformant_percentage"
+            ]
             csip_site_eligible = performance["csip_num_eligible_timestamps"]
             csip_site_conformant = performance[
                 "csip_num_conformant_timestamps"
             ]
+            csip_site_percentage = performance["csip_conformant_percentage"]
             capacity = site_day["calc_capacity"][0]
 
             site_day = site_day.sort("local_timestamp").with_columns(
@@ -175,6 +194,18 @@ def plot_site_conformance_days(
             csip_day_eligible = int(site_day["csip_conformant"].is_not_null().sum())
             csip_day_conformant = int(
                 site_day["csip_conformant"].fill_null(False).sum()
+            )
+            passive_day_percentage = _calculate_day_conformance_percentage(
+                passive_conformant, passive_eligible
+            )
+            sustained_day_percentage = _calculate_day_conformance_percentage(
+                sustained_conformant, sustained_eligible
+            )
+            volt_watt_day_percentage = _calculate_day_conformance_percentage(
+                volt_watt_conformant, volt_watt_eligible
+            )
+            csip_day_percentage = _calculate_day_conformance_percentage(
+                csip_day_conformant, csip_day_eligible
             )
             save_directories = []
             for mechanism, day_eligible in (
@@ -444,23 +475,72 @@ def plot_site_conformance_days(
                 mdates.DateFormatter("%H:%M", tz=timezone)
             )
 
+            passive_site_percentage_text = (
+                f"{passive_site_percentage:.1f}%"
+                if passive_site_percentage is not None
+                else "N/A"
+            )
+            sustained_site_percentage_text = (
+                f"{sustained_site_percentage:.1f}%"
+                if sustained_site_percentage is not None
+                else "N/A"
+            )
+            volt_watt_site_percentage_text = (
+                f"{volt_watt_site_percentage:.1f}%"
+                if volt_watt_site_percentage is not None
+                else "N/A"
+            )
+            csip_site_percentage_text = (
+                f"{csip_site_percentage:.1f}%"
+                if csip_site_percentage is not None
+                else "N/A"
+            )
+            passive_day_percentage_text = (
+                f"{passive_day_percentage:.1f}%"
+                if passive_day_percentage is not None
+                else "N/A"
+            )
+            sustained_day_percentage_text = (
+                f"{sustained_day_percentage:.1f}%"
+                if sustained_day_percentage is not None
+                else "N/A"
+            )
+            volt_watt_day_percentage_text = (
+                f"{volt_watt_day_percentage:.1f}%"
+                if volt_watt_day_percentage is not None
+                else "N/A"
+            )
+            csip_day_percentage_text = (
+                f"{csip_day_percentage:.1f}%"
+                if csip_day_percentage is not None
+                else "N/A"
+            )
+
             figure.suptitle(
                 f"Site {pseudonym} | {local_date:%d/%m/%Y} | "
                 f"Capacity: {capacity:.2f} kW\n"
-                f"Site conformant/eligible - Volt-Watt: "
-                f"{volt_watt_site_conformant}/{volt_watt_site_eligible} | "
+                f"Site summary — Volt-Watt: "
+                f"{volt_watt_site_conformant}/{volt_watt_site_eligible} "
+                f"({volt_watt_site_percentage_text}) | "
                 f"Sustained operation: "
-                f"{sustained_site_conformant}/{sustained_site_eligible} | "
+                f"{sustained_site_conformant}/{sustained_site_eligible} "
+                f"({sustained_site_percentage_text}) | "
                 f"Passive anti-islanding: "
-                f"{passive_site_conformant}/{passive_site_eligible} | "
-                f"CSIP: {csip_site_conformant}/{csip_site_eligible}\n"
-                f"Day conformant/eligible - Volt-Watt: "
-                f"{volt_watt_conformant}/{volt_watt_eligible} | "
+                f"{passive_site_conformant}/{passive_site_eligible} "
+                f"({passive_site_percentage_text}) | "
+                f"CSIP: {csip_site_conformant}/{csip_site_eligible} "
+                f"({csip_site_percentage_text})\n"
+                f"Day summary — Volt-Watt: "
+                f"{volt_watt_conformant}/{volt_watt_eligible} "
+                f"({volt_watt_day_percentage_text}) | "
                 f"Sustained operation: "
-                f"{sustained_conformant}/{sustained_eligible} | "
+                f"{sustained_conformant}/{sustained_eligible} "
+                f"({sustained_day_percentage_text}) | "
                 f"Passive anti-islanding: "
-                f"{passive_conformant}/{passive_eligible} | "
-                f"CSIP: {csip_day_conformant}/{csip_day_eligible}",
+                f"{passive_conformant}/{passive_eligible} "
+                f"({passive_day_percentage_text}) | "
+                f"CSIP: {csip_day_conformant}/{csip_day_eligible} "
+                f"({csip_day_percentage_text})",
                 y=0.98,
                 fontsize=14,
             )
