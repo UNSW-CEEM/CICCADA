@@ -6,7 +6,7 @@ from typing import Any
 
 import polars as pl
 
-MAX_DISCONNECT_EDGE_GAP_SECONDS = 300
+MAX_DISCONNECT_EDGE_GAP_SECONDS = 60
 
 SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
     "site_id": pl.Int64,
@@ -44,6 +44,7 @@ def detect_edges(signal_frame: pl.DataFrame, PRated):
     p_step_strict = 0.10 * PRated
     frame = signal_frame.with_columns(
         [
+            pl.col("vinst_max").shift(1).alias("vinst_max_previous"),
             (
                 (~pl.col("is_disc").shift(1))
                 & pl.col("is_disc")
@@ -70,6 +71,7 @@ def detect_edges(signal_frame: pl.DataFrame, PRated):
                 "local_tstamp",
                 "v10m_avg",
                 "vinst_max",
+                "vinst_max_previous",
                 "site_power_drop",
             ]
         )
@@ -95,14 +97,98 @@ def detect_edges(signal_frame: pl.DataFrame, PRated):
     }
 
 
+def attribute_grey_band(
+    v10m,
+    vinst,
+    *,
+    los_lo,
+    los_hi_strict,
+    los_hi_cap,
+):
+    """Attribute one disconnect using the existing grey-band rules."""
+    mechanism = None
+    disconnect_voltage = None
+    grey_non_sustained = False
+
+    # Uncomment/comment the following block for including/removing the grey band.
+    vinst_in_ov1_region = vinst is not None and (los_hi_strict <= vinst <= los_hi_cap)
+
+    if v10m is not None and (los_lo <= v10m <= los_hi_strict):
+        mechanism = "LOS"
+        disconnect_voltage = v10m
+    elif vinst is not None and (vinst > los_hi_cap):
+        mechanism = "OV1"
+        disconnect_voltage = vinst
+    elif v10m is not None and (los_hi_strict < v10m <= los_hi_cap):
+        if vinst_in_ov1_region:
+            mechanism = "OV1"
+            disconnect_voltage = vinst
+            grey_non_sustained = True
+        else:
+            mechanism = "LOS"
+            disconnect_voltage = v10m
+
+    # Comment/uncomment below and uncomment/comment above to include/exclude the
+    # grey band.
+    # if vinst is not None and vinst >= los_hi_strict:
+    #     mechanism = "OV1"
+    #     disconnect_voltage = vinst
+    # elif v10m is not None and (los_lo <= v10m <= los_hi_strict):
+    #     mechanism = "LOS"
+    #     disconnect_voltage = v10m
+
+    return mechanism, disconnect_voltage, grey_non_sustained
+
+
+def attribute_edge_dynamics(
+    v10m,
+    vinst,
+    vinst_previous,
+    *,
+    los_lo,
+    los_hi_cap,
+    ov1_candidate_lo,
+    ov1_jump_min,
+    ov1_gap_min,
+):
+    """Attribute one disconnect using edge-voltage change and signal separation."""
+    vinst_jump = (
+        None
+        if vinst is None or vinst_previous is None
+        else float(vinst) - float(vinst_previous)
+    )
+    voltage_gap = None if vinst is None or v10m is None else float(vinst) - float(v10m)
+
+    if vinst is not None and vinst > los_hi_cap:
+        return "OV1", vinst, False
+    if vinst_jump is not None and vinst_jump >= ov1_jump_min:
+        return "OV1", vinst, False
+    if (
+        vinst is not None
+        and vinst >= ov1_candidate_lo
+        and voltage_gap is not None
+        and voltage_gap >= ov1_gap_min
+    ):
+        return "OV1", vinst, False
+    if v10m is not None and los_lo <= v10m <= los_hi_cap:
+        return "LOS", v10m, False
+    if v10m is None and vinst is not None and vinst >= ov1_candidate_lo:
+        return "OV1", vinst, False
+    return None, None, False
+
+
 def classify_disconnects_as_los_or_ov1(
     edge_result,
     PRated,
     *,
     # los_lo=251.1,  # 3% 3error
-    los_lo=244, # 3% 3error
+    los_lo=244,  # 3% 3error
     los_hi_strict=259.0,
     los_hi_cap=260.3,
+    attribution_method="grey_band", # can be either edge_dynamics or grey_band
+    ov1_candidate_lo=259.1,
+    ov1_jump_min=2.0,
+    ov1_gap_min=2.0,
 ):
     """Classify one day's disconnect edges and pair the next reconnect voltage."""
     frame = edge_result["frame"]
@@ -141,38 +227,27 @@ def classify_disconnects_as_los_or_ov1(
             if PRated in [None, 0] or site_power_drop_kw is None
             else (float(site_power_drop_kw) / float(PRated)) * 100.0
         )
-        mechanism = None
-        disconnect_voltage = None
-        grey_non_sustained = False
-
-        # uncomment the following block for inclduding grey band
-        vinst_in_ov1_region = vinst is not None and (
-            los_hi_strict <= vinst <= los_hi_cap
-        )
-
-        if v10m is not None and (los_lo <= v10m <= los_hi_strict):
-            mechanism = "LOS"
-            disconnect_voltage = v10m
-        elif vinst is not None and (vinst > los_hi_cap):
-            mechanism = "OV1"
-            disconnect_voltage = vinst
-        elif v10m is not None and (los_hi_strict < v10m <= los_hi_cap):
-            if vinst_in_ov1_region:
-                mechanism = "OV1"
-                disconnect_voltage = vinst
-                grey_non_sustained = True
-            else:
-                mechanism = "LOS"
-                disconnect_voltage = v10m
-
-        # comment below and uncoment above to implement grey band
-        # if vinst is not None and vinst >= los_hi_strict:
-        #     mechanism = "OV1"
-        #     disconnect_voltage = vinst
-        # elif v10m is not None and (los_lo <= v10m <= los_hi_strict):
-        #     mechanism = "LOS"
-        #     disconnect_voltage = v10m
-        ####
+        if attribution_method == "grey_band":
+            mechanism, disconnect_voltage, grey_non_sustained = attribute_grey_band(
+                v10m,
+                vinst,
+                los_lo=los_lo,
+                los_hi_strict=los_hi_strict,
+                los_hi_cap=los_hi_cap,
+            )
+        elif attribution_method == "edge_dynamics":
+            mechanism, disconnect_voltage, grey_non_sustained = attribute_edge_dynamics(
+                v10m,
+                vinst,
+                row.get("vinst_max_previous"),
+                los_lo=los_lo,
+                los_hi_cap=los_hi_cap,
+                ov1_candidate_lo=ov1_candidate_lo,
+                ov1_jump_min=ov1_jump_min,
+                ov1_gap_min=ov1_gap_min,
+            )
+        else:
+            raise KeyError(f"Unknown Phase A attribution method: {attribution_method}")
 
         if mechanism is None or disconnect_voltage is None:
             continue
@@ -408,12 +483,17 @@ def run_phase_a_for_site(
     PRated,
     *,
     outlier_aware_thresholds=False,
+    attribution_method="grey_band",
 ):
     """Run Phase A for one site and produce thresholds plus voltage summaries."""
     records_all = []
     for prepared_day in prepared_site_days:
         edge_result = detect_edges(prepared_day["signal_frame"], PRated)
-        day_records = classify_disconnects_as_los_or_ov1(edge_result, PRated)
+        day_records = classify_disconnects_as_los_or_ov1(
+            edge_result,
+            PRated,
+            attribution_method=attribution_method,
+        )
         if not day_records.is_empty():
             records_all.append(
                 day_records.with_columns(

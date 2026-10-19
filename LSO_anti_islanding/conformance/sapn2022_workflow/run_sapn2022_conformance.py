@@ -259,6 +259,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         prepared_site_days,
         rated_capacity,
         outlier_aware_thresholds=True,
+        attribution_method="edge_dynamics",
     )
     site_threshold_rows.append(phase_a["site_thresholds"])
     site_level_various_voltage_rows.append(phase_a["site_level_various_voltages"])
