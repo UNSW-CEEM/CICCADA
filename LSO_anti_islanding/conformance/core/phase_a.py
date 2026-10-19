@@ -7,6 +7,7 @@ from typing import Any
 import polars as pl
 
 MAX_DISCONNECT_EDGE_GAP_SECONDS = 60
+OV1_EDGE_DYNAMICS_LOOKBACK_SECONDS = 120
 
 SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
     "site_id": pl.Int64,
@@ -43,8 +44,26 @@ def detect_edges(signal_frame: pl.DataFrame, PRated):
 
     p_step_strict = 0.10 * PRated
     frame = signal_frame.with_columns(
+        pl.col("vinst_max").shift(1).alias("vinst_max_previous")
+    )
+    vinst_rise_in_lookback = (
+        frame.select(["local_tstamp", "vinst_max"])
+        .rolling(
+            index_column="local_tstamp",
+            period=f"{OV1_EDGE_DYNAMICS_LOOKBACK_SECONDS}s",
+            closed="both",
+        )
+        .agg(
+            pl.col("vinst_max")
+            .diff()
+            .max()
+            .alias("vinst_max_rise_in_lookback")
+        )
+        .get_column("vinst_max_rise_in_lookback")
+    )
+    frame = frame.with_columns(vinst_rise_in_lookback)
+    frame = frame.with_columns(
         [
-            pl.col("vinst_max").shift(1).alias("vinst_max_previous"),
             (
                 (~pl.col("is_disc").shift(1))
                 & pl.col("is_disc")
@@ -72,6 +91,7 @@ def detect_edges(signal_frame: pl.DataFrame, PRated):
                 "v10m_avg",
                 "vinst_max",
                 "vinst_max_previous",
+                "vinst_max_rise_in_lookback",
                 "site_power_drop",
             ]
         )
@@ -143,7 +163,7 @@ def attribute_grey_band(
 def attribute_edge_dynamics(
     v10m,
     vinst,
-    vinst_previous,
+    vinst_rise_in_lookback,
     *,
     los_lo,
     los_hi_cap,
@@ -152,16 +172,14 @@ def attribute_edge_dynamics(
     ov1_gap_min,
 ):
     """Attribute one disconnect using edge-voltage change and signal separation."""
-    vinst_jump = (
-        None
-        if vinst is None or vinst_previous is None
-        else float(vinst) - float(vinst_previous)
-    )
     voltage_gap = None if vinst is None or v10m is None else float(vinst) - float(v10m)
 
     if vinst is not None and vinst > los_hi_cap:
         return "OV1", vinst, False
-    if vinst_jump is not None and vinst_jump >= ov1_jump_min:
+    if (
+        vinst_rise_in_lookback is not None
+        and vinst_rise_in_lookback >= ov1_jump_min
+    ):
         return "OV1", vinst, False
     if (
         vinst is not None
@@ -239,7 +257,7 @@ def classify_disconnects_as_los_or_ov1(
             mechanism, disconnect_voltage, grey_non_sustained = attribute_edge_dynamics(
                 v10m,
                 vinst,
-                row.get("vinst_max_previous"),
+                row.get("vinst_max_rise_in_lookback"),
                 los_lo=los_lo,
                 los_hi_cap=los_hi_cap,
                 ov1_candidate_lo=ov1_candidate_lo,
