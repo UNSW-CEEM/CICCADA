@@ -181,7 +181,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             mapped_day_count += 1
             site_day_wide = map_circuit_data_to_site(site_day_long, site_id)
             prepared_day = calculate_site_day_voltage_signals(site_day_wide)
-            
+
             # careful that this fucntion is implemeted twice but for different purposes
             # do not delete it
             analysis_day_long = trim_site_day_analysis_window(
@@ -308,7 +308,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.col("overall_conformant_count").alias(
                 "overall_calculated_conformant_count"
             ),
-            pl.col("overall_conformance_pct").alias("overall_calculated_conformance_pct"),
+            pl.col("overall_conformance_pct").alias(
+                "overall_calculated_conformance_pct"
+            ),
             pl.col("overall_pass").alias("overall_calculated_pass"),
         ]
     )
@@ -334,7 +336,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             "overall_disconnect_supported_pass",
         ]
     )
-    lowest_disconnect_conformance = phase_b_lowest_disconnect["site_conformance"].select(
+    lowest_disconnect_conformance = phase_b_lowest_disconnect[
+        "site_conformance"
+    ].select(
         [
             "site_id",
             "threshold_method",
@@ -346,7 +350,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.col("los_conformant_count").alias(
                 "los_lowest_disconnect_conformant_count"
             ),
-            pl.col("los_conformance_pct").alias("los_lowest_disconnect_conformance_pct"),
+            pl.col("los_conformance_pct").alias(
+                "los_lowest_disconnect_conformance_pct"
+            ),
             pl.col("los_pass").alias("los_lowest_disconnect_pass"),
             pl.col("ov1_responsible_count").alias(
                 "ov1_lowest_disconnect_responsible_count"
@@ -354,7 +360,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.col("ov1_conformant_count").alias(
                 "ov1_lowest_disconnect_conformant_count"
             ),
-            pl.col("ov1_conformance_pct").alias("ov1_lowest_disconnect_conformance_pct"),
+            pl.col("ov1_conformance_pct").alias(
+                "ov1_lowest_disconnect_conformance_pct"
+            ),
             pl.col("ov1_pass").alias("ov1_lowest_disconnect_pass"),
             pl.col("overall_responsible_count").alias(
                 "overall_lowest_disconnect_responsible_count"
@@ -399,9 +407,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.lit("calculated").alias("case"),
             pl.col("overall_responsible_count").alias("eligible_timestamp_count"),
             pl.col("overall_conformant_count").alias("conformant_timestamp_count"),
-            pl.lit(0, dtype=pl.Int64).alias(
-                "disconnect_support_timestamp_count"
-            ),
+            pl.lit(0, dtype=pl.Int64).alias("disconnect_support_timestamp_count"),
             (
                 pl.col("overall_responsible_count") - pl.col("overall_conformant_count")
             ).alias("non_conformant_timestamp_count"),
@@ -451,9 +457,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.lit("lowest_disconnect").alias("case"),
             pl.col("overall_responsible_count").alias("eligible_timestamp_count"),
             pl.col("overall_conformant_count").alias("conformant_timestamp_count"),
-            pl.lit(0, dtype=pl.Int64).alias(
-                "disconnect_support_timestamp_count"
-            ),
+            pl.lit(0, dtype=pl.Int64).alias("disconnect_support_timestamp_count"),
             (
                 pl.col("overall_responsible_count") - pl.col("overall_conformant_count")
             ).alias("non_conformant_timestamp_count"),
@@ -580,9 +584,7 @@ if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
     add_disconnect_voltage_lists(
         results["site_level_various_voltages"],
         results["phase_a_trip_attribution"],
-    ).write_csv(
-        CONFORMANCE_OUTPUT_DIR / SITE_LEVEL_VARIOUS_VOLTAGES_NAME
-    )
+    ).write_csv(CONFORMANCE_OUTPUT_DIR / SITE_LEVEL_VARIOUS_VOLTAGES_NAME)
 site_conformance_final_table.write_csv(
     CONFORMANCE_OUTPUT_DIR / SITE_CONFORMANCE_FINAL_TABLE_NAME,
 )

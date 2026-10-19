@@ -22,8 +22,7 @@ def build_site_day_signals(
     power_cols = [
         column
         for column in df.columns
-        if column.startswith("power")
-        and not column.endswith("_next")
+        if column.startswith("power") and not column.endswith("_next")
     ]
     if not power_cols:
         return pl.DataFrame()
@@ -31,9 +30,7 @@ def build_site_day_signals(
     p_disconnect = power_measurement_error * PRated
     df = df.with_columns(
         pl.when(
-            pl.all_horizontal(
-                [pl.col(column).is_not_null() for column in power_cols]
-            )
+            pl.all_horizontal([pl.col(column).is_not_null() for column in power_cols])
         )
         .then(pl.sum_horizontal([pl.col(column) for column in power_cols]))
         .otherwise(pl.lit(None, dtype=pl.Float64))
@@ -93,9 +90,7 @@ def build_site_day_signals(
     df = df.with_columns(
         pl.when(pl.col("site_power_calculated").is_not_null())
         .then(
-            pl.all_horizontal(
-                [pl.col(column) <= p_disconnect for column in power_cols]
-            )
+            pl.all_horizontal([pl.col(column) <= p_disconnect for column in power_cols])
             & (pl.col("site_power_calculated") <= p_disconnect)
         )
         .otherwise(pl.lit(None, dtype=pl.Boolean))
