@@ -421,16 +421,21 @@ def combined_conformance_with_voltage_tolerance(
     v_nom_max: float = 258.0,
     csip_export_limit_usable: bool = True,
     voltage_tolerance_v: float = 2.3,
+    vw_require_measured_above_threshold: bool = False,
 ) -> pl.DataFrame:
     """Return conservative timestamp-level conformance results.
 
     Voltage measurement uncertainty is represented by the interval from
     measured voltage minus ``voltage_tolerance_v`` to measured voltage plus
-    ``voltage_tolerance_v``. A result is true when a requirement could apply
-    and the observed response is conformant for at least one voltage in that
-    interval. A result is false only when the requirement definitely applies
+    ``voltage_tolerance_v``. 
+    1. A result is true when a requirement could apply and the observed response is 
+    conformant for at least one voltage in that interval. 
+    2. A result is false only when the requirement definitely applies
     and the response is non-conformant for every voltage in the interval.
-    Otherwise, the result is null.
+    3. Otherwise, the result is null.
+
+    When ``vw_require_measured_above_threshold`` is true, Volt-Watt is
+    assessed only when the measured voltage is above 253 V.
 
     Passive anti-islanding is assessed first. Limit for sustained operation
     is assessed only when passive anti-islanding is inconclusive or does not
@@ -571,6 +576,11 @@ def combined_conformance_with_voltage_tolerance(
                 pl.col("grid_voltage").is_not_null()
                 & pl.col("inverter_ac_real_power").is_not_null()
                 & (pl.col("_grid_voltage_upper") > 253.0)
+                & (
+                    (pl.col("grid_voltage") > 253.0)
+                    if vw_require_measured_above_threshold
+                    else pl.lit(True)
+                )
                 & pl.col("_volt_watt_power_conformant")
             )
             .then(True)
