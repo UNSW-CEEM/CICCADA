@@ -181,8 +181,8 @@ def classify_disconnects_as_los_or_ov1(
     edge_result,
     PRated,
     *,
-    # los_lo=251.1,  # 3% 3error
-    los_lo=244,  # 3% 3error
+    los_lo=251.1,  # 3% 3error
+    # los_lo=244,  # 3% 3error
     los_hi_strict=259.0,
     los_hi_cap=260.3,
     attribution_method="grey_band", # can be either edge_dynamics or grey_band
