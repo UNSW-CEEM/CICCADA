@@ -252,7 +252,7 @@ def combined_conformance(
     A nullable Boolean is returned for each check: 
     true or false when the check applies, and null when it does not. 
     ``as_4777_conformant`` contains the conjunction of all 
-    applicable AS 4777 results and is null when no AS 4777 check applies. 
+    applicable AS 4777 results and is null when no AS 4777 check applies.
     CSIP remains a separate result.
     """
 

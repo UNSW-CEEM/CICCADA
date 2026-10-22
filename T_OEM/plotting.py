@@ -20,17 +20,14 @@ def _calculate_day_conformance_percentage(
 
 
 def plot_site_conformance_days(
-    combined_conformance_results: pl.DataFrame,
+    site_conformance_results: pl.DataFrame,
     site_conformance_performance: pl.DataFrame,
-    site_metadata: pl.DataFrame,
+    site_metadata: dict[str, object],
     output_directory: str | Path = "site_level_plots",
 ) -> int:
-    """Save 06:00-18:00 local-time plots by applicable AS/NZS mechanism."""
+    """Save one site's 06:00-18:00 plots by applicable mechanism."""
     output_directory = Path(output_directory)
-    performance_by_site = {
-        row["pseudonym"]: row
-        for row in site_conformance_performance.iter_rows(named=True)
-    }
+    performance = site_conformance_performance.row(0, named=True)
     network_timezones = (
         ("SAPN", "Australia/Adelaide"),
         ("AUSNET", "Australia/Melbourne"),
@@ -39,14 +36,10 @@ def plot_site_conformance_days(
     plot_count = 0
 
     for network, timezone_name in network_timezones:
-        site_ids = (
-            site_metadata.filter(pl.col("folder") == network)
-            .get_column("pseudonym")
-            .to_list()
-        )
+        if site_metadata["folder"] != network:
+            continue
         local_results = (
-            combined_conformance_results.lazy()
-            .filter(pl.col("pseudonym").is_in(site_ids))
+            site_conformance_results.lazy()
             .select(
                 "timestamp",
                 "pseudonym",
@@ -55,21 +48,23 @@ def plot_site_conformance_days(
                 "grid_voltage_10m_avg",
                 "inverter_ac_real_power",
                 "site_instant_power",
-                "csip_export_limit_w_ffill",
+                (
+                    pl.col("csip_export_limit_w_ffill")
+                    if performance["solar_coupling"] == "dc_only"
+                    else pl.lit(None, dtype=pl.Float64).alias(
+                        "csip_export_limit_w_ffill"
+                    )
+                ),
                 "passive_anti_islanding_conformant",
                 "sustained_operation_conformant",
                 "volt_watt_conformant",
                 "csip_conformant",
             )
-            .join(
-                site_metadata.lazy().select("pseudonym", "calc_capacity"),
-                on="pseudonym",
-                how="left",
-            )
             .with_columns(
+                pl.lit(site_metadata["calc_capacity"]).alias("calc_capacity"),
                 pl.col("timestamp")
                 .dt.convert_time_zone(timezone_name)
-                .alias("local_timestamp")
+                .alias("local_timestamp"),
             )
             .filter(
                 pl.col("local_timestamp")
@@ -103,7 +98,6 @@ def plot_site_conformance_days(
             ["pseudonym", "local_date"], maintain_order=True
         ):
             pseudonym, local_date = group_key
-            performance = performance_by_site[pseudonym]
             passive_site_eligible = performance[
                 "passive_anti_islanding_num_eligible_timestamps"
             ]
