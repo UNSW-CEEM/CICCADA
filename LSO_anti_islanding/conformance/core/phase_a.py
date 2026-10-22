@@ -7,7 +7,7 @@ from typing import Any
 import polars as pl
 
 MAX_DISCONNECT_EDGE_GAP_SECONDS = 60
-OV1_EDGE_DYNAMICS_LOOKBACK_SECONDS = 120
+OV1_EDGE_DYNAMICS_MAX_AGE_SECONDS = 120
 
 SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
     "site_id": pl.Int64,
@@ -43,25 +43,25 @@ def detect_edges(signal_frame: pl.DataFrame, PRated):
         }
 
     p_step_strict = 0.10 * PRated
+    max_vinst_age = pl.duration(seconds=OV1_EDGE_DYNAMICS_MAX_AGE_SECONDS)
     frame = signal_frame.with_columns(
-        pl.col("vinst_max").shift(1).alias("vinst_max_previous")
+        [
+            pl.col("vinst_max").shift(1).alias("vinst_max_previous"),
+            pl.max_horizontal(
+                pl.when(
+                    pl.col("local_tstamp") - pl.col("local_tstamp").shift(1)
+                    <= max_vinst_age
+                ).then(pl.col("vinst_max") - pl.col("vinst_max").shift(1)),
+                pl.when(
+                    pl.col("local_tstamp") - pl.col("local_tstamp").shift(2)
+                    <= max_vinst_age
+                ).then(
+                    pl.col("vinst_max").shift(1)
+                    - pl.col("vinst_max").shift(2)
+                ),
+            ).alias("vinst_max_rise_in_lookback"),
+        ]
     )
-    vinst_rise_in_lookback = (
-        frame.select(["local_tstamp", "vinst_max"])
-        .rolling(
-            index_column="local_tstamp",
-            period=f"{OV1_EDGE_DYNAMICS_LOOKBACK_SECONDS}s",
-            closed="both",
-        )
-        .agg(
-            pl.col("vinst_max")
-            .diff()
-            .max()
-            .alias("vinst_max_rise_in_lookback")
-        )
-        .get_column("vinst_max_rise_in_lookback")
-    )
-    frame = frame.with_columns(vinst_rise_in_lookback)
     frame = frame.with_columns(
         [
             (
