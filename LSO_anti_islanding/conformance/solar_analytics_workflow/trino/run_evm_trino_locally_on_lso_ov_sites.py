@@ -100,7 +100,7 @@ LIMITED_COMPLETED_SITES_PATH = LIMITED_OUTPUT_DIR / "completed_sites.csv"
 # need the file lso_anti_islanding_conformance from trino
 # make sure it is updated
 ASSESSMENT_SUMMARY_PATH = TRINO_OUTPUT_DIR / "solA_conformance_trino_summary.csv"
-MAX_ASSESSED_SITES = 1500 # 1500
+MAX_ASSESSED_SITES = 1500  # 1500
 
 
 def _site_conformance_report_row(site_result):
@@ -756,8 +756,7 @@ with local_trino_engine(
                         "conformant_pct"
                     ),
                     (
-                        100.0
-                        - pl.col("overall_disconnect_supported_conformance_pct")
+                        100.0 - pl.col("overall_disconnect_supported_conformance_pct")
                     ).alias("non_conformant_pct"),
                     "disconnected_below_threshold_count",
                     "disconnected_unknown_voltage_count",
@@ -827,9 +826,9 @@ with local_trino_engine(
                 LIMITED_OUTPUT_DIR / "site_conformance_final_table.csv",
             )
             if SAVE_SITE_LEVEL_VARIOUS_VOLTAGES:
-                with (
-                    LIMITED_OUTPUT_DIR / "site_level_various_voltages.csv"
-                ).open("ab") as output_file:
+                with (LIMITED_OUTPUT_DIR / "site_level_various_voltages.csv").open(
+                    "ab"
+                ) as output_file:
                     phase_a_result["site_level_various_voltages"].write_csv(
                         output_file,
                         include_header=False,

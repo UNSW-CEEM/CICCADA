@@ -3,15 +3,89 @@
 import polars as pl
 
 
+def volt_var_interval_conformance(
+    site_telemetry: pl.DataFrame,
+    system_capacity_kva: float,
+) -> pl.DataFrame:
+    """Return timestamp-level Volt-VAr conformance.
+
+    Reactive power is positive when supplied and negative when absorbed. A
+    timestamp is not assessable when active-power magnitude is below 20% of
+    the supplied system capacity, or when required telemetry is missing.
+    """
+    capacity_va = system_capacity_kva * 1000.0
+    tolerance_var = 0.04 * capacity_va
+    input_columns = site_telemetry.columns
+
+    return (
+        site_telemetry.with_columns(
+            pl.when(pl.col("grid_voltage").is_null())
+            .then(None)
+            .when(pl.col("grid_voltage") <= 207.0)
+            .then(0.44 * capacity_va)
+            .when(pl.col("grid_voltage") < 220.0)
+            .then(
+                0.44 * capacity_va * (220.0 - pl.col("grid_voltage")) / (220.0 - 207.0)
+            )
+            .when(pl.col("grid_voltage") <= 240.0)
+            .then(0.0)
+            .when(pl.col("grid_voltage") < 258.0)
+            .then(
+                -0.60 * capacity_va * (pl.col("grid_voltage") - 240.0) / (258.0 - 240.0)
+            )
+            .otherwise(-0.60 * capacity_va)
+            .alias("volt_var_required_reactive_power_var"),
+        )
+        .with_columns(
+            (pl.col("volt_var_required_reactive_power_var") - tolerance_var).alias(
+                "volt_var_minimum_reactive_power_var"
+            ),
+            (pl.col("volt_var_required_reactive_power_var") + tolerance_var).alias(
+                "volt_var_maximum_reactive_power_var"
+            ),
+        )
+        .with_columns(
+            pl.when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
+            )
+            .then(
+                (
+                    pl.col("inverter_ac_reactive_power")
+                    >= pl.col("volt_var_minimum_reactive_power_var")
+                )
+                & (
+                    pl.col("inverter_ac_reactive_power")
+                    <= pl.col("volt_var_maximum_reactive_power_var")
+                )
+            )
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("volt_var_conformant")
+        )
+        .select(
+            input_columns
+            + [
+                "volt_var_required_reactive_power_var",
+                "volt_var_minimum_reactive_power_var",
+                "volt_var_maximum_reactive_power_var",
+                "volt_var_conformant",
+            ]
+        )
+    )
+
+
 def volt_watt_conformance(
     site_telemetry: pl.DataFrame,
     system_power_kw_ac: float,
     min_eligible_timestamps: int = 1,
 ) -> pl.DataFrame:
     """Return site-level Volt-Watt conformance from interval telemetry.
-       At the moment voltages V>253 are assessed including V>=260
-       if combining with other standards, needs modification or 
-       some sort of superseding standards
+    At the moment voltages V>253 are assessed including V>=260
+    if combining with other standards, needs modification or
+    some sort of superseding standards
     """
     scored_telemetry = (
         site_telemetry.with_columns(
@@ -38,8 +112,7 @@ def volt_watt_conformance(
         )
         .with_columns(
             (
-                pl.col("inverter_ac_real_power_kw")
-                <= pl.col("volt_watt_ceiling_kw")
+                pl.col("inverter_ac_real_power_kw") <= pl.col("volt_watt_ceiling_kw")
             ).alias("conformant")
         )
     )
@@ -183,10 +256,7 @@ def limit_for_sustained_operation(
         )
         .with_columns(
             (
-                (
-                    pl.col("inverter_ac_real_power_kw")
-                    <= 0.04 * system_power_kw_ac
-                )
+                (pl.col("inverter_ac_real_power_kw") <= 0.04 * system_power_kw_ac)
                 | (
                     pl.col("next_inverter_ac_real_power_kw").is_not_null()
                     & pl.col("seconds_to_next_timestamp").is_not_null()
@@ -235,21 +305,27 @@ def combined_conformance(
     system_power_kw_ac: float,
     solar_coupling: str,
     v_nom_max: float = 258.0,
+    csip_export_limit_usable: bool = True,
 ) -> pl.DataFrame:
     """Return timestamp-level results for coordinated conformance checks.
 
     The input is expected to contain telemetry that has already passed the
     coupling-specific inverter, battery, and solar consistency checks. Passive
-    anti-islanding supersedes all other checks at 265 V or above. Otherwise,
-    the sustained-operation limit supersedes normal-operation checks when the
-    10-minute average voltage reaches ``v_nom_max``. During normal operation,
-    Volt-Watt and (for DC-only systems) CSIP are assessed independently.
+    anti-islanding supersedes the sustained-operation check at 265 V or above.
+    Otherwise, the sustained-operation check applies when the 10-minute
+    average voltage reaches ``v_nom_max``.
+    Volt-Watt and CSIP (for DC-only systems)
+    are assessed independently of those two checks.
+    Set ``csip_export_limit_usable`` false when the raw CSIP signal has no
+    finite, positive export limit; CSIP results will then remain null.
 
-    A nullable Boolean is returned for each check: true or false when the check
-    applies, and null when it does not. ``as_4777_conformant`` contains the
-    applicable AS 4777 result. ``combined_conformant`` is true only when the
-    AS 4777 and CSIP results that apply both pass, and null when neither applies.
+    A nullable Boolean is returned for each check:
+    true or false when the check applies, and null when it does not.
+    ``as_4777_conformant`` contains the conjunction of all
+    applicable AS 4777 results and is null when no AS 4777 check applies.
+    CSIP remains a separate result.
     """
+
     input_columns = site_telemetry.columns
     tolerance_w = system_power_kw_ac * 1000.0 * 0.04
 
@@ -290,12 +366,6 @@ def combined_conformance(
             .alias("_sustained_operation_applicable")
         )
         .with_columns(
-            (
-                ~pl.col("_passive_anti_islanding_applicable")
-                & ~pl.col("_sustained_operation_applicable")
-            ).alias("_normal_operation")
-        )
-        .with_columns(
             pl.when(pl.col("_passive_anti_islanding_applicable"))
             .then(
                 (pl.col("inverter_ac_real_power") <= tolerance_w)
@@ -303,10 +373,7 @@ def combined_conformance(
                     pl.col("_next_inverter_ac_real_power").is_not_null()
                     & pl.col("_seconds_to_next_timestamp").is_not_null()
                     & (pl.col("_seconds_to_next_timestamp") <= 60)
-                    & (
-                        pl.col("_next_inverter_ac_real_power")
-                        <= tolerance_w
-                    )
+                    & (pl.col("_next_inverter_ac_real_power") <= tolerance_w)
                 )
             )
             .otherwise(None)
@@ -319,18 +386,14 @@ def combined_conformance(
                     pl.col("_next_inverter_ac_real_power").is_not_null()
                     & pl.col("_seconds_to_next_timestamp").is_not_null()
                     & (pl.col("_seconds_to_next_timestamp") <= 60)
-                    & (
-                        pl.col("_next_inverter_ac_real_power")
-                        <= tolerance_w
-                    )
+                    & (pl.col("_next_inverter_ac_real_power") <= tolerance_w)
                 )
             )
             .otherwise(None)
             .cast(pl.Boolean)
             .alias("sustained_operation_conformant"),
             pl.when(
-                pl.col("_normal_operation")
-                & (pl.col("grid_voltage") > 253.0)
+                (pl.col("grid_voltage") > 253.0)
                 & pl.col("grid_voltage").is_not_null()
                 & pl.col("inverter_ac_real_power").is_not_null()
             )
@@ -340,11 +403,7 @@ def combined_conformance(
                     system_power_kw_ac
                     * 1000.0
                     * pl.when(pl.col("grid_voltage") < 260.0)
-                    .then(
-                        1.0
-                        - (pl.col("grid_voltage") - 253.0)
-                        * (0.8 / 7.0)
-                    )
+                    .then(1.0 - (pl.col("grid_voltage") - 253.0) * (0.8 / 7.0))
                     .otherwise(0.2)
                     + tolerance_w
                 )
@@ -355,11 +414,10 @@ def combined_conformance(
         )
     )
 
-    if solar_coupling == "dc_only":
+    if solar_coupling == "dc_only" and csip_export_limit_usable:
         scored_telemetry = scored_telemetry.with_columns(
             pl.when(
-                pl.col("_normal_operation")
-                & pl.col("site_instant_power").is_not_null()
+                pl.col("site_instant_power").is_not_null()
                 & pl.col("csip_export_limit_w_ffill").is_not_null()
             )
             .then(
@@ -375,46 +433,29 @@ def combined_conformance(
             pl.lit(None, dtype=pl.Boolean).alias("csip_conformant")
         )
 
-    individual_result_columns = [
+    as_4777_result_columns = [
         "passive_anti_islanding_conformant",
         "sustained_operation_conformant",
         "volt_watt_conformant",
-        "csip_conformant",
     ]
-    scored_telemetry = scored_telemetry.with_columns(
-        pl.coalesce(
-            [
-                pl.col("passive_anti_islanding_conformant"),
-                pl.col("sustained_operation_conformant"),
-                pl.col("volt_watt_conformant"),
-            ]
-        ).alias("as_4777_conformant")
-    )
-
-    component_result_columns = [
-        "as_4777_conformant",
+    individual_result_columns = [
+        *as_4777_result_columns,
         "csip_conformant",
     ]
     scored_telemetry = scored_telemetry.with_columns(
         pl.when(
             pl.any_horizontal(
-                [
-                    pl.col(column).is_not_null()
-                    for column in component_result_columns
-                ]
+                [pl.col(column).is_not_null() for column in as_4777_result_columns]
             )
         )
         .then(
             pl.all_horizontal(
-                [
-                    pl.col(column).fill_null(True)
-                    for column in component_result_columns
-                ]
+                [pl.col(column).fill_null(True) for column in as_4777_result_columns]
             )
         )
         .otherwise(None)
         .cast(pl.Boolean)
-        .alias("combined_conformant")
+        .alias("as_4777_conformant")
     )
 
     return scored_telemetry.select(
@@ -423,6 +464,221 @@ def combined_conformance(
             "grid_voltage_10m_avg",
             *individual_result_columns,
             "as_4777_conformant",
-            "combined_conformant",
+        ]
+    )
+
+
+def combined_conformance_with_voltage_tolerance(
+    site_telemetry: pl.DataFrame,
+    system_power_kw_ac: float,
+    solar_coupling: str,
+    v_nom_max: float = 258.0,
+    csip_export_limit_usable: bool = True,
+    voltage_tolerance_v: float = 2.3,
+    vw_require_measured_above_threshold: bool = False,
+) -> pl.DataFrame:
+    """Return conservative timestamp-level conformance results.
+
+    Voltage measurement uncertainty is represented by the interval from
+    measured voltage minus ``voltage_tolerance_v`` to measured voltage plus
+    ``voltage_tolerance_v``.
+    1. A result is true when a requirement could apply and the observed response is
+    conformant for at least one voltage in that interval.
+    2. A result is false only when the requirement definitely applies
+    and the response is non-conformant for every voltage in the interval.
+    3. Otherwise, the result is null.
+
+    When ``vw_require_measured_above_threshold`` is true, Volt-Watt is
+    assessed only when the measured voltage is above 253 V.
+
+    Passive anti-islanding is assessed first. Limit for sustained operation
+    is assessed only when passive anti-islanding is inconclusive or does not
+    apply, so no timestamp has results for both cessation mechanisms.
+    Volt-Watt and CSIP are assessed independently.
+    """
+
+    input_columns = site_telemetry.columns
+    tolerance_w = system_power_kw_ac * 1000.0 * 0.04
+
+    scored_telemetry = (
+        site_telemetry.sort("timestamp")
+        .with_columns(
+            pl.col("grid_voltage")
+            .rolling_mean_by(
+                "timestamp",
+                window_size="10m",
+                min_samples=8,
+            )
+            .alias("grid_voltage_10m_avg"),
+            pl.col("inverter_ac_real_power")
+            .shift(-1)
+            .alias("_next_inverter_ac_real_power"),
+            (pl.col("timestamp").shift(-1) - pl.col("timestamp"))
+            .dt.total_seconds()
+            .alias("_seconds_to_next_timestamp"),
+        )
+        .with_columns(
+            (pl.col("grid_voltage") - voltage_tolerance_v).alias("_grid_voltage_lower"),
+            (pl.col("grid_voltage") + voltage_tolerance_v).alias("_grid_voltage_upper"),
+            (pl.col("grid_voltage_10m_avg") - voltage_tolerance_v).alias(
+                "_grid_voltage_10m_avg_lower"
+            ),
+            (pl.col("grid_voltage_10m_avg") + voltage_tolerance_v).alias(
+                "_grid_voltage_10m_avg_upper"
+            ),
+            (
+                (pl.col("inverter_ac_real_power") <= tolerance_w)
+                | (
+                    pl.col("_next_inverter_ac_real_power").is_not_null()
+                    & pl.col("_seconds_to_next_timestamp").is_not_null()
+                    & (pl.col("_seconds_to_next_timestamp") <= 60)
+                    & (pl.col("_next_inverter_ac_real_power") <= tolerance_w)
+                )
+            )
+            .fill_null(False)
+            .alias("_disconnected"),
+        )
+        .with_columns(
+            pl.when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & (pl.col("_grid_voltage_upper") >= 265.0)
+                & pl.col("_disconnected")
+            )
+            .then(True)
+            .when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & (pl.col("_grid_voltage_lower") >= 265.0)
+                & ~pl.col("_disconnected")
+            )
+            .then(False)
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("passive_anti_islanding_conformant")
+        )
+        .with_columns(
+            pl.when(
+                pl.col("passive_anti_islanding_conformant").is_null()
+                & pl.col("grid_voltage").is_not_null()
+                & pl.col("grid_voltage_10m_avg").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & (pl.col("_grid_voltage_10m_avg_upper") >= v_nom_max)
+                & pl.col("_disconnected")
+            )
+            .then(True)
+            .when(
+                pl.col("passive_anti_islanding_conformant").is_null()
+                & pl.col("grid_voltage").is_not_null()
+                & pl.col("grid_voltage_10m_avg").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & (pl.col("_grid_voltage_10m_avg_lower") >= v_nom_max)
+                & ~pl.col("_disconnected")
+            )
+            .then(False)
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("sustained_operation_conformant"),
+            pl.max_horizontal(
+                pl.col("_grid_voltage_lower"),
+                pl.lit(253.0),
+            ).alias("_volt_watt_lower_applicable_voltage"),
+        )
+        .with_columns(
+            pl.when(pl.col("_volt_watt_lower_applicable_voltage") < 260.0)
+            .then(
+                1.0
+                - (pl.col("_volt_watt_lower_applicable_voltage") - 253.0) * (0.8 / 7.0)
+            )
+            .otherwise(0.2)
+            .alias("_volt_watt_power_fraction")
+        )
+        .with_columns(
+            (
+                pl.col("inverter_ac_real_power")
+                <= (
+                    system_power_kw_ac * 1000.0 * pl.col("_volt_watt_power_fraction")
+                    + tolerance_w
+                )
+            )
+            .fill_null(False)
+            .alias("_volt_watt_power_conformant")
+        )
+        .with_columns(
+            pl.when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & (pl.col("_grid_voltage_upper") > 253.0)
+                & (
+                    (pl.col("grid_voltage") > 253.0)
+                    if vw_require_measured_above_threshold
+                    else pl.lit(True)
+                )
+                & pl.col("_volt_watt_power_conformant")
+            )
+            .then(True)
+            .when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & (pl.col("_grid_voltage_lower") > 253.0)
+                & ~pl.col("_volt_watt_power_conformant")
+            )
+            .then(False)
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("volt_watt_conformant")
+        )
+    )
+
+    if solar_coupling == "dc_only" and csip_export_limit_usable:
+        scored_telemetry = scored_telemetry.with_columns(
+            pl.when(
+                pl.col("site_instant_power").is_not_null()
+                & pl.col("csip_export_limit_w_ffill").is_not_null()
+            )
+            .then(
+                (-pl.col("site_instant_power")).clip(lower_bound=0)
+                <= pl.col("csip_export_limit_w_ffill") + tolerance_w
+            )
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("csip_conformant")
+        )
+    else:
+        scored_telemetry = scored_telemetry.with_columns(
+            pl.lit(None, dtype=pl.Boolean).alias("csip_conformant")
+        )
+
+    as_4777_result_columns = [
+        "passive_anti_islanding_conformant",
+        "sustained_operation_conformant",
+        "volt_watt_conformant",
+    ]
+    individual_result_columns = [
+        *as_4777_result_columns,
+        "csip_conformant",
+    ]
+    scored_telemetry = scored_telemetry.with_columns(
+        pl.when(
+            pl.any_horizontal(
+                [pl.col(column).is_not_null() for column in as_4777_result_columns]
+            )
+        )
+        .then(
+            pl.all_horizontal(
+                [pl.col(column).fill_null(True) for column in as_4777_result_columns]
+            )
+        )
+        .otherwise(None)
+        .cast(pl.Boolean)
+        .alias("as_4777_conformant")
+    )
+
+    return scored_telemetry.select(
+        input_columns
+        + [
+            "grid_voltage_10m_avg",
+            *individual_result_columns,
+            "as_4777_conformant",
         ]
     )

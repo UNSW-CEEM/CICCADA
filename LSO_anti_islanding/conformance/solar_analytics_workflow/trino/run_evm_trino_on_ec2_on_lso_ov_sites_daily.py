@@ -1,11 +1,11 @@
-# This script is to be run on the EC2 instance for reporting 
+# This script is to be run on the EC2 instance for reporting
 # per day per site LSO anti-islanding cnofromance
 # pushes the table lso_anti_islanding_conformance_daily only
 # it does not push anything else
 # run_evm_trino_on_ec2.py pushes the same table too
 # so only use this script if you want to update that table
 
-# helpful to run if the cohort of assessed sites wont change but 
+# helpful to run if the cohort of assessed sites wont change but
 # the method is slightly changed
 # conformance results for the assessed Solar Analytics site cohort.
 
@@ -622,11 +622,15 @@ try:
                             dtype=pl.Float64,
                         ).alias("ov1_calculated_threshold_used"),
                         pl.lit(
-                            calculated_site_conformance["los_lowest_disconnect_voltage"],
+                            calculated_site_conformance[
+                                "los_lowest_disconnect_voltage"
+                            ],
                             dtype=pl.Float64,
                         ).alias("los_lowest_disconnect_voltage"),
                         pl.lit(
-                            calculated_site_conformance["ov1_lowest_disconnect_voltage"],
+                            calculated_site_conformance[
+                                "ov1_lowest_disconnect_voltage"
+                            ],
                             dtype=pl.Float64,
                         ).alias("ov1_lowest_disconnect_voltage"),
                         pl.lit(

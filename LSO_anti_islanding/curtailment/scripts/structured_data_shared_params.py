@@ -169,9 +169,7 @@ def read_sapn2022_train_site_metadata(path):
                 pl.col("site_id").cast(pl.Int64),
                 pl.col("site_latitude").cast(pl.Float64, strict=False),
                 pl.col("site_longitude").cast(pl.Float64, strict=False),
-                pl.col("sapn2022_train_ac_capacity_kw").cast(
-                    pl.Float64, strict=False
-                ),
+                pl.col("sapn2022_train_ac_capacity_kw").cast(pl.Float64, strict=False),
             ]
         )
     )
@@ -396,9 +394,7 @@ def resolve_capacity(eligible_sites, site_metrology):
                 (pl.col("ac_cap_w").cast(pl.Float64, strict=False) / 1000.0).alias(
                     "sapn_ac_capacity_kw"
                 ),
-                pl.col("sapn2022_train_ac_capacity_kw").cast(
-                    pl.Float64, strict=False
-                ),
+                pl.col("sapn2022_train_ac_capacity_kw").cast(pl.Float64, strict=False),
             ]
         )
         .with_columns(
