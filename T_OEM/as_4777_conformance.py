@@ -3,6 +3,89 @@
 import polars as pl
 
 
+def volt_var_interval_conformance(
+    site_telemetry: pl.DataFrame,
+    system_capacity_kva: float,
+) -> pl.DataFrame:
+    """Return timestamp-level Volt-VAr conformance.
+
+    Reactive power is positive when supplied and negative when absorbed. A
+    timestamp is not assessable when active-power magnitude is below 20% of
+    the supplied system capacity, or when required telemetry is missing.
+    """
+    capacity_va = system_capacity_kva * 1000.0
+    tolerance_var = 0.04 * capacity_va
+    input_columns = site_telemetry.columns
+
+    return (
+        site_telemetry.with_columns(
+            pl.when(pl.col("grid_voltage").is_null())
+            .then(None)
+            .when(pl.col("grid_voltage") <= 207.0)
+            .then(0.44 * capacity_va)
+            .when(pl.col("grid_voltage") < 220.0)
+            .then(
+                0.44
+                * capacity_va
+                * (220.0 - pl.col("grid_voltage"))
+                / (220.0 - 207.0)
+            )
+            .when(pl.col("grid_voltage") <= 240.0)
+            .then(0.0)
+            .when(pl.col("grid_voltage") < 258.0)
+            .then(
+                -0.60
+                * capacity_va
+                * (pl.col("grid_voltage") - 240.0)
+                / (258.0 - 240.0)
+            )
+            .otherwise(-0.60 * capacity_va)
+            .alias("volt_var_required_reactive_power_var"),
+        )
+        .with_columns(
+            (
+                pl.col("volt_var_required_reactive_power_var") - tolerance_var
+            ).alias("volt_var_minimum_reactive_power_var"),
+            (
+                pl.col("volt_var_required_reactive_power_var") + tolerance_var
+            ).alias("volt_var_maximum_reactive_power_var"),
+        )
+        .with_columns(
+            pl.when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (
+                    pl.col("inverter_ac_real_power").abs()
+                    >= 0.20 * capacity_va
+                )
+            )
+            .then(
+                (
+                    pl.col("inverter_ac_reactive_power")
+                    >= pl.col("volt_var_minimum_reactive_power_var")
+                )
+                & (
+                    pl.col("inverter_ac_reactive_power")
+                    <= pl.col("volt_var_maximum_reactive_power_var")
+                )
+            )
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("volt_var_conformant")
+        )
+        .select(
+            input_columns
+            + [
+                "volt_var_required_reactive_power_var",
+                "volt_var_minimum_reactive_power_var",
+                "volt_var_maximum_reactive_power_var",
+                "volt_var_conformant",
+            ]
+        )
+    )
+
+
 def volt_watt_conformance(
     site_telemetry: pl.DataFrame,
     system_power_kw_ac: float,
