@@ -326,15 +326,15 @@ def combined_conformance(
     coupling-specific inverter, battery, and solar consistency checks. Passive
     anti-islanding supersedes the sustained-operation check at 265 V or above.
     Otherwise, the sustained-operation check applies when the 10-minute
-    average voltage reaches ``v_nom_max``. 
+    average voltage reaches ``v_nom_max``.
     Volt-Watt and CSIP (for DC-only systems)
     are assessed independently of those two checks.
     Set ``csip_export_limit_usable`` false when the raw CSIP signal has no
     finite, positive export limit; CSIP results will then remain null.
 
-    A nullable Boolean is returned for each check: 
-    true or false when the check applies, and null when it does not. 
-    ``as_4777_conformant`` contains the conjunction of all 
+    A nullable Boolean is returned for each check:
+    true or false when the check applies, and null when it does not.
+    ``as_4777_conformant`` contains the conjunction of all
     applicable AS 4777 results and is null when no AS 4777 check applies.
     CSIP remains a separate result.
     """
@@ -510,9 +510,9 @@ def combined_conformance_with_voltage_tolerance(
 
     Voltage measurement uncertainty is represented by the interval from
     measured voltage minus ``voltage_tolerance_v`` to measured voltage plus
-    ``voltage_tolerance_v``. 
-    1. A result is true when a requirement could apply and the observed response is 
-    conformant for at least one voltage in that interval. 
+    ``voltage_tolerance_v``.
+    1. A result is true when a requirement could apply and the observed response is
+    conformant for at least one voltage in that interval.
     2. A result is false only when the requirement definitely applies
     and the response is non-conformant for every voltage in the interval.
     3. Otherwise, the result is null.
