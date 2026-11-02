@@ -116,19 +116,13 @@ def plot_site_conformance_days(
             sustained_site_percentage = performance[
                 "sustained_operation_conformant_percentage"
             ]
-            volt_watt_site_eligible = performance[
-                "volt_watt_num_eligible_timestamps"
-            ]
+            volt_watt_site_eligible = performance["volt_watt_num_eligible_timestamps"]
             volt_watt_site_conformant = performance[
                 "volt_watt_num_conformant_timestamps"
             ]
-            volt_watt_site_percentage = performance[
-                "volt_watt_conformant_percentage"
-            ]
+            volt_watt_site_percentage = performance["volt_watt_conformant_percentage"]
             csip_site_eligible = performance["csip_num_eligible_timestamps"]
-            csip_site_conformant = performance[
-                "csip_num_conformant_timestamps"
-            ]
+            csip_site_conformant = performance["csip_num_conformant_timestamps"]
             csip_site_percentage = performance["csip_conformant_percentage"]
             capacity = site_day["calc_capacity"][0]
 
@@ -156,11 +150,7 @@ def plot_site_conformance_days(
                 .then(
                     pl.col("calc_capacity")
                     * pl.when(pl.col("grid_voltage") < 260.0)
-                    .then(
-                        1.0
-                        - (pl.col("grid_voltage") - 253.0)
-                        * (0.8 / 7.0)
-                    )
+                    .then(1.0 - (pl.col("grid_voltage") - 253.0) * (0.8 / 7.0))
                     .otherwise(0.2)
                     + 0.04 * pl.col("calc_capacity")
                 )
@@ -209,21 +199,15 @@ def plot_site_conformance_days(
             ):
                 if day_eligible == 0:
                     continue
-                mechanism_eligible = performance[
-                    f"{mechanism}_num_eligible_timestamps"
-                ]
-                mechanism_percentage = performance[
-                    f"{mechanism}_conformant_percentage"
-                ]
+                mechanism_eligible = performance[f"{mechanism}_num_eligible_timestamps"]
+                mechanism_percentage = performance[f"{mechanism}_conformant_percentage"]
                 if mechanism_eligible < 20:
                     mechanism_status = "insufficient_evidence"
                 elif mechanism_percentage >= 90:
                     mechanism_status = "conformant"
                 else:
                     mechanism_status = "non_conformant"
-                save_directories.append(
-                    output_directory / mechanism / mechanism_status
-                )
+                save_directories.append(output_directory / mechanism / mechanism_status)
 
             figure, (voltage_axis, power_axis) = plt.subplots(
                 2,
@@ -267,9 +251,8 @@ def plot_site_conformance_days(
                 has_volt_watt_conformant = has_volt_watt_conformant or bool(
                     displayed_volt_watt_conformant_mask.any()
                 )
-                has_volt_watt_non_conformant = (
-                    has_volt_watt_non_conformant
-                    or bool(displayed_volt_watt_non_conformant_mask.any())
+                has_volt_watt_non_conformant = has_volt_watt_non_conformant or bool(
+                    displayed_volt_watt_non_conformant_mask.any()
                 )
                 has_cessation_shading = has_cessation_shading or bool(
                     cessation_mask.any()

@@ -52,9 +52,7 @@ all_data = load_ebm_cleaned_data(cleaned_data_path)
 pv_site_counts = {
     row["site_id"]: int(row["pv_site_count"])
     for row in (
-        circuit_details.filter(
-            pl.col("con_type").is_in(["pv_site_net", "pv_site"])
-        )
+        circuit_details.filter(pl.col("con_type").is_in(["pv_site_net", "pv_site"]))
         .group_by("site_id")
         .len()
         .rename({"len": "pv_site_count"})

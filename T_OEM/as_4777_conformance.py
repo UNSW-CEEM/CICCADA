@@ -25,40 +25,31 @@ def volt_var_interval_conformance(
             .then(0.44 * capacity_va)
             .when(pl.col("grid_voltage") < 220.0)
             .then(
-                0.44
-                * capacity_va
-                * (220.0 - pl.col("grid_voltage"))
-                / (220.0 - 207.0)
+                0.44 * capacity_va * (220.0 - pl.col("grid_voltage")) / (220.0 - 207.0)
             )
             .when(pl.col("grid_voltage") <= 240.0)
             .then(0.0)
             .when(pl.col("grid_voltage") < 258.0)
             .then(
-                -0.60
-                * capacity_va
-                * (pl.col("grid_voltage") - 240.0)
-                / (258.0 - 240.0)
+                -0.60 * capacity_va * (pl.col("grid_voltage") - 240.0) / (258.0 - 240.0)
             )
             .otherwise(-0.60 * capacity_va)
             .alias("volt_var_required_reactive_power_var"),
         )
         .with_columns(
-            (
-                pl.col("volt_var_required_reactive_power_var") - tolerance_var
-            ).alias("volt_var_minimum_reactive_power_var"),
-            (
-                pl.col("volt_var_required_reactive_power_var") + tolerance_var
-            ).alias("volt_var_maximum_reactive_power_var"),
+            (pl.col("volt_var_required_reactive_power_var") - tolerance_var).alias(
+                "volt_var_minimum_reactive_power_var"
+            ),
+            (pl.col("volt_var_required_reactive_power_var") + tolerance_var).alias(
+                "volt_var_maximum_reactive_power_var"
+            ),
         )
         .with_columns(
             pl.when(
                 pl.col("grid_voltage").is_not_null()
                 & pl.col("inverter_ac_real_power").is_not_null()
                 & pl.col("inverter_ac_reactive_power").is_not_null()
-                & (
-                    pl.col("inverter_ac_real_power").abs()
-                    >= 0.20 * capacity_va
-                )
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
             )
             .then(
                 (
@@ -92,9 +83,9 @@ def volt_watt_conformance(
     min_eligible_timestamps: int = 1,
 ) -> pl.DataFrame:
     """Return site-level Volt-Watt conformance from interval telemetry.
-       At the moment voltages V>253 are assessed including V>=260
-       if combining with other standards, needs modification or 
-       some sort of superseding standards
+    At the moment voltages V>253 are assessed including V>=260
+    if combining with other standards, needs modification or
+    some sort of superseding standards
     """
     scored_telemetry = (
         site_telemetry.with_columns(
@@ -121,8 +112,7 @@ def volt_watt_conformance(
         )
         .with_columns(
             (
-                pl.col("inverter_ac_real_power_kw")
-                <= pl.col("volt_watt_ceiling_kw")
+                pl.col("inverter_ac_real_power_kw") <= pl.col("volt_watt_ceiling_kw")
             ).alias("conformant")
         )
     )
@@ -266,10 +256,7 @@ def limit_for_sustained_operation(
         )
         .with_columns(
             (
-                (
-                    pl.col("inverter_ac_real_power_kw")
-                    <= 0.04 * system_power_kw_ac
-                )
+                (pl.col("inverter_ac_real_power_kw") <= 0.04 * system_power_kw_ac)
                 | (
                     pl.col("next_inverter_ac_real_power_kw").is_not_null()
                     & pl.col("seconds_to_next_timestamp").is_not_null()
@@ -386,10 +373,7 @@ def combined_conformance(
                     pl.col("_next_inverter_ac_real_power").is_not_null()
                     & pl.col("_seconds_to_next_timestamp").is_not_null()
                     & (pl.col("_seconds_to_next_timestamp") <= 60)
-                    & (
-                        pl.col("_next_inverter_ac_real_power")
-                        <= tolerance_w
-                    )
+                    & (pl.col("_next_inverter_ac_real_power") <= tolerance_w)
                 )
             )
             .otherwise(None)
@@ -402,10 +386,7 @@ def combined_conformance(
                     pl.col("_next_inverter_ac_real_power").is_not_null()
                     & pl.col("_seconds_to_next_timestamp").is_not_null()
                     & (pl.col("_seconds_to_next_timestamp") <= 60)
-                    & (
-                        pl.col("_next_inverter_ac_real_power")
-                        <= tolerance_w
-                    )
+                    & (pl.col("_next_inverter_ac_real_power") <= tolerance_w)
                 )
             )
             .otherwise(None)
@@ -422,11 +403,7 @@ def combined_conformance(
                     system_power_kw_ac
                     * 1000.0
                     * pl.when(pl.col("grid_voltage") < 260.0)
-                    .then(
-                        1.0
-                        - (pl.col("grid_voltage") - 253.0)
-                        * (0.8 / 7.0)
-                    )
+                    .then(1.0 - (pl.col("grid_voltage") - 253.0) * (0.8 / 7.0))
                     .otherwise(0.2)
                     + tolerance_w
                 )
@@ -468,18 +445,12 @@ def combined_conformance(
     scored_telemetry = scored_telemetry.with_columns(
         pl.when(
             pl.any_horizontal(
-                [
-                    pl.col(column).is_not_null()
-                    for column in as_4777_result_columns
-                ]
+                [pl.col(column).is_not_null() for column in as_4777_result_columns]
             )
         )
         .then(
             pl.all_horizontal(
-                [
-                    pl.col(column).fill_null(True)
-                    for column in as_4777_result_columns
-                ]
+                [pl.col(column).fill_null(True) for column in as_4777_result_columns]
             )
         )
         .otherwise(None)
@@ -547,28 +518,21 @@ def combined_conformance_with_voltage_tolerance(
             .alias("_seconds_to_next_timestamp"),
         )
         .with_columns(
-            (pl.col("grid_voltage") - voltage_tolerance_v).alias(
-                "_grid_voltage_lower"
+            (pl.col("grid_voltage") - voltage_tolerance_v).alias("_grid_voltage_lower"),
+            (pl.col("grid_voltage") + voltage_tolerance_v).alias("_grid_voltage_upper"),
+            (pl.col("grid_voltage_10m_avg") - voltage_tolerance_v).alias(
+                "_grid_voltage_10m_avg_lower"
             ),
-            (pl.col("grid_voltage") + voltage_tolerance_v).alias(
-                "_grid_voltage_upper"
+            (pl.col("grid_voltage_10m_avg") + voltage_tolerance_v).alias(
+                "_grid_voltage_10m_avg_upper"
             ),
-            (
-                pl.col("grid_voltage_10m_avg") - voltage_tolerance_v
-            ).alias("_grid_voltage_10m_avg_lower"),
-            (
-                pl.col("grid_voltage_10m_avg") + voltage_tolerance_v
-            ).alias("_grid_voltage_10m_avg_upper"),
             (
                 (pl.col("inverter_ac_real_power") <= tolerance_w)
                 | (
                     pl.col("_next_inverter_ac_real_power").is_not_null()
                     & pl.col("_seconds_to_next_timestamp").is_not_null()
                     & (pl.col("_seconds_to_next_timestamp") <= 60)
-                    & (
-                        pl.col("_next_inverter_ac_real_power")
-                        <= tolerance_w
-                    )
+                    & (pl.col("_next_inverter_ac_real_power") <= tolerance_w)
                 )
             )
             .fill_null(False)
@@ -599,10 +563,7 @@ def combined_conformance_with_voltage_tolerance(
                 & pl.col("grid_voltage").is_not_null()
                 & pl.col("grid_voltage_10m_avg").is_not_null()
                 & pl.col("inverter_ac_real_power").is_not_null()
-                & (
-                    pl.col("_grid_voltage_10m_avg_upper")
-                    >= v_nom_max
-                )
+                & (pl.col("_grid_voltage_10m_avg_upper") >= v_nom_max)
                 & pl.col("_disconnected")
             )
             .then(True)
@@ -611,10 +572,7 @@ def combined_conformance_with_voltage_tolerance(
                 & pl.col("grid_voltage").is_not_null()
                 & pl.col("grid_voltage_10m_avg").is_not_null()
                 & pl.col("inverter_ac_real_power").is_not_null()
-                & (
-                    pl.col("_grid_voltage_10m_avg_lower")
-                    >= v_nom_max
-                )
+                & (pl.col("_grid_voltage_10m_avg_lower") >= v_nom_max)
                 & ~pl.col("_disconnected")
             )
             .then(False)
@@ -627,16 +585,10 @@ def combined_conformance_with_voltage_tolerance(
             ).alias("_volt_watt_lower_applicable_voltage"),
         )
         .with_columns(
-            pl.when(
-                pl.col("_volt_watt_lower_applicable_voltage") < 260.0
-            )
+            pl.when(pl.col("_volt_watt_lower_applicable_voltage") < 260.0)
             .then(
                 1.0
-                - (
-                    pl.col("_volt_watt_lower_applicable_voltage")
-                    - 253.0
-                )
-                * (0.8 / 7.0)
+                - (pl.col("_volt_watt_lower_applicable_voltage") - 253.0) * (0.8 / 7.0)
             )
             .otherwise(0.2)
             .alias("_volt_watt_power_fraction")
@@ -645,9 +597,7 @@ def combined_conformance_with_voltage_tolerance(
             (
                 pl.col("inverter_ac_real_power")
                 <= (
-                    system_power_kw_ac
-                    * 1000.0
-                    * pl.col("_volt_watt_power_fraction")
+                    system_power_kw_ac * 1000.0 * pl.col("_volt_watt_power_fraction")
                     + tolerance_w
                 )
             )
@@ -711,18 +661,12 @@ def combined_conformance_with_voltage_tolerance(
     scored_telemetry = scored_telemetry.with_columns(
         pl.when(
             pl.any_horizontal(
-                [
-                    pl.col(column).is_not_null()
-                    for column in as_4777_result_columns
-                ]
+                [pl.col(column).is_not_null() for column in as_4777_result_columns]
             )
         )
         .then(
             pl.all_horizontal(
-                [
-                    pl.col(column).fill_null(True)
-                    for column in as_4777_result_columns
-                ]
+                [pl.col(column).fill_null(True) for column in as_4777_result_columns]
             )
         )
         .otherwise(None)

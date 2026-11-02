@@ -607,9 +607,7 @@ try:
                                     (
                                         pl.col("los_calculated_responsible_count")
                                         + pl.col("ov1_calculated_responsible_count")
-                                    ).alias(
-                                        "overall_calculated_responsible_count"
-                                    ),
+                                    ).alias("overall_calculated_responsible_count"),
                                     (
                                         pl.col("los_calculated_conformant_count")
                                         + pl.col("ov1_calculated_conformant_count")
@@ -648,9 +646,7 @@ try:
                                         )
                                     )
                                     .sum()
-                                    .alias(
-                                        "los_disconnect_supported_conformant_count"
-                                    ),
+                                    .alias("los_disconnect_supported_conformant_count"),
                                     (
                                         pl.col("ov1_responsible").cast(pl.Int64)
                                         + pl.col("ov1_disconnect_support_added").cast(
@@ -668,9 +664,7 @@ try:
                                         )
                                     )
                                     .sum()
-                                    .alias(
-                                        "ov1_disconnect_supported_conformant_count"
-                                    ),
+                                    .alias("ov1_disconnect_supported_conformant_count"),
                                     pl.col("disconnected_below_threshold")
                                     .sum()
                                     .cast(pl.Int64)
@@ -719,9 +713,7 @@ try:
                                     pl.col("los_responsible")
                                     .sum()
                                     .cast(pl.Int64)
-                                    .alias(
-                                        "los_lowest_disconnect_responsible_count"
-                                    ),
+                                    .alias("los_lowest_disconnect_responsible_count"),
                                     pl.col("los_conformant")
                                     .sum()
                                     .cast(pl.Int64)
@@ -729,9 +721,7 @@ try:
                                     pl.col("ov1_responsible")
                                     .sum()
                                     .cast(pl.Int64)
-                                    .alias(
-                                        "ov1_lowest_disconnect_responsible_count"
-                                    ),
+                                    .alias("ov1_lowest_disconnect_responsible_count"),
                                     pl.col("ov1_conformant")
                                     .sum()
                                     .cast(pl.Int64)
@@ -763,9 +753,7 @@ try:
                                         "overall_lowest_disconnect_responsible_count"
                                     ),
                                     (
-                                        pl.col(
-                                            "los_lowest_disconnect_conformant_count"
-                                        )
+                                        pl.col("los_lowest_disconnect_conformant_count")
                                         + pl.col(
                                             "ov1_lowest_disconnect_conformant_count"
                                         )
@@ -834,21 +822,13 @@ try:
                                         dtype=pl.Float64,
                                     ).alias("ov1_lowest_disconnect_voltage"),
                                     pl.lit(
-                                        lowest_site_conformance[
-                                            "los_threshold_used"
-                                        ],
+                                        lowest_site_conformance["los_threshold_used"],
                                         dtype=pl.Float64,
-                                    ).alias(
-                                        "los_lowest_disconnect_threshold_used"
-                                    ),
+                                    ).alias("los_lowest_disconnect_threshold_used"),
                                     pl.lit(
-                                        lowest_site_conformance[
-                                            "ov1_threshold_used"
-                                        ],
+                                        lowest_site_conformance["ov1_threshold_used"],
                                         dtype=pl.Float64,
-                                    ).alias(
-                                        "ov1_lowest_disconnect_threshold_used"
-                                    ),
+                                    ).alias("ov1_lowest_disconnect_threshold_used"),
                                 ]
                             )
                             .select(
@@ -1163,9 +1143,7 @@ try:
         tod_distribution_output_path,
         schema_overrides=SITE_CONFORMANCE_TOD_DISTRIBUTION_SCHEMA,
     )
-    iceberg_exec(
-        "DROP TABLE IF EXISTS lso_anti_islanding_conformance_tod_distribution"
-    )
+    iceberg_exec("DROP TABLE IF EXISTS lso_anti_islanding_conformance_tod_distribution")
     iceberg_exec("""
         CREATE TABLE lso_anti_islanding_conformance_tod_distribution (
             site_id BIGINT,

@@ -266,7 +266,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.col("overall_conformant_count").alias(
                 "overall_calculated_conformant_count"
             ),
-            pl.col("overall_conformance_pct").alias("overall_calculated_conformance_pct"),
+            pl.col("overall_conformance_pct").alias(
+                "overall_calculated_conformance_pct"
+            ),
             pl.col("overall_pass").alias("overall_calculated_pass"),
         ]
     )
@@ -292,7 +294,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             "overall_disconnect_supported_pass",
         ]
     )
-    lowest_disconnect_conformance = phase_b_lowest_disconnect["site_conformance"].select(
+    lowest_disconnect_conformance = phase_b_lowest_disconnect[
+        "site_conformance"
+    ].select(
         [
             "site_id",
             "threshold_method",
@@ -304,7 +308,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.col("los_conformant_count").alias(
                 "los_lowest_disconnect_conformant_count"
             ),
-            pl.col("los_conformance_pct").alias("los_lowest_disconnect_conformance_pct"),
+            pl.col("los_conformance_pct").alias(
+                "los_lowest_disconnect_conformance_pct"
+            ),
             pl.col("los_pass").alias("los_lowest_disconnect_pass"),
             pl.col("ov1_responsible_count").alias(
                 "ov1_lowest_disconnect_responsible_count"
@@ -312,7 +318,9 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.col("ov1_conformant_count").alias(
                 "ov1_lowest_disconnect_conformant_count"
             ),
-            pl.col("ov1_conformance_pct").alias("ov1_lowest_disconnect_conformance_pct"),
+            pl.col("ov1_conformance_pct").alias(
+                "ov1_lowest_disconnect_conformance_pct"
+            ),
             pl.col("ov1_pass").alias("ov1_lowest_disconnect_pass"),
             pl.col("overall_responsible_count").alias(
                 "overall_lowest_disconnect_responsible_count"
@@ -344,9 +352,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.lit("calculated").alias("case"),
             pl.col("overall_responsible_count").alias("eligible_timestamp_count"),
             pl.col("overall_conformant_count").alias("conformant_timestamp_count"),
-            pl.lit(0, dtype=pl.Int64).alias(
-                "disconnect_support_timestamp_count"
-            ),
+            pl.lit(0, dtype=pl.Int64).alias("disconnect_support_timestamp_count"),
             (
                 pl.col("overall_responsible_count") - pl.col("overall_conformant_count")
             ).alias("non_conformant_timestamp_count"),
@@ -396,9 +402,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.lit("lowest_disconnect").alias("case"),
             pl.col("overall_responsible_count").alias("eligible_timestamp_count"),
             pl.col("overall_conformant_count").alias("conformant_timestamp_count"),
-            pl.lit(0, dtype=pl.Int64).alias(
-                "disconnect_support_timestamp_count"
-            ),
+            pl.lit(0, dtype=pl.Int64).alias("disconnect_support_timestamp_count"),
             (
                 pl.col("overall_responsible_count") - pl.col("overall_conformant_count")
             ).alias("non_conformant_timestamp_count"),

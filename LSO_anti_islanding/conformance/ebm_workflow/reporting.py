@@ -171,7 +171,9 @@ def build_site_conformance_table(
             pl.col("overall_conformant_count").alias(
                 "overall_calculated_conformant_count"
             ),
-            pl.col("overall_conformance_pct").alias("overall_calculated_conformance_pct"),
+            pl.col("overall_conformance_pct").alias(
+                "overall_calculated_conformance_pct"
+            ),
             pl.col("overall_pass").alias("overall_calculated_pass"),
         ]
     )
@@ -207,7 +209,9 @@ def build_site_conformance_table(
             pl.col("los_conformant_count").alias(
                 "los_lowest_disconnect_conformant_count"
             ),
-            pl.col("los_conformance_pct").alias("los_lowest_disconnect_conformance_pct"),
+            pl.col("los_conformance_pct").alias(
+                "los_lowest_disconnect_conformance_pct"
+            ),
             pl.col("los_pass").alias("los_lowest_disconnect_pass"),
             pl.col("ov1_responsible_count").alias(
                 "ov1_lowest_disconnect_responsible_count"
@@ -215,7 +219,9 @@ def build_site_conformance_table(
             pl.col("ov1_conformant_count").alias(
                 "ov1_lowest_disconnect_conformant_count"
             ),
-            pl.col("ov1_conformance_pct").alias("ov1_lowest_disconnect_conformance_pct"),
+            pl.col("ov1_conformance_pct").alias(
+                "ov1_lowest_disconnect_conformance_pct"
+            ),
             pl.col("ov1_pass").alias("ov1_lowest_disconnect_pass"),
             pl.col("overall_responsible_count").alias(
                 "overall_lowest_disconnect_responsible_count"
@@ -376,7 +382,9 @@ def build_ebm_site_conformance(results):
         combined_site_ids.height != site_conformance.height
         or combined_site_ids.height != site_thresholds.height
     ):
-        raise ValueError("EBM conformance and threshold tables have different site IDs.")
+        raise ValueError(
+            "EBM conformance and threshold tables have different site IDs."
+        )
     return (
         site_conformance.select(list(SITE_CONFORMANCE_SCHEMA))
         .cast(SITE_CONFORMANCE_SCHEMA, strict=False)
