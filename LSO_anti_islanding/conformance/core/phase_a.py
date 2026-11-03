@@ -133,7 +133,7 @@ def classify_disconnects_as_los_or_ov1(
     los_hi_cap=260.3,
     attribution_method="grey_band",
     ov1_candidate_lo=258.0,
-    ov1_jump_min=2.0,
+    ov1_jump_min=2.0, # can be modified if you want to modify the OV jump
 ):
     """Classify one day's disconnect edges and pair the next reconnect voltage."""
     if attribution_method not in {"grey_band", "edge_dynamics"}:
