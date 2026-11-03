@@ -149,6 +149,7 @@ def classify_disconnects_as_los_or_ov1(
         "ts_disc": timestamp_dtype,
         "edge_source": pl.Utf8,
         "mechanism": pl.Utf8,
+        "disconnect_voltage": pl.Float64,
         "v10m_disc": pl.Float64,
         "vinst_disc": pl.Float64,
         "reconnect_voltage": pl.Float64,
@@ -240,6 +241,7 @@ def classify_disconnects_as_los_or_ov1(
                 "ts_disc": tdisc,
                 "edge_source": row["edge_source"],
                 "mechanism": mechanism,
+                "disconnect_voltage": disconnect_voltage,
                 "v10m_disc": v10m,
                 "vinst_disc": vinst,
                 "reconnect_voltage": reconnect_voltage,
@@ -255,16 +257,20 @@ def classify_disconnects_as_los_or_ov1(
 def learn_site_thresholds(records: pl.DataFrame):
     """Learn thresholds and summarize all paired site voltages by mechanism."""
     site_voltages = {}
-    for mechanism, voltage_column, prefix, default in (
-        ("LOS", "v10m_disc", "los", 258.0),
-        ("OV1", "vinst_disc", "ov1", 265.0),
+    for mechanism, prefix, default in (
+        ("LOS", "los", 258.0),
+        ("OV1", "ov1", 265.0),
     ):
         if records.is_empty():
             values = []
             reconnect_values = []
         else:
             mechanism_records = records.filter(pl.col("mechanism") == mechanism)
-            values = mechanism_records.get_column(voltage_column).drop_nulls().to_list()
+            values = (
+                mechanism_records.get_column("disconnect_voltage")
+                .drop_nulls()
+                .to_list()
+            )
             reconnect_values = (
                 mechanism_records.get_column("reconnect_voltage").drop_nulls().to_list()
             )
