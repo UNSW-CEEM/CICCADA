@@ -36,6 +36,7 @@ def detect_edges(
     p_step_strict = 0.10 * PRated
     frame = signal_frame.with_columns(
         [
+            pl.col("vinst_max").shift(1).alias("vinst_max_previous"),
             (
                 (~pl.col("is_disc").shift(1))
                 & pl.col("is_disc")
@@ -65,6 +66,7 @@ def detect_edges(
                 "local_tstamp",
                 "v10m_avg",
                 "vinst_max",
+                "vinst_max_previous",
                 "site_power_drop",
             ]
         )
@@ -90,6 +92,37 @@ def detect_edges(
     }
 
 
+def attribute_edge_dynamics(
+    v10m,
+    vinst,
+    vinst_previous,
+    *,
+    los_lo,
+    los_hi_cap,
+    ov1_candidate_lo,
+    ov1_jump_min,
+):
+    """Attribute one disconnect using its instantaneous-voltage change."""
+    vinst_jump = (
+        None
+        if vinst is None or vinst_previous is None
+        else float(vinst) - float(vinst_previous)
+    )
+
+    if vinst is not None and vinst > los_hi_cap:
+        return "OV1", vinst, False
+    if (
+        vinst is not None
+        and vinst > ov1_candidate_lo
+        and vinst_jump is not None
+        and vinst_jump >= ov1_jump_min
+    ):
+        return "OV1", vinst, False
+    if v10m is not None and los_lo <= v10m <= los_hi_cap:
+        return "LOS", v10m, False
+    return None, None, False
+
+
 def classify_disconnects_as_los_or_ov1(
     edge_result,
     PRated,
@@ -98,8 +131,14 @@ def classify_disconnects_as_los_or_ov1(
     # los_lo=244, # 3% 3error
     los_hi_strict=259.0,
     los_hi_cap=260.3,
+    attribution_method="grey_band",
+    ov1_candidate_lo=258.0,
+    ov1_jump_min=2.0,
 ):
     """Classify one day's disconnect edges and pair the next reconnect voltage."""
+    if attribution_method not in {"grey_band", "edge_dynamics"}:
+        raise KeyError(f"Unknown Phase A attribution method: {attribution_method}")
+
     frame = edge_result["frame"]
     disconnect_edges = edge_result["disconnect_edges"]
     reconnect_edges = edge_result["reconnect_edges"]
@@ -140,37 +179,48 @@ def classify_disconnects_as_los_or_ov1(
         disconnect_voltage = None
         grey_non_sustained = False
 
-        # uncomment the following block for inclduding grey band
-        vinst_in_ov1_region = vinst is not None and (
-            los_hi_strict <= vinst <= los_hi_cap
-        )
+        if attribution_method == "grey_band":
+            # uncomment the following block for inclduding grey band
+            vinst_in_ov1_region = vinst is not None and (
+                los_hi_strict <= vinst <= los_hi_cap
+            )
 
-        if v10m is not None and (los_lo <= v10m <= los_hi_strict):
-            mechanism = "LOS"
-            disconnect_voltage = v10m
-        elif vinst is not None and (vinst > los_hi_cap):
-            mechanism = "OV1"
-            disconnect_voltage = vinst
-        elif v10m is not None and (los_hi_strict < v10m <= los_hi_cap):
-            if vinst_in_ov1_region:
-                mechanism = "OV1"
-                disconnect_voltage = vinst
-                grey_non_sustained = True
-            else:
+            if v10m is not None and (los_lo <= v10m <= los_hi_strict):
                 mechanism = "LOS"
                 disconnect_voltage = v10m
+            elif vinst is not None and (vinst > los_hi_cap):
+                mechanism = "OV1"
+                disconnect_voltage = vinst
+            elif v10m is not None and (los_hi_strict < v10m <= los_hi_cap):
+                if vinst_in_ov1_region:
+                    mechanism = "OV1"
+                    disconnect_voltage = vinst
+                    grey_non_sustained = True
+                else:
+                    mechanism = "LOS"
+                    disconnect_voltage = v10m
 
-        # comment below and uncoment above to implement grey band
-        # if vinst is not None and vinst >= los_hi_strict:
-        #     mechanism = "OV1"
-        #     disconnect_voltage = vinst
-        # elif v10m is not None and (los_lo <= v10m <= los_hi_strict):
-        #     mechanism = "LOS"
-        #     disconnect_voltage = v10m
-        ####
+            # comment below and uncoment above to implement grey band
+            # if vinst is not None and vinst >= los_hi_strict:
+            #     mechanism = "OV1"
+            #     disconnect_voltage = vinst
+            # elif v10m is not None and (los_lo <= v10m <= los_hi_strict):
+            #     mechanism = "LOS"
+            #     disconnect_voltage = v10m
+            ####
+        else:
+            mechanism, disconnect_voltage, grey_non_sustained = attribute_edge_dynamics(
+                v10m,
+                vinst,
+                row["vinst_max_previous"],
+                los_lo=los_lo,
+                los_hi_cap=los_hi_cap,
+                ov1_candidate_lo=ov1_candidate_lo,
+                ov1_jump_min=ov1_jump_min,
+            )
 
         if mechanism is None or disconnect_voltage is None:
-            continue
+            mechanism = "unclassified"
 
         reconnect = next(
             (record for record in reconnect_list if record["local_tstamp"] > tdisc),
@@ -178,9 +228,10 @@ def classify_disconnects_as_los_or_ov1(
         )
         reconnect_voltage = None
         if reconnect is not None:
-            reconnect_voltage = (
-                reconnect["v10m_avg"] if mechanism == "LOS" else reconnect["vinst_max"]
-            )
+            if mechanism == "LOS":
+                reconnect_voltage = reconnect["v10m_avg"]
+            elif mechanism == "OV1":
+                reconnect_voltage = reconnect["vinst_max"]
 
         records.append(
             {
@@ -290,6 +341,7 @@ def run_phase_a_for_site(
     PRated,
     *,
     max_disconnect_edge_gap_seconds=60,
+    attribution_method="grey_band",
 ):
     """Run Phase A for one site and produce thresholds plus voltage summaries."""
     records_all = []
@@ -299,7 +351,11 @@ def run_phase_a_for_site(
             PRated,
             max_disconnect_edge_gap_seconds=max_disconnect_edge_gap_seconds,
         )
-        day_records = classify_disconnects_as_los_or_ov1(edge_result, PRated)
+        day_records = classify_disconnects_as_los_or_ov1(
+            edge_result,
+            PRated,
+            attribution_method=attribution_method,
+        )
         if not day_records.is_empty():
             records_all.append(
                 day_records.with_columns(
