@@ -4,8 +4,6 @@ from typing import Any
 
 import polars as pl
 
-MAX_DISCONNECT_EDGE_GAP_SECONDS = 300
-
 SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
     "site_id": pl.Int64,
     "los_threshold": pl.Float64,
@@ -21,7 +19,12 @@ SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
 }
 
 
-def detect_edges(signal_frame: pl.DataFrame, PRated):
+def detect_edges(
+    signal_frame: pl.DataFrame,
+    PRated,
+    *,
+    max_disconnect_edge_gap_seconds=60,
+):
     """Detect strict disconnect and reconnect edges in one site-day."""
     if signal_frame.is_empty():
         return {
@@ -38,7 +41,10 @@ def detect_edges(signal_frame: pl.DataFrame, PRated):
                 & pl.col("is_disc")
                 & (pl.col("site_power_drop") >= p_step_strict)
                 & (pl.col("dt_next_s").shift(1) > 0)
-                & (pl.col("dt_next_s").shift(1) <= MAX_DISCONNECT_EDGE_GAP_SECONDS)
+                & (
+                    pl.col("dt_next_s").shift(1)
+                    <= max_disconnect_edge_gap_seconds
+                )
             )
             .fill_null(False)
             .alias("disconnect_edge"),
@@ -278,11 +284,21 @@ def learn_site_thresholds(records: pl.DataFrame):
     return site_voltages
 
 
-def run_phase_a_for_site(site_id, prepared_site_days, PRated):
+def run_phase_a_for_site(
+    site_id,
+    prepared_site_days,
+    PRated,
+    *,
+    max_disconnect_edge_gap_seconds=60,
+):
     """Run Phase A for one site and produce thresholds plus voltage summaries."""
     records_all = []
     for prepared_day in prepared_site_days:
-        edge_result = detect_edges(prepared_day["signal_frame"], PRated)
+        edge_result = detect_edges(
+            prepared_day["signal_frame"],
+            PRated,
+            max_disconnect_edge_gap_seconds=max_disconnect_edge_gap_seconds,
+        )
         day_records = classify_disconnects_as_los_or_ov1(edge_result, PRated)
         if not day_records.is_empty():
             records_all.append(
