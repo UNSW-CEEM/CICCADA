@@ -289,7 +289,6 @@ def learn_site_thresholds(records: pl.DataFrame):
 
         values = sorted(float(value) for value in values)
         reconnect_values = sorted(float(value) for value in reconnect_values)
-        voltage_range = None if not values else max(values) - min(values)
 
         remaining_values = list(values)
         clusters = []
@@ -337,26 +336,6 @@ def learn_site_thresholds(records: pl.DataFrame):
             for cluster in secondary_clusters
         ]
 
-        winning_values = []
-        right = 0
-        for left, start_v in enumerate(values):
-            right = max(right, left)
-            while right < len(values) and values[right] <= start_v + 0.5:
-                right += 1
-            candidate = values[left:right]
-            if len(candidate) > len(winning_values):
-                winning_values = candidate
-
-        winning_median = None
-        if winning_values:
-            middle_index = len(winning_values) // 2
-            if len(winning_values) % 2 == 1:
-                winning_median = winning_values[middle_index]
-            else:
-                winning_median = (
-                    winning_values[middle_index - 1] + winning_values[middle_index]
-                ) / 2.0
-
         all_disconnect_median = None
         if values:
             middle_index = len(values) // 2
@@ -377,14 +356,11 @@ def learn_site_thresholds(records: pl.DataFrame):
                     reconnect_values[middle_index - 1] + reconnect_values[middle_index]
                 ) / 2.0
 
-        learned = (
-            len(winning_values) >= 3
-            and voltage_range is not None
-            and voltage_range <= 2.0
-        )
         site_voltages.update(
             {
-                f"{prefix}_threshold": winning_median if learned else default,
+                f"{prefix}_threshold": (
+                    float(median(primary_cluster)) if primary_cluster else default
+                ),
                 f"{prefix}_lowest_disconnect_voltage": (
                     min(values) if values else None
                 ),
