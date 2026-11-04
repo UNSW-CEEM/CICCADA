@@ -1,6 +1,7 @@
 """Linear disconnect-edge detection, attribution, and threshold learning."""
 
 import json
+from statistics import median
 from typing import Any
 
 import polars as pl
@@ -13,14 +14,18 @@ SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
     "los_lowest_reconnect_voltage": pl.Float64,
     "los_median_all_reconnect_voltages": pl.Float64,
     "los_cluster_type": pl.Utf8,
+    "los_primary_cluster_count": pl.Int64,
     "los_outlier_voltages": pl.Utf8,
+    "los_secondary_clusters": pl.Utf8,
     "ov1_threshold": pl.Float64,
     "ov1_lowest_disconnect_voltage": pl.Float64,
     "ov1_median_all_disconnect_voltages": pl.Float64,
     "ov1_lowest_reconnect_voltage": pl.Float64,
     "ov1_median_all_reconnect_voltages": pl.Float64,
     "ov1_cluster_type": pl.Utf8,
+    "ov1_primary_cluster_count": pl.Int64,
     "ov1_outlier_voltages": pl.Utf8,
+    "ov1_secondary_clusters": pl.Utf8,
 }
 
 
@@ -286,35 +291,51 @@ def learn_site_thresholds(records: pl.DataFrame):
         reconnect_values = sorted(float(value) for value in reconnect_values)
         voltage_range = None if not values else max(values) - min(values)
 
-        non_isolated_values = []
-        outlier_values = []
-        for index, value in enumerate(values):
-            has_lower_neighbour = (
-                index > 0
-                and value - values[index - 1]
-                <= cluster_span_volts + comparison_tolerance
-            )
-            has_upper_neighbour = (
-                index + 1 < len(values)
-                and values[index + 1] - value
-                <= cluster_span_volts + comparison_tolerance
-            )
-            if has_lower_neighbour or has_upper_neighbour:
-                non_isolated_values.append(value)
-            else:
-                outlier_values.append(value)
+        remaining_values = list(values)
+        clusters = []
+        while remaining_values:
+            winning_left = 0
+            winning_right = 1
+            right = 0
+            for left, start_v in enumerate(remaining_values):
+                right = max(right, left)
+                while (
+                    right < len(remaining_values)
+                    and remaining_values[right]
+                    <= start_v + cluster_span_volts + comparison_tolerance
+                ):
+                    right += 1
+                if right - left > winning_right - winning_left:
+                    winning_left = left
+                    winning_right = right
 
-        if not non_isolated_values:
+            clusters.append(remaining_values[winning_left:winning_right])
+            remaining_values = (
+                remaining_values[:winning_left]
+                + remaining_values[winning_right:]
+            )
+
+        multi_value_clusters = [cluster for cluster in clusters if len(cluster) >= 2]
+        primary_cluster = multi_value_clusters[0] if multi_value_clusters else []
+        secondary_clusters = multi_value_clusters[1:]
+        outlier_values = sorted(cluster[0] for cluster in clusters if len(cluster) == 1)
+
+        if not primary_cluster:
             cluster_type = "no_cluster"
-        elif (
-            max(non_isolated_values) - min(non_isolated_values)
-            > cluster_span_volts + comparison_tolerance
-        ):
+        elif secondary_clusters:
             cluster_type = "multimodal"
         elif outlier_values:
             cluster_type = "clustered_with_outliers"
         else:
             cluster_type = "clustered"
+
+        secondary_cluster_summary = [
+            {
+                "count": len(cluster),
+                "median": float(median(cluster)),
+            }
+            for cluster in secondary_clusters
+        ]
 
         winning_values = []
         right = 0
@@ -373,7 +394,12 @@ def learn_site_thresholds(records: pl.DataFrame):
                 ),
                 f"{prefix}_median_all_reconnect_voltages": all_reconnect_median,
                 f"{prefix}_cluster_type": cluster_type,
+                f"{prefix}_primary_cluster_count": len(primary_cluster),
                 f"{prefix}_outlier_voltages": json.dumps(outlier_values),
+                f"{prefix}_secondary_clusters": json.dumps(
+                    secondary_cluster_summary,
+                    separators=(",", ":"),
+                ),
             }
         )
 
