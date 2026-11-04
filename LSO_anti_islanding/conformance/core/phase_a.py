@@ -1,5 +1,6 @@
 """Linear disconnect-edge detection, attribution, and threshold learning."""
 
+import json
 from typing import Any
 
 import polars as pl
@@ -11,11 +12,15 @@ SITE_LEVEL_VARIOUS_VOLTAGES_SCHEMA = {
     "los_median_all_disconnect_voltages": pl.Float64,
     "los_lowest_reconnect_voltage": pl.Float64,
     "los_median_all_reconnect_voltages": pl.Float64,
+    "los_cluster_type": pl.Utf8,
+    "los_outlier_voltages": pl.Utf8,
     "ov1_threshold": pl.Float64,
     "ov1_lowest_disconnect_voltage": pl.Float64,
     "ov1_median_all_disconnect_voltages": pl.Float64,
     "ov1_lowest_reconnect_voltage": pl.Float64,
     "ov1_median_all_reconnect_voltages": pl.Float64,
+    "ov1_cluster_type": pl.Utf8,
+    "ov1_outlier_voltages": pl.Utf8,
 }
 
 
@@ -256,6 +261,8 @@ def classify_disconnects_as_los_or_ov1(
 
 def learn_site_thresholds(records: pl.DataFrame):
     """Learn thresholds and summarize all paired site voltages by mechanism."""
+    cluster_span_volts = 4.6
+    comparison_tolerance = 1e-9
     site_voltages = {}
     for mechanism, prefix, default in (
         ("LOS", "los", 258.0),
@@ -278,6 +285,36 @@ def learn_site_thresholds(records: pl.DataFrame):
         values = sorted(float(value) for value in values)
         reconnect_values = sorted(float(value) for value in reconnect_values)
         voltage_range = None if not values else max(values) - min(values)
+
+        non_isolated_values = []
+        outlier_values = []
+        for index, value in enumerate(values):
+            has_lower_neighbour = (
+                index > 0
+                and value - values[index - 1]
+                <= cluster_span_volts + comparison_tolerance
+            )
+            has_upper_neighbour = (
+                index + 1 < len(values)
+                and values[index + 1] - value
+                <= cluster_span_volts + comparison_tolerance
+            )
+            if has_lower_neighbour or has_upper_neighbour:
+                non_isolated_values.append(value)
+            else:
+                outlier_values.append(value)
+
+        if not non_isolated_values:
+            cluster_type = "no_cluster"
+        elif (
+            max(non_isolated_values) - min(non_isolated_values)
+            > cluster_span_volts + comparison_tolerance
+        ):
+            cluster_type = "multimodal"
+        elif outlier_values:
+            cluster_type = "clustered_with_outliers"
+        else:
+            cluster_type = "clustered"
 
         winning_values = []
         right = 0
@@ -335,6 +372,8 @@ def learn_site_thresholds(records: pl.DataFrame):
                     min(reconnect_values) if reconnect_values else None
                 ),
                 f"{prefix}_median_all_reconnect_voltages": all_reconnect_median,
+                f"{prefix}_cluster_type": cluster_type,
+                f"{prefix}_outlier_voltages": json.dumps(outlier_values),
             }
         )
 
