@@ -41,6 +41,7 @@ from sapn2022_workflow.reporting import (
     SITE_CONFORMANCE_TOD_DISTRIBUTION_NAME,
     SITE_LEVEL_VARIOUS_VOLTAGES_NAME,
     add_disconnect_voltage_lists,
+    add_overall_conformance_category,
     build_method_conformance_final_table,
     build_sapn_conformance_exclusions,
     build_sapn_site_conformance,
@@ -294,6 +295,8 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
             pl.col("ov1_threshold_used").alias("ov1_calculated_threshold_used"),
             "los_lowest_disconnect_voltage",
             "ov1_lowest_disconnect_voltage",
+            "los_cluster_type",
+            "ov1_cluster_type",
             pl.col("los_responsible_count").alias("los_calculated_responsible_count"),
             pl.col("los_conformant_count").alias("los_calculated_conformant_count"),
             pl.col("los_conformance_pct").alias("los_calculated_conformance_pct"),
@@ -385,19 +388,7 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         on=["site_id", "threshold_method"],
         how="inner",
     )
-    site_conformance = site_conformance.with_columns(
-        pl.when(
-            pl.col("overall_disconnect_supported_pass").eq(True)
-            & pl.col("overall_calculated_pass").eq(True)
-        )
-        .then(pl.lit("conformant"))
-        .when(pl.col("overall_disconnect_supported_pass").eq(True))
-        .then(pl.lit("conformant_erratic"))
-        .when(pl.col("overall_disconnect_supported_pass").eq(False))
-        .then(pl.lit("non_conformant"))
-        .otherwise(pl.lit("unassessed"))
-        .alias("overall_conformance_category")
-    )
+    site_conformance = add_overall_conformance_category(site_conformance)
     site_conformance_rows.append(site_conformance)
 
     calculated_distribution = phase_b_calculated["site_conformance"].select(

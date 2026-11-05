@@ -22,6 +22,8 @@ SITE_CONFORMANCE_SCHEMA = {
     "ov1_calculated_threshold_used": pl.Float64,
     "los_lowest_disconnect_voltage": pl.Float64,
     "ov1_lowest_disconnect_voltage": pl.Float64,
+    "los_cluster_type": pl.Utf8,
+    "ov1_cluster_type": pl.Utf8,
     "los_lowest_disconnect_threshold_used": pl.Float64,
     "ov1_lowest_disconnect_threshold_used": pl.Float64,
     "los_calculated_responsible_count": pl.Int64,
@@ -137,7 +139,37 @@ def add_disconnect_voltage_lists(site_summary, phase_a_records):
     )
 
 
-def build_sapn_site_conformance(results):
+def add_overall_conformance_category(
+    site_conformance,
+    *,
+    apply_variability_rule=True,
+):
+    """Assign the site category, optionally giving multimodality precedence."""
+    category = (
+        pl.when(
+            pl.col("overall_disconnect_supported_pass").eq(True)
+            & pl.col("overall_calculated_pass").eq(True)
+        )
+        .then(pl.lit("conformant"))
+        .when(pl.col("overall_disconnect_supported_pass").eq(True))
+        .then(pl.lit("conformant_erratic"))
+        .when(pl.col("overall_disconnect_supported_pass").eq(False))
+        .then(pl.lit("non_conformant"))
+        .otherwise(pl.lit("unassessed"))
+    )
+    if apply_variability_rule:
+        category = (
+            pl.when(
+                pl.col("los_cluster_type").eq("multimodal").fill_null(False)
+                | pl.col("ov1_cluster_type").eq("multimodal").fill_null(False)
+            )
+            .then(pl.lit("non_conformant_variability"))
+            .otherwise(category)
+        )
+    return site_conformance.with_columns(category.alias("overall_conformance_category"))
+
+
+def build_sapn_site_conformance(results, *, apply_variability_rule=True):
     site_conformance = results["site_conformance"]
     site_thresholds = results["site_thresholds"]
     if site_conformance.is_empty() and site_thresholds.is_empty():
@@ -162,18 +194,9 @@ def build_sapn_site_conformance(results):
         )
 
     return (
-        site_conformance.with_columns(
-            pl.when(
-                pl.col("overall_disconnect_supported_pass").eq(True)
-                & pl.col("overall_calculated_pass").eq(True)
-            )
-            .then(pl.lit("conformant"))
-            .when(pl.col("overall_disconnect_supported_pass").eq(True))
-            .then(pl.lit("conformant_erratic"))
-            .when(pl.col("overall_disconnect_supported_pass").eq(False))
-            .then(pl.lit("non_conformant"))
-            .otherwise(pl.lit("unassessed"))
-            .alias("overall_conformance_category")
+        add_overall_conformance_category(
+            site_conformance,
+            apply_variability_rule=apply_variability_rule,
         )
         .select(list(SITE_CONFORMANCE_SCHEMA))
         .cast(SITE_CONFORMANCE_SCHEMA, strict=False)
@@ -310,12 +333,12 @@ def build_method_conformance_final_table(site_conformance):
         .agg(
             [
                 pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
-                pl.col("overall_disconnect_supported_pass")
-                .is_not_null()
+                pl.col("overall_conformance_category")
+                .ne("unassessed")
                 .sum()
                 .alias("Sites Assessed"),
-                pl.col("overall_disconnect_supported_pass")
-                .is_null()
+                pl.col("overall_conformance_category")
+                .eq("unassessed")
                 .sum()
                 .alias("Unassessed Sites"),
                 pl.col("overall_conformance_category")
@@ -326,9 +349,8 @@ def build_method_conformance_final_table(site_conformance):
                 .eq("conformant_erratic")
                 .sum()
                 .alias("Conformant (Erratic) Sites"),
-                pl.col("overall_disconnect_supported_pass")
-                .eq(False)
-                .fill_null(False)
+                pl.col("overall_conformance_category")
+                .is_in(["non_conformant", "non_conformant_variability"])
                 .sum()
                 .alias("Non-Conformant Sites"),
             ]
