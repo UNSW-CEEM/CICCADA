@@ -300,97 +300,77 @@ def build_site_conformance_tod_distribution(timestamp_detail):
 
 
 def build_method_conformance_final_table(site_conformance):
-    calculated = (
-        site_conformance.group_by("threshold_method", maintain_order=True)
-        .agg(
+    high_variability = pl.col("los_cluster_type").eq("multimodal").fill_null(
+        False
+    ) | pl.col("ov1_cluster_type").eq("multimodal").fill_null(False)
+
+    def summarize_case(pass_column, case_name, *, distinguish_erratic=False):
+        assessed = pl.col(pass_column).is_not_null()
+        passes = pl.col(pass_column).eq(True).fill_null(False)
+        high_variability_assessed = assessed & high_variability
+        conformant = assessed & passes & ~high_variability_assessed
+        aggregations = [
+            pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
+            assessed.sum().alias("Sites Assessed"),
+            (~assessed).sum().alias("Unassessed Sites"),
+        ]
+        if distinguish_erratic:
+            calculated_passes = (
+                pl.col("overall_calculated_pass").eq(True).fill_null(False)
+            )
+            aggregations.extend(
+                [
+                    (conformant & calculated_passes).sum().alias("Conformant Sites"),
+                    (conformant & ~calculated_passes)
+                    .sum()
+                    .alias("Conformant (Erratic) Sites"),
+                ]
+            )
+        else:
+            aggregations.extend(
+                [
+                    conformant.sum().alias("Conformant Sites"),
+                    pl.lit(0, dtype=pl.UInt32).alias("Conformant (Erratic) Sites"),
+                ]
+            )
+        aggregations.extend(
             [
-                pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
-                pl.col("overall_calculated_pass")
-                .is_not_null()
-                .sum()
-                .alias("Sites Assessed"),
-                pl.col("overall_calculated_pass")
-                .is_null()
-                .sum()
-                .alias("Unassessed Sites"),
-                pl.col("overall_calculated_pass")
-                .eq(True)
-                .fill_null(False)
-                .sum()
-                .alias("Conformant Sites"),
-                pl.lit(0, dtype=pl.UInt32).alias("Conformant (Erratic) Sites"),
-                pl.col("overall_calculated_pass")
-                .eq(False)
-                .fill_null(False)
+                high_variability_assessed.sum().alias(
+                    "Non-Conformant (High Variability) Sites"
+                ),
+                (assessed & ~passes & ~high_variability_assessed)
                 .sum()
                 .alias("Non-Conformant Sites"),
             ]
         )
-        .with_columns(pl.lit("calculated").alias("Case"))
+        return (
+            site_conformance.group_by("threshold_method", maintain_order=True)
+            .agg(aggregations)
+            .with_columns(pl.lit(case_name).alias("Case"))
+        )
+
+    calculated = summarize_case("overall_calculated_pass", "calculated")
+    disconnect_supported = summarize_case(
+        "overall_disconnect_supported_pass",
+        "disconnect_supported",
+        distinguish_erratic=True,
     )
-    disconnect_supported = (
-        site_conformance.group_by("threshold_method", maintain_order=True)
-        .agg(
-            [
-                pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
-                pl.col("overall_conformance_category")
-                .ne("unassessed")
-                .sum()
-                .alias("Sites Assessed"),
-                pl.col("overall_conformance_category")
-                .eq("unassessed")
-                .sum()
-                .alias("Unassessed Sites"),
-                pl.col("overall_conformance_category")
-                .eq("conformant")
-                .sum()
-                .alias("Conformant Sites"),
-                pl.col("overall_conformance_category")
-                .eq("conformant_erratic")
-                .sum()
-                .alias("Conformant (Erratic) Sites"),
-                pl.col("overall_conformance_category")
-                .is_in(["non_conformant", "non_conformant_variability"])
-                .sum()
-                .alias("Non-Conformant Sites"),
-            ]
-        )
-        .with_columns(pl.lit("disconnect_supported").alias("Case"))
-    )
-    lowest_disconnect = (
-        site_conformance.group_by("threshold_method", maintain_order=True)
-        .agg(
-            [
-                pl.col("site_id").n_unique().alias("Eligible Sites After Filtering"),
-                pl.col("overall_lowest_disconnect_pass")
-                .is_not_null()
-                .sum()
-                .alias("Sites Assessed"),
-                pl.col("overall_lowest_disconnect_pass")
-                .is_null()
-                .sum()
-                .alias("Unassessed Sites"),
-                pl.col("overall_lowest_disconnect_pass")
-                .eq(True)
-                .fill_null(False)
-                .sum()
-                .alias("Conformant Sites"),
-                pl.lit(0, dtype=pl.UInt32).alias("Conformant (Erratic) Sites"),
-                pl.col("overall_lowest_disconnect_pass")
-                .eq(False)
-                .fill_null(False)
-                .sum()
-                .alias("Non-Conformant Sites"),
-            ]
-        )
-        .with_columns(pl.lit("lowest_disconnect").alias("Case"))
+    lowest_disconnect = summarize_case(
+        "overall_lowest_disconnect_pass",
+        "lowest_disconnect",
     )
     final_table = (
         pl.concat([calculated, disconnect_supported, lowest_disconnect])
         .with_columns(
-            (pl.col("Conformant Sites") + pl.col("Conformant (Erratic) Sites")).alias(
-                "Total Conformant Sites"
-            )
+            [
+                (
+                    pl.col("Conformant Sites") + pl.col("Conformant (Erratic) Sites")
+                ).alias("Total Conformant Sites"),
+                (
+                    pl.col("Non-Conformant Sites")
+                    + pl.col("Non-Conformant (High Variability) Sites")
+                ).alias("Total Non-Conformant Sites"),
+            ]
         )
         .with_columns(
             [
@@ -404,9 +384,23 @@ def build_method_conformance_final_table(site_conformance):
                 )
                 .round(2)
                 .alias("Conformant (Erratic) Percentage (% of Assessed)"),
+                (
+                    pl.col("Non-Conformant (High Variability) Sites")
+                    / pl.col("Sites Assessed")
+                    * 100.0
+                )
+                .round(2)
+                .alias("Non-Conformant (High Variability) Percentage (% of Assessed)"),
                 (pl.col("Non-Conformant Sites") / pl.col("Sites Assessed") * 100.0)
                 .round(2)
                 .alias("Non-Conformant Percentage (% of Assessed)"),
+                (
+                    pl.col("Total Non-Conformant Sites")
+                    / pl.col("Sites Assessed")
+                    * 100.0
+                )
+                .round(2)
+                .alias("Total Non-Conformance Percentage (% of Assessed)"),
                 (pl.col("Total Conformant Sites") / pl.col("Sites Assessed") * 100.0)
                 .round(2)
                 .alias("Total Conformance Percentage (% of Assessed)"),
@@ -422,11 +416,15 @@ def build_method_conformance_final_table(site_conformance):
                 "Unassessed Sites",
                 "Conformant Sites",
                 "Conformant (Erratic) Sites",
+                "Non-Conformant (High Variability) Sites",
                 "Non-Conformant Sites",
                 "Total Conformant Sites",
+                "Total Non-Conformant Sites",
                 "Conformant Percentage (% of Assessed)",
                 "Conformant (Erratic) Percentage (% of Assessed)",
+                "Non-Conformant (High Variability) Percentage (% of Assessed)",
                 "Non-Conformant Percentage (% of Assessed)",
+                "Total Non-Conformance Percentage (% of Assessed)",
                 "Total Conformance Percentage (% of Assessed)",
             ]
         )
