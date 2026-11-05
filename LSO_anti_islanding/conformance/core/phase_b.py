@@ -35,14 +35,8 @@ def select_thresholds_for_conformance(
             [
                 "site_id",
                 pl.lit(threshold_method, dtype=pl.Utf8).alias("threshold_method"),
-                pl.min_horizontal(
-                    pl.col("los_threshold"),
-                    pl.lit(258.0, dtype=pl.Float64),
-                ).alias("los_threshold_used"),
-                pl.min_horizontal(
-                    pl.col("ov1_threshold") - tau,
-                    pl.lit(265.0, dtype=pl.Float64),
-                ).alias("ov1_threshold_used"),
+                pl.col("los_threshold").alias("los_threshold_used"),
+                (pl.col("ov1_threshold") - tau).alias("ov1_threshold_used"),
                 "los_lowest_disconnect_voltage",
                 "ov1_lowest_disconnect_voltage",
             ]
