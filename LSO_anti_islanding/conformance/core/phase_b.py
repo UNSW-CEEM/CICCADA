@@ -26,6 +26,8 @@ def select_thresholds_for_conformance(
                 ).alias("ov1_threshold_used"),
                 "los_lowest_disconnect_voltage",
                 "ov1_lowest_disconnect_voltage",
+                "los_cluster_type",
+                "ov1_cluster_type",
             ]
         )
 
@@ -39,6 +41,8 @@ def select_thresholds_for_conformance(
                 (pl.col("ov1_threshold") - tau).alias("ov1_threshold_used"),
                 "los_lowest_disconnect_voltage",
                 "ov1_lowest_disconnect_voltage",
+                "los_cluster_type",
+                "ov1_cluster_type",
             ]
         )
     if threshold_method == "default":
@@ -50,6 +54,8 @@ def select_thresholds_for_conformance(
                 pl.lit(265.0 - tau, dtype=pl.Float64).alias("ov1_threshold_used"),
                 "los_lowest_disconnect_voltage",
                 "ov1_lowest_disconnect_voltage",
+                "los_cluster_type",
+                "ov1_cluster_type",
             ]
         )
     raise KeyError(
@@ -387,6 +393,8 @@ def score_site_conformance(
             "ov1_threshold_used",
             "los_lowest_disconnect_voltage",
             "ov1_lowest_disconnect_voltage",
+            "los_cluster_type",
+            "ov1_cluster_type",
             "los_responsible_count",
             "los_conformant_count",
             "los_conformance_pct",
