@@ -372,15 +372,13 @@ def plot_site_conformance_day(
                 label=label,
             )
 
-    overall_label = (
-        "Conformant"
-        if overall_category == "conformant"
-        else "Conformant (erratic)"
-        if overall_category == "conformant_erratic"
-        else "Non-conformant"
-        if overall_category == "non_conformant"
-        else "Unassessed"
-    )
+    category_labels = {
+        "conformant": "Conformant",
+        "conformant_erratic": "Conformant (erratic)",
+        "non_conformant": "Non-conformant",
+        "non_conformant_variability": "Non-conformant (variability)",
+    }
+    overall_label = category_labels.get(overall_category, "Unassessed")
     disconnect_supported_conformant_count = (
         los_disconnect_supported_conformant_count
         + ov1_disconnect_supported_conformant_count
