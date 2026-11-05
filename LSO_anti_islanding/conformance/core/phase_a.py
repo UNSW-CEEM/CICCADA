@@ -428,6 +428,8 @@ def run_phase_a_for_site(
                 "ov1_threshold",
                 "los_lowest_disconnect_voltage",
                 "ov1_lowest_disconnect_voltage",
+                "los_cluster_type",
+                "ov1_cluster_type",
             ]
         ),
         "site_level_various_voltages": site_level_various_voltages,
