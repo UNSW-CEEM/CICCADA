@@ -582,9 +582,13 @@ def combined_conformance_with_voltage_tolerance(
             .otherwise(None)
             .cast(pl.Boolean)
             .alias("sustained_operation_conformant"),
-            pl.max_horizontal(
-                pl.col("_grid_voltage_lower"),
-                pl.lit(253.0),
+            (
+                pl.max_horizontal(
+                    pl.col("_grid_voltage_lower"),
+                    pl.lit(253.0),
+                )
+                if vw_require_measured_above_threshold
+                else pl.col("_grid_voltage_lower")
             ).alias("_volt_watt_lower_applicable_voltage"),
         )
     )
