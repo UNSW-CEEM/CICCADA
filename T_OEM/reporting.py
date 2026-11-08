@@ -34,6 +34,14 @@ def summarise_site_conformance(
             .fill_null(False)
             .sum()
             .alias("volt_watt_num_conformant_timestamps"),
+            pl.col("volt_var_conformant")
+            .is_not_null()
+            .sum()
+            .alias("volt_var_num_eligible_timestamps"),
+            pl.col("volt_var_conformant")
+            .fill_null(False)
+            .sum()
+            .alias("volt_var_num_conformant_timestamps"),
             pl.col("csip_conformant")
             .is_not_null()
             .sum()
@@ -76,6 +84,14 @@ def summarise_site_conformance(
             )
             .otherwise(None)
             .alias("volt_watt_conformant_percentage"),
+            pl.when(pl.col("volt_var_num_eligible_timestamps") > 0)
+            .then(
+                100
+                * pl.col("volt_var_num_conformant_timestamps")
+                / pl.col("volt_var_num_eligible_timestamps")
+            )
+            .otherwise(None)
+            .alias("volt_var_conformant_percentage"),
             pl.when(pl.col("csip_num_eligible_timestamps") > 0)
             .then(
                 100
@@ -115,6 +131,9 @@ def summarise_site_conformance(
             "volt_watt_num_eligible_timestamps",
             "volt_watt_num_conformant_timestamps",
             "volt_watt_conformant_percentage",
+            "volt_var_num_eligible_timestamps",
+            "volt_var_num_conformant_timestamps",
+            "volt_var_conformant_percentage",
             "csip_num_eligible_timestamps",
             "csip_num_conformant_timestamps",
             "csip_conformant_percentage",
@@ -138,10 +157,11 @@ def summarise_cohort_conformance(
                 "Passive anti-islanding",
                 "Limit for sustained operation",
                 "Volt-Watt",
+                "Volt-VAr",
                 "AS/NZS 4777 overall",
                 "CSIP",
             ],
-            "total_sites": [total_sites] * 5,
+            "total_sites": [total_sites] * 6,
             "sites_with_sufficient_eligible_evidence": [
                 site_conformance_performance.filter(
                     pl.col("passive_anti_islanding_num_eligible_timestamps") >= 20
@@ -151,6 +171,9 @@ def summarise_cohort_conformance(
                 ).height,
                 site_conformance_performance.filter(
                     pl.col("volt_watt_num_eligible_timestamps") >= 20
+                ).height,
+                site_conformance_performance.filter(
+                    pl.col("volt_var_num_eligible_timestamps") >= 20
                 ).height,
                 site_conformance_performance.filter(
                     pl.col("as_4777_num_eligible_timestamps") >= 20
@@ -171,6 +194,10 @@ def summarise_cohort_conformance(
                 site_conformance_performance.filter(
                     (pl.col("volt_watt_num_eligible_timestamps") >= 20)
                     & (pl.col("volt_watt_conformant_percentage") >= 90)
+                ).height,
+                site_conformance_performance.filter(
+                    (pl.col("volt_var_num_eligible_timestamps") >= 20)
+                    & (pl.col("volt_var_conformant_percentage") >= 90)
                 ).height,
                 site_conformance_performance.filter(
                     (pl.col("as_4777_num_eligible_timestamps") >= 20)

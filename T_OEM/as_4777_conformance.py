@@ -5,7 +5,7 @@ import polars as pl
 
 def volt_var_interval_conformance(
     site_telemetry: pl.DataFrame,
-    system_capacity_kva: float,
+    system_apparent_power_kva: float,
 ) -> pl.DataFrame:
     """Return timestamp-level Volt-VAr conformance.
 
@@ -27,7 +27,7 @@ def volt_var_interval_conformance(
     ``Q_req +/- 4% of S``. It is not assessable (null) when active-power
     magnitude is below 20% of ``S`` or any required telemetry is missing.
     """
-    capacity_va = system_capacity_kva * 1000.0
+    capacity_va = system_apparent_power_kva * 1000.0
     tolerance_var = 0.04 * capacity_va
     input_columns = site_telemetry.columns
 
@@ -306,7 +306,7 @@ def limit_for_sustained_operation(
 
 def combined_conformance(
     site_telemetry: pl.DataFrame,
-    system_power_kw_ac: float,
+    system_apparent_power_kva: float,
     solar_coupling: str,
     v_nom_max: float = 258.0,
     csip_export_limit_usable: bool = True,
@@ -318,7 +318,7 @@ def combined_conformance(
     anti-islanding supersedes the sustained-operation check at 265 V or above.
     Otherwise, the sustained-operation check applies when the 10-minute
     average voltage reaches ``v_nom_max``.
-    Volt-Watt and CSIP (for DC-only systems)
+    Volt-Watt, Volt-VAr, and CSIP (for DC-only systems)
     are assessed independently of those two checks.
     Set ``csip_export_limit_usable`` false when the raw CSIP signal has no
     finite, positive export limit; CSIP results will then remain null.
@@ -331,7 +331,7 @@ def combined_conformance(
     """
 
     input_columns = site_telemetry.columns
-    tolerance_w = system_power_kw_ac * 1000.0 * 0.04
+    tolerance_w = system_apparent_power_kva * 1000.0 * 0.04
 
     scored_telemetry = (
         site_telemetry.sort("timestamp")
@@ -399,9 +399,13 @@ def combined_conformance(
         )
     )
 
+    scored_telemetry = volt_var_interval_conformance(
+        scored_telemetry,
+        system_apparent_power_kva,
+    )
     scored_telemetry = volt_watt_interval_conformance(
         scored_telemetry,
-        system_power_kw_ac,
+        system_apparent_power_kva,
     ).with_columns(
         pl.col("volt_watt_ceiling_kw").alias("volt_watt_assessment_ceiling_kw")
     )
@@ -429,6 +433,7 @@ def combined_conformance(
         "passive_anti_islanding_conformant",
         "sustained_operation_conformant",
         "volt_watt_conformant",
+        "volt_var_conformant",
     ]
     individual_result_columns = [
         *as_4777_result_columns,
@@ -457,6 +462,9 @@ def combined_conformance(
             "volt_watt_curve_limit_kw",
             "volt_watt_ceiling_kw",
             "volt_watt_assessment_ceiling_kw",
+            "volt_var_required_reactive_power_var",
+            "volt_var_minimum_reactive_power_var",
+            "volt_var_maximum_reactive_power_var",
             *individual_result_columns,
             "as_4777_conformant",
         ]
@@ -465,7 +473,7 @@ def combined_conformance(
 
 def combined_conformance_with_voltage_tolerance(
     site_telemetry: pl.DataFrame,
-    system_power_kw_ac: float,
+    system_apparent_power_kva: float,
     solar_coupling: str,
     v_nom_max: float = 258.0,
     csip_export_limit_usable: bool = True,
@@ -489,11 +497,11 @@ def combined_conformance_with_voltage_tolerance(
     Passive anti-islanding is assessed first. Limit for sustained operation
     is assessed only when passive anti-islanding is inconclusive or does not
     apply, so no timestamp has results for both cessation mechanisms.
-    Volt-Watt and CSIP are assessed independently.
+    Volt-Watt, Volt-VAr, and CSIP are assessed independently.
     """
 
     input_columns = site_telemetry.columns
-    tolerance_w = system_power_kw_ac * 1000.0 * 0.04
+    tolerance_w = system_apparent_power_kva * 1000.0 * 0.04
 
     scored_telemetry = (
         site_telemetry.sort("timestamp")
@@ -581,9 +589,49 @@ def combined_conformance_with_voltage_tolerance(
         )
     )
 
+    volt_var_lower_voltage_results = volt_var_interval_conformance(
+        scored_telemetry.with_columns(
+            pl.col("_grid_voltage_lower").alias("grid_voltage")
+        ),
+        system_apparent_power_kva,
+    )
+    volt_var_upper_voltage_results = volt_var_interval_conformance(
+        scored_telemetry.with_columns(
+            pl.col("_grid_voltage_upper").alias("grid_voltage")
+        ),
+        system_apparent_power_kva,
+    )
+    scored_telemetry = volt_var_interval_conformance(
+        scored_telemetry,
+        system_apparent_power_kva,
+    ).with_columns(
+        volt_var_upper_voltage_results[
+            "volt_var_minimum_reactive_power_var"
+        ].alias("_volt_var_assessment_minimum_reactive_power_var"),
+        volt_var_lower_voltage_results[
+            "volt_var_maximum_reactive_power_var"
+        ].alias("_volt_var_assessment_maximum_reactive_power_var"),
+    )
+    scored_telemetry = scored_telemetry.with_columns(
+        pl.when(pl.col("volt_var_conformant").is_not_null())
+        .then(
+            (
+                pl.col("inverter_ac_reactive_power")
+                >= pl.col("_volt_var_assessment_minimum_reactive_power_var")
+            )
+            & (
+                pl.col("inverter_ac_reactive_power")
+                <= pl.col("_volt_var_assessment_maximum_reactive_power_var")
+            )
+        )
+        .otherwise(None)
+        .cast(pl.Boolean)
+        .alias("volt_var_conformant")
+    )
+
     scored_telemetry = volt_watt_interval_conformance(
         scored_telemetry,
-        system_power_kw_ac,
+        system_apparent_power_kva,
     )
     assessment_results = volt_watt_interval_conformance(
         scored_telemetry.with_columns(
@@ -592,7 +640,7 @@ def combined_conformance_with_voltage_tolerance(
             .otherwise(None)
             .alias("grid_voltage")
         ),
-        system_power_kw_ac,
+        system_apparent_power_kva,
     )
     scored_telemetry = (
         scored_telemetry.with_columns(
@@ -657,6 +705,7 @@ def combined_conformance_with_voltage_tolerance(
         "passive_anti_islanding_conformant",
         "sustained_operation_conformant",
         "volt_watt_conformant",
+        "volt_var_conformant",
     ]
     individual_result_columns = [
         *as_4777_result_columns,
@@ -685,6 +734,9 @@ def combined_conformance_with_voltage_tolerance(
             "volt_watt_curve_limit_kw",
             "volt_watt_ceiling_kw",
             "volt_watt_assessment_ceiling_kw",
+            "volt_var_required_reactive_power_var",
+            "volt_var_minimum_reactive_power_var",
+            "volt_var_maximum_reactive_power_var",
             *individual_result_columns,
             "as_4777_conformant",
         ]
