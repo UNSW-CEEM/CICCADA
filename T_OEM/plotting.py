@@ -57,6 +57,7 @@ def plot_site_conformance_days(
                 ),
                 "passive_anti_islanding_conformant",
                 "sustained_operation_conformant",
+                "volt_watt_ceiling_kw",
                 "volt_watt_conformant",
                 "csip_conformant",
             )
@@ -147,13 +148,7 @@ def plot_site_conformance_days(
                     "csip_export_limit_kw"
                 ),
                 pl.when(pl.col("volt_watt_conformant").is_not_null())
-                .then(
-                    pl.col("calc_capacity")
-                    * pl.when(pl.col("grid_voltage") < 260.0)
-                    .then(1.0 - (pl.col("grid_voltage") - 253.0) * (0.8 / 7.0))
-                    .otherwise(0.2)
-                    + 0.04 * pl.col("calc_capacity")
-                )
+                .then(pl.col("volt_watt_ceiling_kw"))
                 .otherwise(None)
                 .alias("volt_watt_ceiling_kw"),
             )

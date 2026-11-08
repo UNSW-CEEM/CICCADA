@@ -9,9 +9,23 @@ def volt_var_interval_conformance(
 ) -> pl.DataFrame:
     """Return timestamp-level Volt-VAr conformance.
 
-    Reactive power is positive when supplied and negative when absorbed. A
-    timestamp is not assessable when active-power magnitude is below 20% of
-    the supplied system capacity, or when required telemetry is missing.
+    ``S`` is the supplied system capacity in VA. The required reactive power
+    ``Q_req`` follows this piecewise curve:
+
+    ==================  =========================  =============================
+    Grid voltage (V)    ``Q_req / S``              Required inverter response
+    ==================  =========================  =============================
+    ``V <= 207``        ``+0.44``                  Supply reactive power
+    ``207 < V < 220``   ``+0.44 * (220-V) / 13``   Ramp supply down to zero
+    ``220 <= V <= 240`` ``0``                      No reactive power
+    ``240 < V < 258``   ``-0.60 * (V-240) / 18``   Ramp absorption up
+    ``V >= 258``        ``-0.60``                  Absorb reactive power
+    ==================  =========================  =============================
+
+    Positive reactive power is supplied; negative reactive power is absorbed.
+    A timestamp conforms when measured reactive power is within
+    ``Q_req +/- 4% of S``. It is not assessable (null) when active-power
+    magnitude is below 20% of ``S`` or any required telemetry is missing.
     """
     capacity_va = system_capacity_kva * 1000.0
     tolerance_var = 0.04 * capacity_va
@@ -77,71 +91,61 @@ def volt_var_interval_conformance(
     )
 
 
-def volt_watt_conformance(
+def volt_watt_interval_conformance(
     site_telemetry: pl.DataFrame,
     system_power_kw_ac: float,
-    min_eligible_timestamps: int = 1,
 ) -> pl.DataFrame:
-    """Return site-level Volt-Watt conformance from interval telemetry.
-    At the moment voltages V>253 are assessed including V>=260
-    if combining with other standards, needs modification or
-    some sort of superseding standards
+    """Return timestamp-level Volt-Watt conformance at measured voltage.
+
+    The curve permits 100% of rated power up to 253 V, ramps linearly to
+    20% at 260 V, and remains at 20% above 260 V. The conformance ceiling
+    includes a 4% rated-power allowance. A timestamp is assessable only when
+    voltage is above 253 V and the required telemetry is available.
     """
-    scored_telemetry = (
+    input_columns = site_telemetry.columns
+    result_columns = [
+        "volt_watt_curve_limit_kw",
+        "volt_watt_ceiling_kw",
+        "volt_watt_conformant",
+    ]
+
+    return (
         site_telemetry.with_columns(
-            pl.when(pl.col("grid_voltage") <= 253.0)
-            .then(1.0)
+            pl.when(pl.col("grid_voltage").is_null())
+            .then(None)
+            .when(pl.col("grid_voltage") <= 253.0)
+            .then(system_power_kw_ac)
             .when(pl.col("grid_voltage") < 260.0)
-            .then(1.0 - (pl.col("grid_voltage") - 253.0) * (0.8 / 7.0))
-            .otherwise(0.2)
-            .alias("volt_watt_power_fraction")
+            .then(
+                system_power_kw_ac
+                * (1.0 - (pl.col("grid_voltage") - 253.0) * (0.8 / 7.0))
+            )
+            .otherwise(0.2 * system_power_kw_ac)
+            .alias("volt_watt_curve_limit_kw")
         )
         .with_columns(
-            (
-                system_power_kw_ac * pl.col("volt_watt_power_fraction")
-                + 0.04 * system_power_kw_ac
-            ).alias("volt_watt_ceiling_kw"),
-            (pl.col("inverter_ac_real_power") / 1000.0).alias(
-                "inverter_ac_real_power_kw"
-            ),
-        )
-        .filter(
-            (pl.col("grid_voltage") > 253.0)
-            & pl.col("grid_voltage").is_not_null()
-            & pl.col("inverter_ac_real_power").is_not_null()
+            (pl.col("volt_watt_curve_limit_kw") + 0.04 * system_power_kw_ac).alias(
+                "volt_watt_ceiling_kw"
+            )
         )
         .with_columns(
-            (
-                pl.col("inverter_ac_real_power_kw") <= pl.col("volt_watt_ceiling_kw")
-            ).alias("conformant")
+            pl.when(
+                (pl.col("grid_voltage") > 253.0)
+                & pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+            )
+            .then(
+                pl.col("inverter_ac_real_power") / 1000.0
+                <= pl.col("volt_watt_ceiling_kw")
+            )
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("volt_watt_conformant")
         )
-    )
-
-    num_eligible_timestamps = scored_telemetry.height
-    num_conformant_timestamps = scored_telemetry["conformant"].sum()
-
-    if num_eligible_timestamps < min_eligible_timestamps:
-        conformant_percentage = None
-        conformant = None
-    else:
-        conformant_percentage = (
-            100.0 * num_conformant_timestamps / num_eligible_timestamps
+        .select(
+            input_columns
+            + [column for column in result_columns if column not in input_columns]
         )
-        conformant = conformant_percentage >= 90.0
-
-    return pl.DataFrame(
-        {
-            "num_eligible_timestamps": [num_eligible_timestamps],
-            "num_conformant_timestamps": [num_conformant_timestamps],
-            "conformant_percentage": [conformant_percentage],
-            "conformant": [conformant],
-        },
-        schema={
-            "num_eligible_timestamps": pl.Int64,
-            "num_conformant_timestamps": pl.Int64,
-            "conformant_percentage": pl.Float64,
-            "conformant": pl.Boolean,
-        },
     )
 
 
@@ -392,26 +396,14 @@ def combined_conformance(
             .otherwise(None)
             .cast(pl.Boolean)
             .alias("sustained_operation_conformant"),
-            pl.when(
-                (pl.col("grid_voltage") > 253.0)
-                & pl.col("grid_voltage").is_not_null()
-                & pl.col("inverter_ac_real_power").is_not_null()
-            )
-            .then(
-                pl.col("inverter_ac_real_power")
-                <= (
-                    system_power_kw_ac
-                    * 1000.0
-                    * pl.when(pl.col("grid_voltage") < 260.0)
-                    .then(1.0 - (pl.col("grid_voltage") - 253.0) * (0.8 / 7.0))
-                    .otherwise(0.2)
-                    + tolerance_w
-                )
-            )
-            .otherwise(None)
-            .cast(pl.Boolean)
-            .alias("volt_watt_conformant"),
         )
+    )
+
+    scored_telemetry = volt_watt_interval_conformance(
+        scored_telemetry,
+        system_power_kw_ac,
+    ).with_columns(
+        pl.col("volt_watt_ceiling_kw").alias("volt_watt_assessment_ceiling_kw")
     )
 
     if solar_coupling == "dc_only" and csip_export_limit_usable:
@@ -462,6 +454,9 @@ def combined_conformance(
         input_columns
         + [
             "grid_voltage_10m_avg",
+            "volt_watt_curve_limit_kw",
+            "volt_watt_ceiling_kw",
+            "volt_watt_assessment_ceiling_kw",
             *individual_result_columns,
             "as_4777_conformant",
         ]
@@ -584,22 +579,31 @@ def combined_conformance_with_voltage_tolerance(
                 pl.lit(253.0),
             ).alias("_volt_watt_lower_applicable_voltage"),
         )
-        .with_columns(
-            pl.when(pl.col("_volt_watt_lower_applicable_voltage") < 260.0)
-            .then(
-                1.0
-                - (pl.col("_volt_watt_lower_applicable_voltage") - 253.0) * (0.8 / 7.0)
+    )
+
+    scored_telemetry = volt_watt_interval_conformance(
+        scored_telemetry,
+        system_power_kw_ac,
+    )
+    assessment_results = volt_watt_interval_conformance(
+        scored_telemetry.with_columns(
+            pl.when(pl.col("grid_voltage").is_not_null())
+            .then(pl.col("_volt_watt_lower_applicable_voltage"))
+            .otherwise(None)
+            .alias("grid_voltage")
+        ),
+        system_power_kw_ac,
+    )
+    scored_telemetry = (
+        scored_telemetry.with_columns(
+            assessment_results["volt_watt_ceiling_kw"].alias(
+                "volt_watt_assessment_ceiling_kw"
             )
-            .otherwise(0.2)
-            .alias("_volt_watt_power_fraction")
         )
         .with_columns(
             (
-                pl.col("inverter_ac_real_power")
-                <= (
-                    system_power_kw_ac * 1000.0 * pl.col("_volt_watt_power_fraction")
-                    + tolerance_w
-                )
+                pl.col("inverter_ac_real_power") / 1000.0
+                <= pl.col("volt_watt_assessment_ceiling_kw")
             )
             .fill_null(False)
             .alias("_volt_watt_power_conformant")
@@ -678,6 +682,9 @@ def combined_conformance_with_voltage_tolerance(
         input_columns
         + [
             "grid_voltage_10m_avg",
+            "volt_watt_curve_limit_kw",
+            "volt_watt_ceiling_kw",
+            "volt_watt_assessment_ceiling_kw",
             *individual_result_columns,
             "as_4777_conformant",
         ]
