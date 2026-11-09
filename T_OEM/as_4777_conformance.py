@@ -61,6 +61,8 @@ def volt_var_interval_conformance(
         .with_columns(
             pl.when(
                 pl.col("grid_voltage").is_not_null()
+                & (pl.col("grid_voltage") >= 207.0)
+                & (pl.col("grid_voltage") <= 258.0)
                 & pl.col("inverter_ac_real_power").is_not_null()
                 & pl.col("inverter_ac_reactive_power").is_not_null()
                 & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
