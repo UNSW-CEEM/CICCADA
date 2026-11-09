@@ -47,6 +47,7 @@ def plot_site_conformance_days(
                 "grid_voltage",
                 "grid_voltage_10m_avg",
                 "inverter_ac_real_power",
+                "inverter_ac_reactive_power",
                 "site_instant_power",
                 (
                     pl.col("csip_export_limit_w_ffill")
@@ -59,6 +60,10 @@ def plot_site_conformance_days(
                 "sustained_operation_conformant",
                 "volt_watt_ceiling_kw",
                 "volt_watt_conformant",
+                "volt_var_required_reactive_power_var",
+                "volt_var_minimum_reactive_power_var",
+                "volt_var_maximum_reactive_power_var",
+                "volt_var_conformant",
                 "csip_conformant",
             )
             .with_columns(
@@ -80,6 +85,7 @@ def plot_site_conformance_days(
                     pl.col("passive_anti_islanding_conformant").is_not_null(),
                     pl.col("sustained_operation_conformant").is_not_null(),
                     pl.col("volt_watt_conformant").is_not_null(),
+                    pl.col("volt_var_conformant").is_not_null(),
                 )
             )
             .select("pseudonym", "local_date")
@@ -122,6 +128,9 @@ def plot_site_conformance_days(
                 "volt_watt_num_conformant_timestamps"
             ]
             volt_watt_site_percentage = performance["volt_watt_conformant_percentage"]
+            volt_var_site_eligible = performance["volt_var_num_eligible_timestamps"]
+            volt_var_site_conformant = performance["volt_var_num_conformant_timestamps"]
+            volt_var_site_percentage = performance["volt_var_conformant_percentage"]
             csip_site_eligible = performance["csip_num_eligible_timestamps"]
             csip_site_conformant = performance["csip_num_conformant_timestamps"]
             csip_site_percentage = performance["csip_conformant_percentage"]
@@ -140,6 +149,9 @@ def plot_site_conformance_days(
                 (pl.col("inverter_ac_real_power") / 1000).alias(
                     "inverter_ac_real_power_kw"
                 ),
+                (pl.col("inverter_ac_reactive_power") / 1000).alias(
+                    "inverter_ac_reactive_power_kvar"
+                ),
                 (-pl.col("site_instant_power"))
                 .clip(lower_bound=0)
                 .truediv(1000)
@@ -151,6 +163,18 @@ def plot_site_conformance_days(
                 .then(pl.col("volt_watt_ceiling_kw"))
                 .otherwise(None)
                 .alias("volt_watt_ceiling_kw"),
+                pl.when(pl.col("volt_var_conformant").is_not_null())
+                .then(pl.col("volt_var_required_reactive_power_var") / 1000)
+                .otherwise(None)
+                .alias("volt_var_required_reactive_power_kvar"),
+                pl.when(pl.col("volt_var_conformant").is_not_null())
+                .then(pl.col("volt_var_minimum_reactive_power_var") / 1000)
+                .otherwise(None)
+                .alias("volt_var_minimum_reactive_power_kvar"),
+                pl.when(pl.col("volt_var_conformant").is_not_null())
+                .then(pl.col("volt_var_maximum_reactive_power_var") / 1000)
+                .otherwise(None)
+                .alias("volt_var_maximum_reactive_power_kvar"),
             )
             passive_eligible = int(
                 site_day["passive_anti_islanding_conformant"].is_not_null().sum()
@@ -170,6 +194,10 @@ def plot_site_conformance_days(
             volt_watt_conformant = int(
                 site_day["volt_watt_conformant"].fill_null(False).sum()
             )
+            volt_var_eligible = int(site_day["volt_var_conformant"].is_not_null().sum())
+            volt_var_conformant = int(
+                site_day["volt_var_conformant"].fill_null(False).sum()
+            )
             csip_day_eligible = int(site_day["csip_conformant"].is_not_null().sum())
             csip_day_conformant = int(
                 site_day["csip_conformant"].fill_null(False).sum()
@@ -182,6 +210,9 @@ def plot_site_conformance_days(
             )
             volt_watt_day_percentage = _calculate_day_conformance_percentage(
                 volt_watt_conformant, volt_watt_eligible
+            )
+            volt_var_day_percentage = _calculate_day_conformance_percentage(
+                volt_var_conformant, volt_var_eligible
             )
             csip_day_percentage = _calculate_day_conformance_percentage(
                 csip_day_conformant, csip_day_eligible
@@ -203,6 +234,18 @@ def plot_site_conformance_days(
                 else:
                     mechanism_status = "non_conformant"
                 save_directories.append(output_directory / mechanism / mechanism_status)
+
+            volt_var_save_directory = None
+            if volt_var_eligible > 0:
+                if volt_var_site_eligible < 20:
+                    volt_var_status = "insufficient_evidence"
+                elif volt_var_site_percentage >= 90:
+                    volt_var_status = "conformant"
+                else:
+                    volt_var_status = "non_conformant"
+                volt_var_save_directory = (
+                    output_directory / "volt_var" / volt_var_status
+                )
 
             figure, (voltage_axis, power_axis) = plt.subplots(
                 2,
@@ -366,7 +409,6 @@ def plot_site_conformance_days(
                             "CSIP export limit" if segment_number == 0 else "_nolegend_"
                         ),
                     )
-
             voltage_axis.axhline(
                 253,
                 color="#6b7280",
@@ -462,6 +504,11 @@ def plot_site_conformance_days(
                 if volt_watt_site_percentage is not None
                 else "N/A"
             )
+            volt_var_site_percentage_text = (
+                f"{volt_var_site_percentage:.1f}%"
+                if volt_var_site_percentage is not None
+                else "N/A"
+            )
             csip_site_percentage_text = (
                 f"{csip_site_percentage:.1f}%"
                 if csip_site_percentage is not None
@@ -480,6 +527,11 @@ def plot_site_conformance_days(
             volt_watt_day_percentage_text = (
                 f"{volt_watt_day_percentage:.1f}%"
                 if volt_watt_day_percentage is not None
+                else "N/A"
+            )
+            volt_var_day_percentage_text = (
+                f"{volt_var_day_percentage:.1f}%"
+                if volt_var_day_percentage is not None
                 else "N/A"
             )
             csip_day_percentage_text = (
@@ -529,6 +581,213 @@ def plot_site_conformance_days(
                     bbox_inches="tight",
                 )
             plt.close(figure)
+
+            if volt_var_save_directory is not None:
+                (
+                    volt_var_figure,
+                    (
+                        volt_var_voltage_axis,
+                        reactive_power_axis,
+                    ),
+                ) = plt.subplots(
+                    2,
+                    1,
+                    figsize=(15, 9),
+                    sharex=True,
+                    height_ratios=(1, 1),
+                )
+                has_volt_var_curve = False
+                has_volt_var_conformant = False
+                has_volt_var_non_conformant = False
+
+                for segment_number, segment in enumerate(
+                    site_day.partition_by("plot_segment", maintain_order=True)
+                ):
+                    timestamps = segment["local_timestamp"].to_list()
+                    volt_var_mask = (
+                        segment["volt_var_conformant"].is_not_null().to_numpy()
+                    )
+                    volt_var_conformant_mask = (
+                        segment["volt_var_conformant"].fill_null(False).to_numpy()
+                    )
+                    volt_var_non_conformant_mask = (
+                        ~segment["volt_var_conformant"].fill_null(True)
+                    ).to_numpy()
+                    segment_has_volt_var = bool(volt_var_mask.any())
+                    has_volt_var_conformant = has_volt_var_conformant or bool(
+                        volt_var_conformant_mask.any()
+                    )
+                    has_volt_var_non_conformant = has_volt_var_non_conformant or bool(
+                        volt_var_non_conformant_mask.any()
+                    )
+
+                    for shading_mask, shading_color, shading_alpha in (
+                        (volt_var_conformant_mask, "#16a34a", 0.14),
+                        (volt_var_non_conformant_mask, "#dc2626", 0.20),
+                    ):
+                        shading_start = None
+                        for mask_index, applicable in enumerate(shading_mask):
+                            if applicable and shading_start is None:
+                                shading_start = timestamps[mask_index]
+                            if shading_start is not None and (
+                                not applicable or mask_index == len(shading_mask) - 1
+                            ):
+                                if applicable:
+                                    final_interval = (
+                                        timestamps[mask_index]
+                                        - timestamps[mask_index - 1]
+                                        if mask_index
+                                        else dt.timedelta(minutes=1)
+                                    )
+                                    shading_end = (
+                                        timestamps[mask_index] + final_interval
+                                    )
+                                else:
+                                    shading_end = timestamps[mask_index]
+                                reactive_power_axis.axvspan(
+                                    shading_start,
+                                    shading_end,
+                                    color=shading_color,
+                                    alpha=shading_alpha,
+                                    zorder=0,
+                                    linewidth=0,
+                                )
+                                shading_start = None
+
+                    volt_var_voltage_axis.plot(
+                        timestamps,
+                        segment["grid_voltage"].to_list(),
+                        color="#b45309",
+                        linewidth=1.2,
+                        label=(
+                            "Inverter grid voltage"
+                            if segment_number == 0
+                            else "_nolegend_"
+                        ),
+                    )
+                    reactive_power_axis.plot(
+                        timestamps,
+                        segment["inverter_ac_reactive_power_kvar"].to_list(),
+                        color="#1565c0",
+                        linewidth=1.3,
+                        label=(
+                            "Inverter AC reactive power"
+                            if segment_number == 0
+                            else "_nolegend_"
+                        ),
+                    )
+                    if segment_has_volt_var:
+                        reactive_power_axis.fill_between(
+                            timestamps,
+                            segment["volt_var_minimum_reactive_power_kvar"].to_numpy(),
+                            segment["volt_var_maximum_reactive_power_kvar"].to_numpy(),
+                            color="#d97706",
+                            alpha=0.16,
+                            label=(
+                                "Volt-VAr tolerance band"
+                                if not has_volt_var_curve
+                                else "_nolegend_"
+                            ),
+                        )
+                        reactive_power_axis.plot(
+                            timestamps,
+                            segment["volt_var_required_reactive_power_kvar"].to_list(),
+                            color="#d97706",
+                            linewidth=1.6,
+                            linestyle="--",
+                            label=(
+                                "Volt-VAr required response"
+                                if not has_volt_var_curve
+                                else "_nolegend_"
+                            ),
+                        )
+                        has_volt_var_curve = True
+
+                volt_var_voltage_axis.axhline(
+                    240,
+                    color="#6b7280",
+                    linewidth=1,
+                    linestyle=":",
+                    label="Volt-VAr absorption threshold: 240 V",
+                )
+                volt_var_voltage_axis.axhline(
+                    258,
+                    color="#111827",
+                    linewidth=1,
+                    linestyle="--",
+                    label="Volt-VAr upper assessment limit: 258 V",
+                )
+                volt_var_voltage_axis.set_ylabel("Voltage (V)", fontsize=12)
+                reactive_power_axis.set_ylabel("Reactive power (kVAr)", fontsize=12)
+                reactive_power_axis.set_xlabel(
+                    f"Local time ({timezone_name})", fontsize=12
+                )
+                volt_var_voltage_axis.grid(True, color="#e5e7eb", linewidth=0.8)
+                reactive_power_axis.grid(True, color="#e5e7eb", linewidth=0.8)
+
+                volt_var_voltage_axis.legend(
+                    loc="lower center",
+                    bbox_to_anchor=(0.5, 1.02),
+                    frameon=False,
+                    ncol=3,
+                    fontsize=11,
+                )
+                reactive_power_handles, reactive_power_labels = (
+                    reactive_power_axis.get_legend_handles_labels()
+                )
+                if has_volt_var_conformant:
+                    reactive_power_handles.append(
+                        Patch(facecolor="#16a34a", alpha=0.14, edgecolor="none")
+                    )
+                    reactive_power_labels.append("Volt-VAr conformant")
+                if has_volt_var_non_conformant:
+                    reactive_power_handles.append(
+                        Patch(facecolor="#dc2626", alpha=0.20, edgecolor="none")
+                    )
+                    reactive_power_labels.append("Volt-VAr non-conformant")
+                reactive_power_axis.legend(
+                    reactive_power_handles,
+                    reactive_power_labels,
+                    loc="lower center",
+                    bbox_to_anchor=(0.5, 1.02),
+                    frameon=False,
+                    ncol=4,
+                    fontsize=11,
+                )
+
+                reactive_power_axis.set_xlim(
+                    dt.datetime.combine(local_date, dt.time(6), tzinfo=timezone),
+                    dt.datetime.combine(local_date, dt.time(18), tzinfo=timezone),
+                )
+                reactive_power_axis.xaxis.set_major_locator(
+                    mdates.HourLocator(interval=1, tz=timezone)
+                )
+                reactive_power_axis.xaxis.set_major_formatter(
+                    mdates.DateFormatter("%H:%M", tz=timezone)
+                )
+
+                volt_var_figure.suptitle(
+                    f"Site {pseudonym} | {local_date:%d/%m/%Y} | "
+                    f"Capacity: {capacity:.2f} kW\n"
+                    f"Site summary — Volt-VAr: "
+                    f"{volt_var_site_conformant}/{volt_var_site_eligible} "
+                    f"({volt_var_site_percentage_text})\n"
+                    f"Day summary — Volt-VAr: "
+                    f"{volt_var_conformant}/{volt_var_eligible} "
+                    f"({volt_var_day_percentage_text})",
+                    y=0.98,
+                    fontsize=14,
+                )
+                volt_var_figure.autofmt_xdate()
+                volt_var_figure.tight_layout(h_pad=4.0)
+                volt_var_save_directory.mkdir(parents=True, exist_ok=True)
+                volt_var_figure.savefig(
+                    volt_var_save_directory / plot_filename,
+                    dpi=150,
+                    bbox_inches="tight",
+                )
+                plt.close(volt_var_figure)
+
             plot_count += 1
 
     return plot_count
