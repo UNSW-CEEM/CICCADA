@@ -127,6 +127,181 @@ def volt_var_interval_conformance(
     )
 
 
+def volt_var_interval_conformance_with_min_cap_curve(
+    site_telemetry: pl.DataFrame,
+    system_apparent_power_kva: float,
+) -> pl.DataFrame:
+    """Return timestamp-level Volt-VAr conformance limited by Figure 2.1.
+
+    The Volt-VAr curve supplies the required reactive-power magnitude and
+    direction from voltage. Figure 2.1 supplies the minimum reactive-power
+    capability magnitude available at the measured active power. The assessed
+    response is the smaller of these two magnitudes, retaining the Volt-VAr
+    curve's sign, with a 4% capacity tolerance applied in that direction.
+
+    Figure 2.1 is not quantified below 20% of rated apparent power, so those
+    timestamps are not assessed. From 20% through 60% active power its minimum
+    capability is 44% of rated apparent power, from 60% through 80% it follows
+    the 0.8 power-factor boundary, and above 80% it follows the rated apparent-
+    power circle. The caller is responsible for ensuring that active-power
+    magnitude does not exceed rated apparent power.
+    """
+    capacity_va = system_apparent_power_kva * 1000.0
+    tolerance_var = 0.04 * capacity_va
+    input_columns = site_telemetry.columns
+
+    return (
+        site_telemetry.with_columns(
+            pl.when(pl.col("grid_voltage").is_null())
+            .then(None)
+            .when(pl.col("grid_voltage") <= 207.0)
+            .then(0.44 * capacity_va)
+            .when(pl.col("grid_voltage") < 220.0)
+            .then(
+                0.44
+                * capacity_va
+                * (220.0 - pl.col("grid_voltage"))
+                / (220.0 - 207.0)
+            )
+            .when(pl.col("grid_voltage") <= 240.0)
+            .then(0.0)
+            .when(pl.col("grid_voltage") < 258.0)
+            .then(
+                -0.60
+                * capacity_va
+                * (pl.col("grid_voltage") - 240.0)
+                / (258.0 - 240.0)
+            )
+            .otherwise(-0.60 * capacity_va)
+            .alias("volt_var_required_reactive_power_from_voltage_var"),
+            pl.when(pl.col("inverter_ac_real_power").is_null())
+            .then(None)
+            .when(pl.col("inverter_ac_real_power").abs() < 0.20 * capacity_va)
+            .then(None)
+            .when(pl.col("inverter_ac_real_power").abs() <= 0.60 * capacity_va)
+            .then(0.44 * capacity_va)
+            .when(pl.col("inverter_ac_real_power").abs() <= 0.80 * capacity_va)
+            .then(0.75 * pl.col("inverter_ac_real_power").abs())
+            .otherwise(
+                (
+                    capacity_va**2
+                    - pl.col("inverter_ac_real_power").abs().pow(2)
+                ).sqrt()
+            )
+            .alias("volt_var_minimum_reactive_capability_from_active_power_var"),
+        )
+        .with_columns(
+            pl.when(
+                pl.col("volt_var_required_reactive_power_from_voltage_var")
+                .is_null()
+                | pl.col(
+                    "volt_var_minimum_reactive_capability_from_active_power_var"
+                ).is_null()
+            )
+            .then(None)
+            .when(
+                pl.col("volt_var_required_reactive_power_from_voltage_var") >= 0.0
+            )
+            .then(
+                pl.min_horizontal(
+                    pl.col("volt_var_required_reactive_power_from_voltage_var").abs(),
+                    pl.col(
+                        "volt_var_minimum_reactive_capability_from_active_power_var"
+                    ),
+                )
+            )
+            .otherwise(
+                -pl.min_horizontal(
+                    pl.col("volt_var_required_reactive_power_from_voltage_var").abs(),
+                    pl.col(
+                        "volt_var_minimum_reactive_capability_from_active_power_var"
+                    ),
+                )
+            )
+            .alias("volt_var_effective_required_reactive_power_var")
+        )
+        .with_columns(
+            pl.when(
+                pl.col("volt_var_required_reactive_power_from_voltage_var") > 0.0
+            )
+            .then(
+                pl.col("volt_var_effective_required_reactive_power_var")
+                - tolerance_var
+            )
+            .when(
+                pl.col("volt_var_required_reactive_power_from_voltage_var") < 0.0
+            )
+            .then(
+                pl.col("volt_var_effective_required_reactive_power_var")
+                + tolerance_var
+            )
+            .otherwise(None)
+            .alias("volt_var_response_threshold_var")
+        )
+        .with_columns(
+            pl.when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
+                & (pl.col("grid_voltage") >= 207.0)
+                & (pl.col("grid_voltage") < 220.0)
+            )
+            .then(
+                pl.col("inverter_ac_reactive_power")
+                >= pl.col("volt_var_response_threshold_var")
+            )
+            .when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
+                & (pl.col("grid_voltage") > 240.0)
+                & (pl.col("grid_voltage") <= 258.0)
+            )
+            .then(
+                pl.col("inverter_ac_reactive_power")
+                <= pl.col("volt_var_response_threshold_var")
+            )
+            .when(
+                (pl.col("grid_voltage") < 207.0)
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
+                & (
+                    pl.col("inverter_ac_reactive_power")
+                    >= pl.col("volt_var_response_threshold_var")
+                )
+            )
+            .then(True)
+            .when(
+                (pl.col("grid_voltage") > 258.0)
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
+                & (
+                    pl.col("inverter_ac_reactive_power")
+                    <= pl.col("volt_var_response_threshold_var")
+                )
+            )
+            .then(True)
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("volt_var_conformant")
+        )
+        .select(
+            input_columns
+            + [
+                "volt_var_required_reactive_power_from_voltage_var",
+                "volt_var_minimum_reactive_capability_from_active_power_var",
+                "volt_var_effective_required_reactive_power_var",
+                "volt_var_response_threshold_var",
+                "volt_var_conformant",
+            ]
+        )
+    )
+
+
 def volt_watt_interval_conformance(
     site_telemetry: pl.DataFrame,
     system_power_kw_ac: float,
