@@ -23,8 +23,14 @@ def volt_var_interval_conformance(
     ==================  =========================  =============================
 
     Positive reactive power is supplied; negative reactive power is absorbed.
-    A timestamp conforms when measured reactive power is within
-    ``Q_req +/- 4% of S``. It is not assessable (null) when active-power
+    In the supply region, a timestamp conforms when measured reactive power is
+    at least ``Q_req - 4% of S``. 
+    In the absorption region, it conforms when the absorbed reactive-power 
+    magnitude is at least ``abs(Q_req) - 4% of S``.
+    The deadband from 220 V through 240 V is not assessed. 
+    Below 207 V or above 258 V, a conformant response is reported as true 
+    and any other response is not assessed. 
+    A timestamp is also not assessable (null) when active-power
     magnitude is below 20% of ``S`` or any required telemetry is missing.
     """
     capacity_va = system_apparent_power_kva * 1000.0
@@ -61,22 +67,50 @@ def volt_var_interval_conformance(
         .with_columns(
             pl.when(
                 pl.col("grid_voltage").is_not_null()
-                & (pl.col("grid_voltage") >= 207.0)
-                & (pl.col("grid_voltage") <= 258.0)
                 & pl.col("inverter_ac_real_power").is_not_null()
                 & pl.col("inverter_ac_reactive_power").is_not_null()
                 & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
+                & (pl.col("grid_voltage") >= 207.0)
+                & (pl.col("grid_voltage") < 220.0)
             )
             .then(
-                (
+                pl.col("inverter_ac_reactive_power")
+                >= pl.col("volt_var_minimum_reactive_power_var")
+            )
+            .when(
+                pl.col("grid_voltage").is_not_null()
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
+                & (pl.col("grid_voltage") > 240.0)
+                & (pl.col("grid_voltage") <= 258.0)
+            )
+            .then(
+                pl.col("inverter_ac_reactive_power")
+                <= pl.col("volt_var_maximum_reactive_power_var")
+            )
+            .when(
+                (pl.col("grid_voltage") < 207.0)
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
+                & (
                     pl.col("inverter_ac_reactive_power")
                     >= pl.col("volt_var_minimum_reactive_power_var")
                 )
+            )
+            .then(True)
+            .when(
+                (pl.col("grid_voltage") > 258.0)
+                & pl.col("inverter_ac_real_power").is_not_null()
+                & pl.col("inverter_ac_reactive_power").is_not_null()
+                & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
                 & (
                     pl.col("inverter_ac_reactive_power")
                     <= pl.col("volt_var_maximum_reactive_power_var")
                 )
             )
+            .then(True)
             .otherwise(None)
             .cast(pl.Boolean)
             .alias("volt_var_conformant")
@@ -619,16 +653,21 @@ def combined_conformance_with_voltage_tolerance(
         ].alias("_volt_var_assessment_maximum_reactive_power_var"),
     )
     scored_telemetry = scored_telemetry.with_columns(
-        pl.when(pl.col("volt_var_conformant").is_not_null())
+        pl.when(
+            pl.col("volt_var_conformant").is_not_null()
+            & (pl.col("grid_voltage") < 220.0)
+        )
         .then(
-            (
-                pl.col("inverter_ac_reactive_power")
-                >= pl.col("_volt_var_assessment_minimum_reactive_power_var")
-            )
-            & (
-                pl.col("inverter_ac_reactive_power")
-                <= pl.col("_volt_var_assessment_maximum_reactive_power_var")
-            )
+            pl.col("inverter_ac_reactive_power")
+            >= pl.col("_volt_var_assessment_minimum_reactive_power_var")
+        )
+        .when(
+            pl.col("volt_var_conformant").is_not_null()
+            & (pl.col("grid_voltage") > 240.0)
+        )
+        .then(
+            pl.col("inverter_ac_reactive_power")
+            <= pl.col("_volt_var_assessment_maximum_reactive_power_var")
         )
         .otherwise(None)
         .cast(pl.Boolean)
