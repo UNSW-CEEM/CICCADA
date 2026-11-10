@@ -54,15 +54,27 @@ def volt_var_interval_conformance(
                 -0.60 * capacity_va * (pl.col("grid_voltage") - 240.0) / (258.0 - 240.0)
             )
             .otherwise(-0.60 * capacity_va)
-            .alias("volt_var_required_reactive_power_var"),
+            .alias("vv_required_from_vv_curve"),
         )
         .with_columns(
-            (pl.col("volt_var_required_reactive_power_var") - tolerance_var).alias(
-                "volt_var_minimum_reactive_power_var"
+            pl.lit(None, dtype=pl.Float64).alias(
+                "vv_capability_from_min_cap_curve"
             ),
-            (pl.col("volt_var_required_reactive_power_var") + tolerance_var).alias(
-                "volt_var_maximum_reactive_power_var"
+            pl.col("vv_required_from_vv_curve").alias(
+                "vv_effective_required_reactive_power"
             ),
+        )
+        .with_columns(
+            pl.when(pl.col("vv_required_from_vv_curve") > 0.0)
+            .then(
+                pl.col("vv_effective_required_reactive_power") - tolerance_var
+            )
+            .when(pl.col("vv_required_from_vv_curve") < 0.0)
+            .then(
+                pl.col("vv_effective_required_reactive_power") + tolerance_var
+            )
+            .otherwise(None)
+            .alias("vv_required_reactive_power_with_tolerance")
         )
         .with_columns(
             pl.when(
@@ -75,7 +87,7 @@ def volt_var_interval_conformance(
             )
             .then(
                 pl.col("inverter_ac_reactive_power")
-                >= pl.col("volt_var_minimum_reactive_power_var")
+                >= pl.col("vv_required_reactive_power_with_tolerance")
             )
             .when(
                 pl.col("grid_voltage").is_not_null()
@@ -87,7 +99,7 @@ def volt_var_interval_conformance(
             )
             .then(
                 pl.col("inverter_ac_reactive_power")
-                <= pl.col("volt_var_maximum_reactive_power_var")
+                <= pl.col("vv_required_reactive_power_with_tolerance")
             )
             .when(
                 (pl.col("grid_voltage") < 207.0)
@@ -96,7 +108,7 @@ def volt_var_interval_conformance(
                 & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
                 & (
                     pl.col("inverter_ac_reactive_power")
-                    >= pl.col("volt_var_minimum_reactive_power_var")
+                    >= pl.col("vv_required_reactive_power_with_tolerance")
                 )
             )
             .then(True)
@@ -107,21 +119,24 @@ def volt_var_interval_conformance(
                 & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
                 & (
                     pl.col("inverter_ac_reactive_power")
-                    <= pl.col("volt_var_maximum_reactive_power_var")
+                    <= pl.col("vv_required_reactive_power_with_tolerance")
                 )
             )
             .then(True)
             .otherwise(None)
             .cast(pl.Boolean)
-            .alias("volt_var_conformant")
+            .alias("volt_var_conformant"),
+            pl.lit("standard").alias("volt_var_method"),
         )
         .select(
             input_columns
             + [
-                "volt_var_required_reactive_power_var",
-                "volt_var_minimum_reactive_power_var",
-                "volt_var_maximum_reactive_power_var",
+                "vv_required_from_vv_curve",
+                "vv_capability_from_min_cap_curve",
+                "vv_effective_required_reactive_power",
+                "vv_required_reactive_power_with_tolerance",
                 "volt_var_conformant",
+                "volt_var_method",
             ]
         )
     )
@@ -173,7 +188,7 @@ def volt_var_interval_conformance_with_min_cap_curve(
                 / (258.0 - 240.0)
             )
             .otherwise(-0.60 * capacity_va)
-            .alias("volt_var_required_reactive_power_from_voltage_var"),
+            .alias("vv_required_from_vv_curve"),
             pl.when(pl.col("inverter_ac_real_power").is_null())
             .then(None)
             .when(pl.col("inverter_ac_real_power").abs() < 0.20 * capacity_va)
@@ -188,55 +203,40 @@ def volt_var_interval_conformance_with_min_cap_curve(
                     - pl.col("inverter_ac_real_power").abs().pow(2)
                 ).sqrt()
             )
-            .alias("volt_var_minimum_reactive_capability_from_active_power_var"),
+            .alias("vv_capability_from_min_cap_curve"),
         )
         .with_columns(
             pl.when(
-                pl.col("volt_var_required_reactive_power_from_voltage_var")
-                .is_null()
-                | pl.col(
-                    "volt_var_minimum_reactive_capability_from_active_power_var"
-                ).is_null()
+                pl.col("vv_required_from_vv_curve").is_null()
+                | pl.col("vv_capability_from_min_cap_curve").is_null()
             )
             .then(None)
-            .when(
-                pl.col("volt_var_required_reactive_power_from_voltage_var") >= 0.0
-            )
+            .when(pl.col("vv_required_from_vv_curve") >= 0.0)
             .then(
                 pl.min_horizontal(
-                    pl.col("volt_var_required_reactive_power_from_voltage_var").abs(),
-                    pl.col(
-                        "volt_var_minimum_reactive_capability_from_active_power_var"
-                    ),
+                    pl.col("vv_required_from_vv_curve").abs(),
+                    pl.col("vv_capability_from_min_cap_curve"),
                 )
             )
             .otherwise(
                 -pl.min_horizontal(
-                    pl.col("volt_var_required_reactive_power_from_voltage_var").abs(),
-                    pl.col(
-                        "volt_var_minimum_reactive_capability_from_active_power_var"
-                    ),
+                    pl.col("vv_required_from_vv_curve").abs(),
+                    pl.col("vv_capability_from_min_cap_curve"),
                 )
             )
-            .alias("volt_var_effective_required_reactive_power_var")
+            .alias("vv_effective_required_reactive_power")
         )
         .with_columns(
-            pl.when(
-                pl.col("volt_var_required_reactive_power_from_voltage_var") > 0.0
-            )
+            pl.when(pl.col("vv_required_from_vv_curve") > 0.0)
             .then(
-                pl.col("volt_var_effective_required_reactive_power_var")
-                - tolerance_var
+                pl.col("vv_effective_required_reactive_power") - tolerance_var
             )
-            .when(
-                pl.col("volt_var_required_reactive_power_from_voltage_var") < 0.0
-            )
+            .when(pl.col("vv_required_from_vv_curve") < 0.0)
             .then(
-                pl.col("volt_var_effective_required_reactive_power_var")
-                + tolerance_var
+                pl.col("vv_effective_required_reactive_power") + tolerance_var
             )
             .otherwise(None)
-            .alias("volt_var_response_threshold_var")
+            .alias("vv_required_reactive_power_with_tolerance")
         )
         .with_columns(
             pl.when(
@@ -249,7 +249,7 @@ def volt_var_interval_conformance_with_min_cap_curve(
             )
             .then(
                 pl.col("inverter_ac_reactive_power")
-                >= pl.col("volt_var_response_threshold_var")
+                >= pl.col("vv_required_reactive_power_with_tolerance")
             )
             .when(
                 pl.col("grid_voltage").is_not_null()
@@ -261,7 +261,7 @@ def volt_var_interval_conformance_with_min_cap_curve(
             )
             .then(
                 pl.col("inverter_ac_reactive_power")
-                <= pl.col("volt_var_response_threshold_var")
+                <= pl.col("vv_required_reactive_power_with_tolerance")
             )
             .when(
                 (pl.col("grid_voltage") < 207.0)
@@ -270,7 +270,7 @@ def volt_var_interval_conformance_with_min_cap_curve(
                 & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
                 & (
                     pl.col("inverter_ac_reactive_power")
-                    >= pl.col("volt_var_response_threshold_var")
+                    >= pl.col("vv_required_reactive_power_with_tolerance")
                 )
             )
             .then(True)
@@ -281,22 +281,24 @@ def volt_var_interval_conformance_with_min_cap_curve(
                 & (pl.col("inverter_ac_real_power").abs() >= 0.20 * capacity_va)
                 & (
                     pl.col("inverter_ac_reactive_power")
-                    <= pl.col("volt_var_response_threshold_var")
+                    <= pl.col("vv_required_reactive_power_with_tolerance")
                 )
             )
             .then(True)
             .otherwise(None)
             .cast(pl.Boolean)
-            .alias("volt_var_conformant")
+            .alias("volt_var_conformant"),
+            pl.lit("min_cap_curve").alias("volt_var_method"),
         )
         .select(
             input_columns
             + [
-                "volt_var_required_reactive_power_from_voltage_var",
-                "volt_var_minimum_reactive_capability_from_active_power_var",
-                "volt_var_effective_required_reactive_power_var",
-                "volt_var_response_threshold_var",
+                "vv_required_from_vv_curve",
+                "vv_capability_from_min_cap_curve",
+                "vv_effective_required_reactive_power",
+                "vv_required_reactive_power_with_tolerance",
                 "volt_var_conformant",
+                "volt_var_method",
             ]
         )
     )
@@ -521,6 +523,7 @@ def combined_conformance(
     solar_coupling: str,
     v_nom_max: float = 258.0,
     csip_export_limit_usable: bool = True,
+    volt_var_method: str = "standard",
 ) -> pl.DataFrame:
     """Return timestamp-level results for coordinated conformance checks.
 
@@ -531,6 +534,8 @@ def combined_conformance(
     average voltage reaches ``v_nom_max``.
     Volt-Watt, Volt-VAr, and CSIP (for DC-only systems)
     are assessed independently of those two checks.
+    ``volt_var_method`` selects either the ``"standard"`` Volt-VAr assessment
+    or the assessment limited by the ``"min_cap_curve"``.
     Set ``csip_export_limit_usable`` false when the raw CSIP signal has no
     finite, positive export limit; CSIP results will then remain null.
 
@@ -610,10 +615,21 @@ def combined_conformance(
         )
     )
 
-    scored_telemetry = volt_var_interval_conformance(
-        scored_telemetry,
-        system_apparent_power_kva,
-    )
+    if volt_var_method == "standard":
+        scored_telemetry = volt_var_interval_conformance(
+            scored_telemetry,
+            system_apparent_power_kva,
+        )
+    elif volt_var_method == "min_cap_curve":
+        scored_telemetry = volt_var_interval_conformance_with_min_cap_curve(
+            scored_telemetry,
+            system_apparent_power_kva,
+        )
+    else:
+        raise ValueError(
+            "volt_var_method must be 'standard' or 'min_cap_curve', "
+            f"got {volt_var_method!r}"
+        )
     scored_telemetry = volt_watt_interval_conformance(
         scored_telemetry,
         system_apparent_power_kva,
@@ -673,10 +689,12 @@ def combined_conformance(
             "volt_watt_curve_limit_kw",
             "volt_watt_ceiling_kw",
             "volt_watt_assessment_ceiling_kw",
-            "volt_var_required_reactive_power_var",
-            "volt_var_minimum_reactive_power_var",
-            "volt_var_maximum_reactive_power_var",
+            "vv_required_from_vv_curve",
+            "vv_capability_from_min_cap_curve",
+            "vv_effective_required_reactive_power",
+            "vv_required_reactive_power_with_tolerance",
             *individual_result_columns,
+            "volt_var_method",
             "as_4777_conformant",
         ]
     )
@@ -820,12 +838,14 @@ def combined_conformance_with_voltage_tolerance(
         scored_telemetry,
         system_apparent_power_kva,
     ).with_columns(
-        volt_var_upper_voltage_results[
-            "volt_var_minimum_reactive_power_var"
-        ].alias("_volt_var_assessment_minimum_reactive_power_var"),
-        volt_var_lower_voltage_results[
-            "volt_var_maximum_reactive_power_var"
-        ].alias("_volt_var_assessment_maximum_reactive_power_var"),
+        (
+            volt_var_upper_voltage_results["vv_required_from_vv_curve"]
+            - tolerance_w
+        ).alias("_vv_supply_required_reactive_power_with_tolerance"),
+        (
+            volt_var_lower_voltage_results["vv_required_from_vv_curve"]
+            + tolerance_w
+        ).alias("_vv_absorption_required_reactive_power_with_tolerance"),
     )
     scored_telemetry = scored_telemetry.with_columns(
         pl.when(
@@ -834,7 +854,7 @@ def combined_conformance_with_voltage_tolerance(
         )
         .then(
             pl.col("inverter_ac_reactive_power")
-            >= pl.col("_volt_var_assessment_minimum_reactive_power_var")
+            >= pl.col("_vv_supply_required_reactive_power_with_tolerance")
         )
         .when(
             pl.col("volt_var_conformant").is_not_null()
@@ -842,7 +862,7 @@ def combined_conformance_with_voltage_tolerance(
         )
         .then(
             pl.col("inverter_ac_reactive_power")
-            <= pl.col("_volt_var_assessment_maximum_reactive_power_var")
+            <= pl.col("_vv_absorption_required_reactive_power_with_tolerance")
         )
         .otherwise(None)
         .cast(pl.Boolean)
@@ -954,10 +974,12 @@ def combined_conformance_with_voltage_tolerance(
             "volt_watt_curve_limit_kw",
             "volt_watt_ceiling_kw",
             "volt_watt_assessment_ceiling_kw",
-            "volt_var_required_reactive_power_var",
-            "volt_var_minimum_reactive_power_var",
-            "volt_var_maximum_reactive_power_var",
+            "vv_required_from_vv_curve",
+            "vv_capability_from_min_cap_curve",
+            "vv_effective_required_reactive_power",
+            "vv_required_reactive_power_with_tolerance",
             *individual_result_columns,
+            "volt_var_method",
             "as_4777_conformant",
         ]
     )

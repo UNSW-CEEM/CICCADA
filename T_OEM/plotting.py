@@ -60,9 +60,8 @@ def plot_site_conformance_days(
                 "sustained_operation_conformant",
                 "volt_watt_ceiling_kw",
                 "volt_watt_conformant",
-                "volt_var_required_reactive_power_var",
-                "volt_var_minimum_reactive_power_var",
-                "volt_var_maximum_reactive_power_var",
+                "vv_effective_required_reactive_power",
+                "vv_required_reactive_power_with_tolerance",
                 "volt_var_conformant",
                 "csip_conformant",
             )
@@ -164,17 +163,13 @@ def plot_site_conformance_days(
                 .otherwise(None)
                 .alias("volt_watt_ceiling_kw"),
                 pl.when(pl.col("volt_var_conformant").is_not_null())
-                .then(pl.col("volt_var_required_reactive_power_var") / 1000)
+                .then(pl.col("vv_effective_required_reactive_power") / 1000)
                 .otherwise(None)
-                .alias("volt_var_required_reactive_power_kvar"),
+                .alias("vv_effective_required_reactive_power_kvar"),
                 pl.when(pl.col("volt_var_conformant").is_not_null())
-                .then(pl.col("volt_var_minimum_reactive_power_var") / 1000)
+                .then(pl.col("vv_required_reactive_power_with_tolerance") / 1000)
                 .otherwise(None)
-                .alias("volt_var_minimum_reactive_power_kvar"),
-                pl.when(pl.col("volt_var_conformant").is_not_null())
-                .then(pl.col("volt_var_maximum_reactive_power_var") / 1000)
-                .otherwise(None)
-                .alias("volt_var_maximum_reactive_power_kvar"),
+                .alias("vv_required_reactive_power_with_tolerance_kvar"),
             )
             passive_eligible = int(
                 site_day["passive_anti_islanding_conformant"].is_not_null().sum()
@@ -679,24 +674,30 @@ def plot_site_conformance_days(
                     if segment_has_volt_var:
                         reactive_power_axis.fill_between(
                             timestamps,
-                            segment["volt_var_minimum_reactive_power_kvar"].to_numpy(),
-                            segment["volt_var_maximum_reactive_power_kvar"].to_numpy(),
+                            segment[
+                                "vv_effective_required_reactive_power_kvar"
+                            ].to_numpy(),
+                            segment[
+                                "vv_required_reactive_power_with_tolerance_kvar"
+                            ].to_numpy(),
                             color="#d97706",
                             alpha=0.16,
                             label=(
-                                "Volt-VAr tolerance band"
+                                "Volt-VAr tolerance allowance"
                                 if not has_volt_var_curve
                                 else "_nolegend_"
                             ),
                         )
                         reactive_power_axis.plot(
                             timestamps,
-                            segment["volt_var_required_reactive_power_kvar"].to_list(),
+                            segment[
+                                "vv_effective_required_reactive_power_kvar"
+                            ].to_list(),
                             color="#d97706",
                             linewidth=1.6,
                             linestyle="--",
                             label=(
-                                "Volt-VAr required response"
+                                "Volt-VAr effective required response"
                                 if not has_volt_var_curve
                                 else "_nolegend_"
                             ),
