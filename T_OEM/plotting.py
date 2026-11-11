@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import polars as pl
+from matplotlib.collections import PolyCollection
 from matplotlib.patches import Patch
 
 
@@ -17,6 +18,60 @@ def _calculate_day_conformance_percentage(
     if eligible == 0:
         return None
     return conformant / eligible * 100
+
+
+def _add_shading_spans(
+    axes,
+    timestamps: list[dt.datetime],
+    shading_mask,
+    shading_color: str,
+    shading_alpha: float,
+) -> None:
+    """Add all contiguous shaded intervals as one collection per axis."""
+    span_vertices = []
+    shading_start = None
+    for mask_index, applicable in enumerate(shading_mask):
+        if applicable and shading_start is None:
+            shading_start = timestamps[mask_index]
+        if shading_start is not None and (
+            not applicable or mask_index == len(shading_mask) - 1
+        ):
+            if applicable:
+                final_interval = (
+                    timestamps[mask_index] - timestamps[mask_index - 1]
+                    if mask_index
+                    else dt.timedelta(minutes=1)
+                )
+                shading_end = timestamps[mask_index] + final_interval
+            else:
+                shading_end = timestamps[mask_index]
+            shading_start_number = mdates.date2num(shading_start)
+            shading_end_number = mdates.date2num(shading_end)
+            span_vertices.append(
+                (
+                    (shading_start_number, 0),
+                    (shading_start_number, 1),
+                    (shading_end_number, 1),
+                    (shading_end_number, 0),
+                )
+            )
+            shading_start = None
+
+    if not span_vertices:
+        return
+
+    for axis in axes:
+        axis.add_collection(
+            PolyCollection(
+                span_vertices,
+                transform=axis.get_xaxis_transform(),
+                facecolors=shading_color,
+                edgecolors="none",
+                linewidths=0,
+                alpha=shading_alpha,
+                zorder=0,
+            )
+        )
 
 
 def plot_site_conformance_days(
@@ -242,286 +297,12 @@ def plot_site_conformance_days(
                     output_directory / "volt_var" / volt_var_status
                 )
 
-            figure, (voltage_axis, power_axis) = plt.subplots(
-                2,
-                1,
-                figsize=(15, 9),
-                sharex=True,
-                height_ratios=(1, 1),
-            )
-            has_cessation_shading = False
-            has_volt_watt_assessment = False
-            has_volt_watt_ceiling = False
-            has_volt_watt_conformant = False
-            has_volt_watt_non_conformant = False
-            for segment_number, segment in enumerate(
-                site_day.partition_by("plot_segment", maintain_order=True)
-            ):
-                timestamps = segment["local_timestamp"].to_list()
-                cessation_mask = (
-                    segment["passive_anti_islanding_conformant"].is_not_null()
-                    | segment["sustained_operation_conformant"].is_not_null()
-                ).to_numpy()
-                volt_watt_mask = (
-                    segment["volt_watt_conformant"].is_not_null().to_numpy()
-                )
-                volt_watt_conformant_mask = (
-                    segment["volt_watt_conformant"].fill_null(False).to_numpy()
-                )
-                volt_watt_non_conformant_mask = (
-                    ~segment["volt_watt_conformant"].fill_null(True)
-                ).to_numpy()
-                displayed_volt_watt_conformant_mask = (
-                    volt_watt_conformant_mask & ~cessation_mask
-                )
-                displayed_volt_watt_non_conformant_mask = (
-                    volt_watt_non_conformant_mask & ~cessation_mask
-                )
-                segment_has_volt_watt = bool(volt_watt_mask.any())
-                has_volt_watt_assessment = (
-                    has_volt_watt_assessment or segment_has_volt_watt
-                )
-                has_volt_watt_conformant = has_volt_watt_conformant or bool(
-                    displayed_volt_watt_conformant_mask.any()
-                )
-                has_volt_watt_non_conformant = has_volt_watt_non_conformant or bool(
-                    displayed_volt_watt_non_conformant_mask.any()
-                )
-                has_cessation_shading = has_cessation_shading or bool(
-                    cessation_mask.any()
-                )
-                for shading_mask, shading_color, shading_alpha, shading_axes in (
-                    (
-                        cessation_mask,
-                        "#7c3aed",
-                        0.18,
-                        (voltage_axis, power_axis),
-                    ),
-                    (volt_watt_mask, "#0891b2", 0.18, (voltage_axis,)),
-                    (
-                        displayed_volt_watt_conformant_mask,
-                        "#16a34a",
-                        0.14,
-                        (power_axis,),
-                    ),
-                    (
-                        displayed_volt_watt_non_conformant_mask,
-                        "#dc2626",
-                        0.20,
-                        (power_axis,),
-                    ),
-                ):
-                    shading_start = None
-                    for mask_index, applicable in enumerate(shading_mask):
-                        if applicable and shading_start is None:
-                            shading_start = timestamps[mask_index]
-                        if shading_start is not None and (
-                            not applicable or mask_index == len(shading_mask) - 1
-                        ):
-                            if applicable:
-                                final_interval = (
-                                    timestamps[mask_index] - timestamps[mask_index - 1]
-                                    if mask_index
-                                    else dt.timedelta(minutes=1)
-                                )
-                                shading_end = timestamps[mask_index] + final_interval
-                            else:
-                                shading_end = timestamps[mask_index]
-                            for axis in shading_axes:
-                                axis.axvspan(
-                                    shading_start,
-                                    shading_end,
-                                    color=shading_color,
-                                    alpha=shading_alpha,
-                                    zorder=0,
-                                    linewidth=0,
-                                )
-                            shading_start = None
-                voltage_axis.plot(
-                    timestamps,
-                    segment["grid_voltage"].to_list(),
-                    color="#b45309",
-                    linewidth=1.2,
-                    label=(
-                        "Inverter grid voltage" if segment_number == 0 else "_nolegend_"
-                    ),
-                )
-                voltage_axis.plot(
-                    timestamps,
-                    segment["grid_voltage_10m_avg"].to_list(),
-                    color="#1a1a1a",
-                    linewidth=1.8,
-                    linestyle="--",
-                    label=(
-                        "10-minute rolling voltage"
-                        if segment_number == 0
-                        else "_nolegend_"
-                    ),
-                )
-                power_axis.plot(
-                    timestamps,
-                    segment["inverter_ac_real_power_kw"].to_list(),
-                    color="#1565c0",
-                    linewidth=1.3,
-                    label=(
-                        "Inverter AC real power"
-                        if segment_number == 0
-                        else "_nolegend_"
-                    ),
-                )
-                if segment_has_volt_watt:
-                    power_axis.plot(
-                        timestamps,
-                        segment["volt_watt_ceiling_kw"].to_list(),
-                        color="#d97706",
-                        linewidth=1.6,
-                        linestyle="-",
-                        label=(
-                            "Volt-Watt ceiling"
-                            if not has_volt_watt_ceiling
-                            else "_nolegend_"
-                        ),
-                    )
-                    has_volt_watt_ceiling = True
-                if performance["solar_coupling"] == "dc_only":
-                    power_axis.plot(
-                        timestamps,
-                        segment["site_export_power_kw"].to_list(),
-                        color="#374151",
-                        linewidth=1.3,
-                        label=(
-                            "Site export power" if segment_number == 0 else "_nolegend_"
-                        ),
-                    )
-                    power_axis.plot(
-                        timestamps,
-                        segment["csip_export_limit_kw"].to_list(),
-                        color="#7c3aed",
-                        linewidth=1.6,
-                        linestyle=":",
-                        drawstyle="steps-post",
-                        label=(
-                            "CSIP export limit" if segment_number == 0 else "_nolegend_"
-                        ),
-                    )
-            voltage_axis.axhline(
-                253,
-                color="#6b7280",
-                linewidth=1,
-                linestyle=":",
-                label="Volt-Watt threshold: 253 V",
-            )
-            voltage_axis.axhline(
-                258,
-                color="#111827",
-                linewidth=1,
-                linestyle="--",
-                label="Sustained-operation threshold: 258 V",
-            )
-            voltage_axis.axhline(
-                265,
-                color="#dc2626",
-                linewidth=1,
-                linestyle="-.",
-                label="Passive anti-islanding threshold: 265 V",
-            )
-            voltage_axis.set_ylabel("Voltage (V)", fontsize=12)
-            power_axis.set_ylabel("Power (kW)", fontsize=12)
-            power_axis.set_xlabel(f"Local time ({timezone_name})", fontsize=12)
-            voltage_axis.grid(True, color="#e5e7eb", linewidth=0.8)
-            power_axis.grid(True, color="#e5e7eb", linewidth=0.8)
-            power_handles, power_labels = power_axis.get_legend_handles_labels()
-            if has_volt_watt_conformant:
-                power_handles.append(
-                    Patch(facecolor="#16a34a", alpha=0.14, edgecolor="none")
-                )
-                power_labels.append("Volt-Watt conformant")
-            if has_volt_watt_non_conformant:
-                power_handles.append(
-                    Patch(facecolor="#dc2626", alpha=0.20, edgecolor="none")
-                )
-                power_labels.append("Volt-Watt non-conformant")
-            power_axis.legend(
-                power_handles,
-                power_labels,
-                loc="lower center",
-                bbox_to_anchor=(0.5, 1.02),
-                frameon=False,
-                ncol=3,
-                fontsize=11,
-            )
-
-            voltage_handles, voltage_labels = voltage_axis.get_legend_handles_labels()
-            if has_cessation_shading:
-                voltage_handles.append(
-                    Patch(facecolor="#7c3aed", alpha=0.18, edgecolor="none")
-                )
-                voltage_labels.append("Sustained operation / passive anti-islanding")
-            if has_volt_watt_assessment:
-                voltage_handles.append(
-                    Patch(facecolor="#0891b2", alpha=0.18, edgecolor="none")
-                )
-                voltage_labels.append("Volt-Watt assessment period")
-            voltage_axis.legend(
-                voltage_handles,
-                voltage_labels,
-                loc="lower center",
-                bbox_to_anchor=(0.5, 1.02),
-                frameon=False,
-                ncol=4,
-                fontsize=11,
-            )
-
             timezone = ZoneInfo(timezone_name)
-            power_axis.set_xlim(
-                dt.datetime.combine(local_date, dt.time(6), tzinfo=timezone),
-                dt.datetime.combine(local_date, dt.time(18), tzinfo=timezone),
-            )
-            power_axis.xaxis.set_major_locator(
-                mdates.HourLocator(interval=1, tz=timezone)
-            )
-            power_axis.xaxis.set_major_formatter(
-                mdates.DateFormatter("%H:%M", tz=timezone)
-            )
-
-            passive_site_percentage_text = (
-                f"{passive_site_percentage:.1f}%"
-                if passive_site_percentage is not None
-                else "N/A"
-            )
-            sustained_site_percentage_text = (
-                f"{sustained_site_percentage:.1f}%"
-                if sustained_site_percentage is not None
-                else "N/A"
-            )
-            volt_watt_site_percentage_text = (
-                f"{volt_watt_site_percentage:.1f}%"
-                if volt_watt_site_percentage is not None
-                else "N/A"
-            )
+            dc_suffix = "_dc" if performance["solar_coupling"] == "dc_only" else ""
+            plot_filename = f"{pseudonym}_{local_date.isoformat()}{dc_suffix}.png"
             volt_var_site_percentage_text = (
                 f"{volt_var_site_percentage:.1f}%"
                 if volt_var_site_percentage is not None
-                else "N/A"
-            )
-            csip_site_percentage_text = (
-                f"{csip_site_percentage:.1f}%"
-                if csip_site_percentage is not None
-                else "N/A"
-            )
-            passive_day_percentage_text = (
-                f"{passive_day_percentage:.1f}%"
-                if passive_day_percentage is not None
-                else "N/A"
-            )
-            sustained_day_percentage_text = (
-                f"{sustained_day_percentage:.1f}%"
-                if sustained_day_percentage is not None
-                else "N/A"
-            )
-            volt_watt_day_percentage_text = (
-                f"{volt_watt_day_percentage:.1f}%"
-                if volt_watt_day_percentage is not None
                 else "N/A"
             )
             volt_var_day_percentage_text = (
@@ -529,53 +310,323 @@ def plot_site_conformance_days(
                 if volt_var_day_percentage is not None
                 else "N/A"
             )
-            csip_day_percentage_text = (
-                f"{csip_day_percentage:.1f}%"
-                if csip_day_percentage is not None
-                else "N/A"
-            )
 
-            figure.suptitle(
-                f"Site {pseudonym} | {local_date:%d/%m/%Y} | "
-                f"Capacity: {capacity:.2f} kW\n"
-                f"Site summary — Volt-Watt: "
-                f"{volt_watt_site_conformant}/{volt_watt_site_eligible} "
-                f"({volt_watt_site_percentage_text}) | "
-                f"Sustained operation: "
-                f"{sustained_site_conformant}/{sustained_site_eligible} "
-                f"({sustained_site_percentage_text}) | "
-                f"Passive anti-islanding: "
-                f"{passive_site_conformant}/{passive_site_eligible} "
-                f"({passive_site_percentage_text}) | "
-                f"CSIP: {csip_site_conformant}/{csip_site_eligible} "
-                f"({csip_site_percentage_text})\n"
-                f"Day summary — Volt-Watt: "
-                f"{volt_watt_conformant}/{volt_watt_eligible} "
-                f"({volt_watt_day_percentage_text}) | "
-                f"Sustained operation: "
-                f"{sustained_conformant}/{sustained_eligible} "
-                f"({sustained_day_percentage_text}) | "
-                f"Passive anti-islanding: "
-                f"{passive_conformant}/{passive_eligible} "
-                f"({passive_day_percentage_text}) | "
-                f"CSIP: {csip_day_conformant}/{csip_day_eligible} "
-                f"({csip_day_percentage_text})",
-                y=0.98,
-                fontsize=14,
-            )
-            figure.autofmt_xdate()
-            figure.tight_layout(h_pad=4.0)
-
-            dc_suffix = "_dc" if performance["solar_coupling"] == "dc_only" else ""
-            plot_filename = f"{pseudonym}_{local_date.isoformat()}{dc_suffix}.png"
-            for save_directory in save_directories:
-                save_directory.mkdir(parents=True, exist_ok=True)
-                figure.savefig(
-                    save_directory / plot_filename,
-                    dpi=150,
-                    bbox_inches="tight",
+            # Volt-VAr-only days have no destination for the standard figure.
+            if save_directories:
+                figure, (voltage_axis, power_axis) = plt.subplots(
+                    2,
+                    1,
+                    figsize=(15, 9),
+                    sharex=True,
+                    height_ratios=(1, 1),
                 )
-            plt.close(figure)
+                has_cessation_shading = False
+                has_volt_watt_assessment = False
+                has_volt_watt_ceiling = False
+                has_volt_watt_conformant = False
+                has_volt_watt_non_conformant = False
+                for segment_number, segment in enumerate(
+                    site_day.partition_by("plot_segment", maintain_order=True)
+                ):
+                    timestamps = segment["local_timestamp"].to_list()
+                    cessation_mask = (
+                        segment["passive_anti_islanding_conformant"].is_not_null()
+                        | segment["sustained_operation_conformant"].is_not_null()
+                    ).to_numpy()
+                    volt_watt_mask = (
+                        segment["volt_watt_conformant"].is_not_null().to_numpy()
+                    )
+                    volt_watt_conformant_mask = (
+                        segment["volt_watt_conformant"].fill_null(False).to_numpy()
+                    )
+                    volt_watt_non_conformant_mask = (
+                        ~segment["volt_watt_conformant"].fill_null(True)
+                    ).to_numpy()
+                    displayed_volt_watt_conformant_mask = (
+                        volt_watt_conformant_mask & ~cessation_mask
+                    )
+                    displayed_volt_watt_non_conformant_mask = (
+                        volt_watt_non_conformant_mask & ~cessation_mask
+                    )
+                    segment_has_volt_watt = bool(volt_watt_mask.any())
+                    has_volt_watt_assessment = (
+                        has_volt_watt_assessment or segment_has_volt_watt
+                    )
+                    has_volt_watt_conformant = has_volt_watt_conformant or bool(
+                        displayed_volt_watt_conformant_mask.any()
+                    )
+                    has_volt_watt_non_conformant = has_volt_watt_non_conformant or bool(
+                        displayed_volt_watt_non_conformant_mask.any()
+                    )
+                    has_cessation_shading = has_cessation_shading or bool(
+                        cessation_mask.any()
+                    )
+                    for shading_mask, shading_color, shading_alpha, shading_axes in (
+                        (
+                            cessation_mask,
+                            "#7c3aed",
+                            0.18,
+                            (voltage_axis, power_axis),
+                        ),
+                        (volt_watt_mask, "#0891b2", 0.18, (voltage_axis,)),
+                        (
+                            displayed_volt_watt_conformant_mask,
+                            "#16a34a",
+                            0.14,
+                            (power_axis,),
+                        ),
+                        (
+                            displayed_volt_watt_non_conformant_mask,
+                            "#dc2626",
+                            0.20,
+                            (power_axis,),
+                        ),
+                    ):
+                        _add_shading_spans(
+                            shading_axes,
+                            timestamps,
+                            shading_mask,
+                            shading_color,
+                            shading_alpha,
+                        )
+                    voltage_axis.plot(
+                        timestamps,
+                        segment["grid_voltage"].to_list(),
+                        color="#b45309",
+                        linewidth=1.2,
+                        label=(
+                            "Inverter grid voltage" if segment_number == 0 else "_nolegend_"
+                        ),
+                    )
+                    voltage_axis.plot(
+                        timestamps,
+                        segment["grid_voltage_10m_avg"].to_list(),
+                        color="#1a1a1a",
+                        linewidth=1.8,
+                        linestyle="--",
+                        label=(
+                            "10-minute rolling voltage"
+                            if segment_number == 0
+                            else "_nolegend_"
+                        ),
+                    )
+                    power_axis.plot(
+                        timestamps,
+                        segment["inverter_ac_real_power_kw"].to_list(),
+                        color="#1565c0",
+                        linewidth=1.3,
+                        label=(
+                            "Inverter AC real power"
+                            if segment_number == 0
+                            else "_nolegend_"
+                        ),
+                    )
+                    if segment_has_volt_watt:
+                        power_axis.plot(
+                            timestamps,
+                            segment["volt_watt_ceiling_kw"].to_list(),
+                            color="#d97706",
+                            linewidth=1.6,
+                            linestyle="-",
+                            label=(
+                                "Volt-Watt ceiling"
+                                if not has_volt_watt_ceiling
+                                else "_nolegend_"
+                            ),
+                        )
+                        has_volt_watt_ceiling = True
+                    if performance["solar_coupling"] == "dc_only":
+                        power_axis.plot(
+                            timestamps,
+                            segment["site_export_power_kw"].to_list(),
+                            color="#374151",
+                            linewidth=1.3,
+                            label=(
+                                "Site export power" if segment_number == 0 else "_nolegend_"
+                            ),
+                        )
+                        power_axis.plot(
+                            timestamps,
+                            segment["csip_export_limit_kw"].to_list(),
+                            color="#7c3aed",
+                            linewidth=1.6,
+                            linestyle=":",
+                            drawstyle="steps-post",
+                            label=(
+                                "CSIP export limit" if segment_number == 0 else "_nolegend_"
+                            ),
+                        )
+                voltage_axis.axhline(
+                    253,
+                    color="#6b7280",
+                    linewidth=1,
+                    linestyle=":",
+                    label="Volt-Watt threshold: 253 V",
+                )
+                voltage_axis.axhline(
+                    258,
+                    color="#111827",
+                    linewidth=1,
+                    linestyle="--",
+                    label="Sustained-operation threshold: 258 V",
+                )
+                voltage_axis.axhline(
+                    265,
+                    color="#dc2626",
+                    linewidth=1,
+                    linestyle="-.",
+                    label="Passive anti-islanding threshold: 265 V",
+                )
+                voltage_axis.set_ylabel("Voltage (V)", fontsize=12)
+                power_axis.set_ylabel("Power (kW)", fontsize=12)
+                power_axis.set_xlabel(f"Local time ({timezone_name})", fontsize=12)
+                voltage_axis.grid(True, color="#e5e7eb", linewidth=0.8)
+                power_axis.grid(True, color="#e5e7eb", linewidth=0.8)
+                power_handles, power_labels = power_axis.get_legend_handles_labels()
+                if has_volt_watt_conformant:
+                    power_handles.append(
+                        Patch(facecolor="#16a34a", alpha=0.14, edgecolor="none")
+                    )
+                    power_labels.append("Volt-Watt conformant")
+                if has_volt_watt_non_conformant:
+                    power_handles.append(
+                        Patch(facecolor="#dc2626", alpha=0.20, edgecolor="none")
+                    )
+                    power_labels.append("Volt-Watt non-conformant")
+                power_axis.legend(
+                    power_handles,
+                    power_labels,
+                    loc="lower center",
+                    bbox_to_anchor=(0.5, 1.02),
+                    frameon=False,
+                    ncol=3,
+                    fontsize=11,
+                )
+
+                voltage_handles, voltage_labels = voltage_axis.get_legend_handles_labels()
+                if has_cessation_shading:
+                    voltage_handles.append(
+                        Patch(facecolor="#7c3aed", alpha=0.18, edgecolor="none")
+                    )
+                    voltage_labels.append("Sustained operation / passive anti-islanding")
+                if has_volt_watt_assessment:
+                    voltage_handles.append(
+                        Patch(facecolor="#0891b2", alpha=0.18, edgecolor="none")
+                    )
+                    voltage_labels.append("Volt-Watt assessment period")
+                voltage_axis.legend(
+                    voltage_handles,
+                    voltage_labels,
+                    loc="lower center",
+                    bbox_to_anchor=(0.5, 1.02),
+                    frameon=False,
+                    ncol=4,
+                    fontsize=11,
+                )
+
+                timezone = ZoneInfo(timezone_name)
+                power_axis.set_xlim(
+                    dt.datetime.combine(local_date, dt.time(6), tzinfo=timezone),
+                    dt.datetime.combine(local_date, dt.time(18), tzinfo=timezone),
+                )
+                power_axis.xaxis.set_major_locator(
+                    mdates.HourLocator(interval=1, tz=timezone)
+                )
+                power_axis.xaxis.set_major_formatter(
+                    mdates.DateFormatter("%H:%M", tz=timezone)
+                )
+
+                passive_site_percentage_text = (
+                    f"{passive_site_percentage:.1f}%"
+                    if passive_site_percentage is not None
+                    else "N/A"
+                )
+                sustained_site_percentage_text = (
+                    f"{sustained_site_percentage:.1f}%"
+                    if sustained_site_percentage is not None
+                    else "N/A"
+                )
+                volt_watt_site_percentage_text = (
+                    f"{volt_watt_site_percentage:.1f}%"
+                    if volt_watt_site_percentage is not None
+                    else "N/A"
+                )
+                volt_var_site_percentage_text = (
+                    f"{volt_var_site_percentage:.1f}%"
+                    if volt_var_site_percentage is not None
+                    else "N/A"
+                )
+                csip_site_percentage_text = (
+                    f"{csip_site_percentage:.1f}%"
+                    if csip_site_percentage is not None
+                    else "N/A"
+                )
+                passive_day_percentage_text = (
+                    f"{passive_day_percentage:.1f}%"
+                    if passive_day_percentage is not None
+                    else "N/A"
+                )
+                sustained_day_percentage_text = (
+                    f"{sustained_day_percentage:.1f}%"
+                    if sustained_day_percentage is not None
+                    else "N/A"
+                )
+                volt_watt_day_percentage_text = (
+                    f"{volt_watt_day_percentage:.1f}%"
+                    if volt_watt_day_percentage is not None
+                    else "N/A"
+                )
+                volt_var_day_percentage_text = (
+                    f"{volt_var_day_percentage:.1f}%"
+                    if volt_var_day_percentage is not None
+                    else "N/A"
+                )
+                csip_day_percentage_text = (
+                    f"{csip_day_percentage:.1f}%"
+                    if csip_day_percentage is not None
+                    else "N/A"
+                )
+
+                figure.suptitle(
+                    f"Site {pseudonym} | {local_date:%d/%m/%Y} | "
+                    f"Capacity: {capacity:.2f} kW\n"
+                    f"Site summary — Volt-Watt: "
+                    f"{volt_watt_site_conformant}/{volt_watt_site_eligible} "
+                    f"({volt_watt_site_percentage_text}) | "
+                    f"Sustained operation: "
+                    f"{sustained_site_conformant}/{sustained_site_eligible} "
+                    f"({sustained_site_percentage_text}) | "
+                    f"Passive anti-islanding: "
+                    f"{passive_site_conformant}/{passive_site_eligible} "
+                    f"({passive_site_percentage_text}) | "
+                    f"CSIP: {csip_site_conformant}/{csip_site_eligible} "
+                    f"({csip_site_percentage_text})\n"
+                    f"Day summary — Volt-Watt: "
+                    f"{volt_watt_conformant}/{volt_watt_eligible} "
+                    f"({volt_watt_day_percentage_text}) | "
+                    f"Sustained operation: "
+                    f"{sustained_conformant}/{sustained_eligible} "
+                    f"({sustained_day_percentage_text}) | "
+                    f"Passive anti-islanding: "
+                    f"{passive_conformant}/{passive_eligible} "
+                    f"({passive_day_percentage_text}) | "
+                    f"CSIP: {csip_day_conformant}/{csip_day_eligible} "
+                    f"({csip_day_percentage_text})",
+                    y=0.98,
+                    fontsize=14,
+                )
+                figure.autofmt_xdate()
+                figure.tight_layout(h_pad=4.0)
+
+                dc_suffix = "_dc" if performance["solar_coupling"] == "dc_only" else ""
+                plot_filename = f"{pseudonym}_{local_date.isoformat()}{dc_suffix}.png"
+                for save_directory in save_directories:
+                    save_directory.mkdir(parents=True, exist_ok=True)
+                    figure.savefig(
+                        save_directory / plot_filename,
+                        dpi=150,
+                    )
+                plt.close(figure)
 
             if volt_var_save_directory is not None:
                 (
@@ -620,34 +671,13 @@ def plot_site_conformance_days(
                         (volt_var_conformant_mask, "#16a34a", 0.14),
                         (volt_var_non_conformant_mask, "#dc2626", 0.20),
                     ):
-                        shading_start = None
-                        for mask_index, applicable in enumerate(shading_mask):
-                            if applicable and shading_start is None:
-                                shading_start = timestamps[mask_index]
-                            if shading_start is not None and (
-                                not applicable or mask_index == len(shading_mask) - 1
-                            ):
-                                if applicable:
-                                    final_interval = (
-                                        timestamps[mask_index]
-                                        - timestamps[mask_index - 1]
-                                        if mask_index
-                                        else dt.timedelta(minutes=1)
-                                    )
-                                    shading_end = (
-                                        timestamps[mask_index] + final_interval
-                                    )
-                                else:
-                                    shading_end = timestamps[mask_index]
-                                reactive_power_axis.axvspan(
-                                    shading_start,
-                                    shading_end,
-                                    color=shading_color,
-                                    alpha=shading_alpha,
-                                    zorder=0,
-                                    linewidth=0,
-                                )
-                                shading_start = None
+                        _add_shading_spans(
+                            (reactive_power_axis,),
+                            timestamps,
+                            shading_mask,
+                            shading_color,
+                            shading_alpha,
+                        )
 
                     volt_var_voltage_axis.plot(
                         timestamps,
@@ -785,7 +815,6 @@ def plot_site_conformance_days(
                 volt_var_figure.savefig(
                     volt_var_save_directory / plot_filename,
                     dpi=150,
-                    bbox_inches="tight",
                 )
                 plt.close(volt_var_figure)
 
