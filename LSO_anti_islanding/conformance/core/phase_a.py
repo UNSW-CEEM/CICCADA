@@ -264,7 +264,12 @@ def classify_disconnects_as_los_or_ov1(
     return pl.DataFrame(records, schema=record_schema, strict=False)
 
 
-def learn_site_thresholds(records: pl.DataFrame, *, min_cluster_samples=3):
+def learn_site_thresholds(
+    records: pl.DataFrame,
+    *,
+    min_cluster_samples=3,
+    cluster_threshold_method="median",
+):
     """Learn thresholds and summarize all paired site voltages by mechanism."""
     cluster_span_volts = 4.6
     comparison_tolerance = 1e-9
@@ -358,11 +363,17 @@ def learn_site_thresholds(records: pl.DataFrame, *, min_cluster_samples=3):
                     reconnect_values[middle_index - 1] + reconnect_values[middle_index]
                 ) / 2.0
 
+        threshold = default
+        if primary_cluster:
+            threshold = float(
+                min(primary_cluster)
+                if cluster_threshold_method == "minimum"
+                else median(primary_cluster)
+            )
+
         site_voltages.update(
             {
-                f"{prefix}_threshold": (
-                    float(median(primary_cluster)) if primary_cluster else default
-                ),
+                f"{prefix}_threshold": threshold,
                 f"{prefix}_lowest_disconnect_voltage": (
                     min(values) if values else None
                 ),
@@ -392,6 +403,7 @@ def run_phase_a_for_site(
     max_disconnect_edge_gap_seconds=60,
     attribution_method="grey_band",
     min_cluster_samples=3,
+    cluster_threshold_method="median",
 ):
     """Run Phase A for one site and produce thresholds plus voltage summaries."""
     records_all = []
@@ -419,6 +431,7 @@ def run_phase_a_for_site(
     site_voltage_values = learn_site_thresholds(
         site_records,
         min_cluster_samples=min_cluster_samples,
+        cluster_threshold_method=cluster_threshold_method,
     )
     site_level_various_voltages = pl.DataFrame(
         [{"site_id": site_id, **site_voltage_values}],

@@ -22,6 +22,7 @@ from sapn2022_workflow.config import (
     EVENT_DAYS,
     GENERATE_SITE_PLOTS,
     MAX_PV_SITE_NET_CIRCUITS,
+    PHASE_A_CLUSTER_THRESHOLD_METHOD,
     PLOT_NO_RESPONSIBLE_TIMESTAMP_DAYS,
     PRIMARY_PHASE_B_METHOD,
     SAVE_SITE_LEVEL_VARIOUS_VOLTAGES,
@@ -253,7 +254,12 @@ for site_index, site_id in enumerate(candidate_site_ids, start=1):
         for day_info in eligible_analysis_days
     ]
 
-    phase_a = run_phase_a_for_site(site_id, prepared_site_days, rated_capacity)
+    phase_a = run_phase_a_for_site(
+        site_id,
+        prepared_site_days,
+        rated_capacity,
+        cluster_threshold_method=PHASE_A_CLUSTER_THRESHOLD_METHOD,
+    )
     site_threshold_rows.append(phase_a["site_thresholds"])
     site_level_various_voltage_rows.append(phase_a["site_level_various_voltages"])
     if not phase_a["records"].is_empty():
