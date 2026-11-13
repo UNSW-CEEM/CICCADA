@@ -1,19 +1,21 @@
 """
-Fleet-wide, month-by-month Volt-VAr slope fits -- notebook 07.
+Fleet-wide, month-by-month Volt-VAr slope fits
 
-Method (validated in 05_exploratory_data_analysis, Section 12), per site-month:
-  1. Polarity-corrected net meter reading (ami_meter_residential x circuit_polarity).
+Method:
+  1. Polarity-corrected net meter reading:
+        (ami_meter_residential * circuit_polarity)
   2. Night-time baseline, per circuit and per MONTH (median P/Q over AEST night hours):
-         P_est = base_P - P_net        Q_est = base_Q - Q_net
-  3. Signed net-export gate: keep intervals with P_est >= QCAP.P_MIN * rating.
-     (abs(P) would also admit heavy household import, when the PV is producing ~nothing.)
-  4. OLS of Q_est (% of rating) on V over [VVAR.V3, VW.V1), via DuckDB regr_* aggregates.
+        P_est = base_P - P_net        
+        Q_est = base_Q - Q_net
+  3. Signed net-export gate: 
+        keep intervals with P_est >= QCAP.P_MIN * rating.
+        (abs(P) would also admit heavy household import, when the PV is producing ~nothing.)
+  4. OLS of Q_est (% of rating) on V over [v_lo, v_hi) (default [VVAR.V3, VW.V1)), via DuckDB regr_* aggregates.
 
-Memory: everything is aggregated inside DuckDB; only one row per site-month reaches Python.
-Resume: each month is written to its own Parquet file; a rerun skips months already on disk.
+Ground truth (source="ground_truth") is a DIRECT check: the separate PV circuit's own P/Q,
+no sign flip, no baseline, and the standard's own abs(P) capability gate.
 
-Months are the store's `dt_month` partitions (UTC calendar months), same as every other
-notebook's `year`/`month` scope.
+Months are the store's `dt_month` partitions (UTC calendar months)
 """
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ from bms_sa_review.synthetic_ami_creation.config import ami_config as Config
 from bms_sa_review.ami_analysis.lib import ami_polarity as Polarity
 from shared.ciccada_config import AS4777  # noqa: E402
 
-# --- AS/NZS 4777.2 constants (same sources as ami_conformance_plot.py) -------------------
+# AS/NZS 4777.2 constants
 V_LO = AS4777["VVAR"]["V3"]          # 240 V: start of the absorbing ramp
 V_HI = AS4777["VW"]["V1"]            # 253 V: Volt-Watt starts, window ends (exclusive)
 P_MIN_FRAC = AS4777["QCAP"]["P_MIN"] # 0.20: minimum output for a capability assessment
@@ -108,7 +110,7 @@ def _meter_estimate_sql(month: str, night_hours: tuple[int, int]) -> str:
             GROUP BY circuit_id
         ),
         est AS (
-            SELECT pc.site_id, pc.circuit_id, pc.V,
+            SELECT pc.site_id, pc.circuit_id, pc.t_stamp, pc.V,
                    b.base_p_kw - pc.P_kw   AS p_est,
                    b.base_q_kvar - pc.Q_kvar AS q_est
             FROM pc JOIN baseline b USING (circuit_id)
@@ -116,7 +118,7 @@ def _meter_estimate_sql(month: str, night_hours: tuple[int, int]) -> str:
 
 
 def _truth_estimate_sql(month: str) -> str:
-    """Ground truth: the physically separate PV circuit's own P/Q -- no baseline needed."""
+    """Ground truth: the physically separate PV circuit's own P/Q. no baseline needed."""
     return f"""
         pc AS (
             SELECT site_id, circuit_id, t_stamp, V, P_kw_signed AS P_kw, Q_kvar_signed AS Q_kvar
@@ -128,7 +130,25 @@ def _truth_estimate_sql(month: str) -> str:
                    NULL::BIGINT AS n_night
             FROM pc GROUP BY circuit_id
         ),
-        est AS (SELECT site_id, circuit_id, V, P_kw AS p_est, Q_kvar AS q_est FROM pc)"""
+        est AS (SELECT site_id, circuit_id, t_stamp, V, P_kw AS p_est, Q_kvar AS q_est FROM pc)"""
+
+
+def _estimate_sql(month: str, source: str, night_hours: tuple[int, int]) -> str:
+    """The `pc` / `baseline` / `est` CTEs for either source."""
+    if source not in SOURCES:
+        raise ValueError(f"source must be one of {SOURCES}")
+    return _meter_estimate_sql(month, night_hours) if source == "meter_baseline" else _truth_estimate_sql(month)
+
+
+def _window_sql(source: str, p_min_frac: float, v_lo: float, v_hi: float) -> str:
+    """
+    WHERE condition for the assessable window (aliases: e = est, s = _sites).
+    Blind: SIGNED net export (abs(P) would also admit household import).
+    Ground truth: the standard's own abs(P) gate, applied directly to the PV circuit.
+    """
+    p = "e.p_est" if source == "meter_baseline" else "abs(e.p_est)"
+    return (f"e.V >= {v_lo} AND e.V < {v_hi} AND {p} >= {p_min_frac} * s.rating_kw "
+            f"AND e.q_est IS NOT NULL")
 
 
 def month_fit_sql(month: str, source: str = "meter_baseline", *,
@@ -136,22 +156,17 @@ def month_fit_sql(month: str, source: str = "meter_baseline", *,
                   v_lo: float = V_LO, v_hi: float = V_HI) -> str:
     """
     One row per site in the registered `_sites` table (site_id, rating_kw) for `month`:
-    circuit, interval counts, baseline, and the OLS fit of Q% on V inside the assessable
-    window. Sites with no data that month still get a row (circuit_id NULL).
+    circuit, interval counts, baseline, and the OLS fit of Q% on V inside the assessable window. 
+    Sites with no data that month still get a row (circuit_id NULL).
     """
-    if source not in SOURCES:
-        raise ValueError(f"source must be one of {SOURCES}")
     year, mon = (int(x) for x in month.split("-"))
-    estimate = _meter_estimate_sql(month, night_hours) if source == "meter_baseline" else _truth_estimate_sql(month)
     return f"""
-        WITH {estimate},
+        WITH {_estimate_sql(month, source, night_hours)},
         circuits AS (SELECT site_id, circuit_id, count(*) AS n_intervals FROM pc GROUP BY ALL),
-        win AS (        -- assessable window: voltage range + signed net-export gate
+        win AS (        -- assessable window: voltage band + capability gate
             SELECT e.site_id, e.circuit_id, e.V AS x, 100.0 * e.q_est / s.rating_kw AS y
             FROM est e JOIN _sites s USING (site_id)
-            WHERE e.V >= {v_lo} AND e.V < {v_hi}
-              AND e.p_est >= {p_min_frac} * s.rating_kw
-              AND e.q_est IS NOT NULL
+            WHERE {_window_sql(source, p_min_frac, v_lo, v_hi)}
         ),
         fit AS (
             SELECT site_id, circuit_id,
@@ -176,6 +191,58 @@ def month_fit_sql(month: str, source: str = "meter_baseline", *,
     """
 
 
+def fetch_site_points(month: str, site: pd.DataFrame, source: str = "meter_baseline", *,
+                      night_hours: tuple[int, int] = (0, 4), p_min_frac: float = P_MIN_FRAC,
+                      v_lo: float = V_LO, v_hi: float = V_HI) -> pd.DataFrame:
+    """
+    Every interval of ONE site-month (`site`: one row with site_id, rating_kw), for plotting:
+    V, P/Q estimate, Q as % of rating, and `in_window` (exactly the points month_fit_sql fits).
+    """
+    con = connect("2GB", 2)
+    try:
+        con.register("_sites", site[["site_id", "rating_kw"]])
+        return con.execute(f"""
+            WITH {_estimate_sql(month, source, night_hours)}
+            SELECT e.site_id, e.t_stamp, e.V, e.p_est, e.q_est,
+                   100.0 * e.q_est / s.rating_kw AS q_pct,
+                   coalesce({_window_sql(source, p_min_frac, v_lo, v_hi)}, false) AS in_window
+            FROM est e JOIN _sites s USING (site_id)
+            ORDER BY e.t_stamp
+        """).df()
+    finally:
+        con.close()
+
+
+def fetch_response_curves(month: str, sites: pd.DataFrame, source: str = "meter_baseline", *,
+                          v_bin: float = 1.0, min_bin_points: int = 5,
+                          memory_limit: str = "8GB", threads: int = 4,
+                          night_hours: tuple[int, int] = (0, 4), p_min_frac: float = P_MIN_FRAC,
+                          v_lo: float = V_LO, v_hi: float = V_HI) -> pd.DataFrame:
+    """
+    Each site-month's Volt-VAr response curve, aggregated inside DuckDB (safe for the whole
+    fleet): one row per (site_id, voltage bin) with the median Q (% of rating) of the fitted-
+    window intervals in that bin. Bins with fewer than `min_bin_points` intervals are dropped.
+    `v_bin_mid` is the bin centre. Same window as month_fit_sql.
+    """
+    year, mon = (int(x) for x in month.split("-"))
+    con = connect(memory_limit, threads)
+    try:
+        con.register("_sites", sites[["site_id", "rating_kw"]])
+        return con.execute(f"""
+            WITH {_estimate_sql(month, source, night_hours)}
+            SELECT e.site_id, {year} AS year, {mon} AS month,
+                   floor(e.V / {v_bin}) * {v_bin} + {v_bin} / 2.0 AS v_bin_mid,
+                   median(100.0 * e.q_est / s.rating_kw) AS q_pct_median,
+                   count(*) AS n_points
+            FROM est e JOIN _sites s USING (site_id)
+            WHERE {_window_sql(source, p_min_frac, v_lo, v_hi)}
+            GROUP BY ALL
+            HAVING count(*) >= {min_bin_points}
+        """).df()
+    finally:
+        con.close()
+
+
 # =========================================================================================
 # Resumable month-by-month runner
 # =========================================================================================
@@ -183,11 +250,11 @@ def run_months(months: list[str], out_dir: Path, sites: pd.DataFrame, *,
                source: str = "meter_baseline", overwrite: bool = False,
                memory_limit: str = "8GB", threads: int = 4, **fit_kwargs) -> pd.DataFrame:
     """
-    Fit every month in `months` for `sites` (site_id, rating_kw) and write each to
-    out_dir/dt_month=YYYY-MM/part.parquet. Months already on disk are skipped (resume),
-    unless `overwrite`. Each month uses a fresh connection and writes via a temp file +
-    rename, so a crash never leaves a half-written file behind. A failed month is logged
-    and the run moves on. Returns (and appends to out_dir/run_log.csv) one log row per month.
+    Fit every month in `months` for `sites` (site_id, rating_kw) and write each to out_dir/dt_month=YYYY-MM/part.parquet. 
+    Months already on disk are skipped (resume), unless `overwrite`. 
+    Each month uses a fresh connection and writes via a temp file + rename, so a crash never leaves a half-written file behind. 
+    A failed month is logged and the run moves on. 
+    Returns (and appends to out_dir/run_log.csv) one log row per month.
     """
     out_dir = Path(out_dir)
     table = "ami_meter_residential" if source == "meter_baseline" else "ami_raw_phaseseparate"
@@ -238,7 +305,7 @@ def load_results(out_dir: Path) -> pd.DataFrame:
 
 
 # =========================================================================================
-# Post-processing (cheap, pandas): thresholds can change without re-running the months
+# Post-processing
 # =========================================================================================
 def add_fit_status(results: pd.DataFrame, *, min_n_window: int, min_v_spread: float) -> pd.DataFrame:
     """

@@ -70,8 +70,14 @@ _VVAR_ABSORB_SLOPE_PCT_PER_V = -_VVAR["Q4"] / (_VVAR["V4"] - _VVAR["V3"]) * 100
 #: status names (`conforming`/`not_assessable`, no `Q_` prefix); mapped
 #: 1:1 in meaning, renamed to match this project's own SQL output exactly.
 STATUS_ORDER = [
-    "Q_adverse", "Q_inactive", "Q_significant_shortfall",
-    "Q_not_exposed", "Q_near_conformant", "Q_major_surplus", "Q_not_assessable", "Q_conformant",
+    "Q_adverse", 
+    "Q_inactive", 
+    "Q_significant_shortfall",
+    "Q_not_exposed", 
+    "Q_near_conformant", 
+    "Q_major_surplus", 
+    "Q_not_assessable", 
+    "Q_conformant",
 ]
 STATUS_COLORS = {
     "Q_conformant": "#1565c0", "Q_near_conformant": "#2e7d32",
@@ -770,9 +776,9 @@ def plot_pv_circuit_vvar_scatter(
 DEFAULT_VVAR_VARIANTS = [
     {"name": "Polarity-corrected only", "source_table": "ami_meter_residential_polarity_corrected",
      "circuit_col": "load_circuit_id", "q_col": "Q_kvar", "use_baseline_correction": False},
-    {"name": "Sign-flip only", "source_table": "ami_meter_residential_sign_flipped",
+    {"name": "Polarity-corrected + Sign-flip", "source_table": "ami_meter_residential_sign_flipped",
      "circuit_col": "load_circuit_id", "q_col": "Q_kvar", "use_baseline_correction": False},
-    {"name": "Polarity-corrected + baseline estimate", "source_table": "ami_meter_residential_polarity_corrected",
+    {"name": "Polarity-corrected + Sign-flip + baseline estimate", "source_table": "ami_meter_residential_polarity_corrected",
      "circuit_col": "load_circuit_id", "q_col": "Q_kvar_pv_est", "use_baseline_correction": True},
     {"name": "Ground truth (ami_raw_phaseseparate)", "source_table": "ami_raw_phaseseparate_pv_only",
      "circuit_col": "pv_circuit_id", "q_col": "Q_kvar", "use_baseline_correction": False},
@@ -1641,8 +1647,8 @@ GROUND_TRUTH_VARIANT_NAME = "Ground truth (ami_raw_phaseseparate)"
 # Per variant: which P column build_voltvar_sql gated on, and which sign
 _EXPORT_GATE_SPEC = {
     "Polarity-corrected only": ("P_kw", -1.0),
-    "Sign-flip only": ("P_kw", +1.0),
-    "Polarity-corrected + baseline estimate": ("P_kw_pv_est", +1.0),
+    "Polarity-corrected + Sign-flip": ("P_kw", +1.0),
+    "Polarity-corrected + Sign-flip + baseline estimate": ("P_kw_pv_est", +1.0),
     GROUND_TRUTH_VARIANT_NAME: ("P_kw", +1.0),
 }
 
