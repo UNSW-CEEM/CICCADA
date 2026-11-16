@@ -164,7 +164,7 @@ def read_query_via_parquet(
 
         # Retrieve the generated Parquet paths and expected row count.
         files = pl.read_database(
-            query=("SELECT file_path, record_count " f"FROM {files_table}"),
+            query=(f"SELECT file_path, record_count FROM {files_table}"),
             connection=trino_engine,
         )
 
