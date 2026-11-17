@@ -66,6 +66,7 @@ def _process_site_conformance(
     dataset_directory: str,
     output_directory: str,
     create_plots: bool,
+    apply_site_valid_filter: bool,
     volt_var_method: str,
     plot_day_limit: int | None = None,
 ) -> tuple[pl.DataFrame, int]:
@@ -92,6 +93,34 @@ def _process_site_conformance(
             .forward_fill()
             .alias("csip_export_limit_w_ffill")
         )
+
+    if apply_site_valid_filter:
+        site_tolerance_w = site_metadata["calc_capacity"] * 1000 * 0.04
+        site_inv_power_diff_w = (
+            site_telemetry["pw_dc_pv_power"]
+            + site_telemetry["battery_power"]
+            - site_telemetry["inverter_ac_real_power"]
+        )
+        site_solar_difference_w = (
+            site_telemetry["pw_dc_pv_power"] - site_telemetry["site_solar_power"]
+        )
+        common_valid_mask = (
+            site_inv_power_diff_w.is_not_null()
+            & site_solar_difference_w.is_not_null()
+            & (site_inv_power_diff_w.abs() <= site_tolerance_w)
+        )
+        if site_metadata["solar_coupling"] == "dc_only":
+            solar_valid_mask = site_solar_difference_w.abs() <= site_tolerance_w
+        elif site_metadata["solar_coupling"] == "ac_coupled":
+            solar_valid_mask = site_solar_difference_w <= site_tolerance_w
+        else:
+            raise ValueError(
+                "apply_site_valid_filter requires solar_coupling to be "
+                "'dc_only' or 'ac_coupled', got "
+                f"{site_metadata['solar_coupling']!r}"
+            )
+        site_valid_mask = common_valid_mask & solar_valid_mask
+        site_telemetry = site_telemetry.filter(site_valid_mask)
 
     site_results = combined_conformance(
         site_telemetry,
@@ -125,18 +154,25 @@ def _process_site_conformance(
 
 
 def run_site_conformance_batch(
-    sites: pl.DataFrame | list[dict[str, Any]],
+    site_data: pl.DataFrame | list[dict[str, Any]],
     dataset_directory: str | Path,
     output_directory: str | Path,
     *,
     max_workers: int = 2,
     create_plots: bool = True,
+    apply_site_valid_filter: bool = False,
     volt_var_method: str = "standard",
     plot_day_limit: int | None = None,
     show_progress: bool = True,
 ) -> tuple[list[pl.DataFrame], int]:
-    """Process independent sites concurrently and preserve their input order."""
-    site_rows = sites.to_dicts() if isinstance(sites, pl.DataFrame) else list(sites)
+    """Process independent sites concurrently and preserve their input order.
+
+    Set ``apply_site_valid_filter`` true to apply the
+    inverter-battery-balance and solar-consistency mask before conformance assessment.
+    """
+    site_rows = (
+        site_data.to_dicts() if isinstance(site_data, pl.DataFrame) else list(site_data)
+    )
     if not site_rows:
         return [], 0
     if max_workers < 1:
@@ -158,6 +194,7 @@ def run_site_conformance_batch(
                 str(dataset_directory),
                 str(output_directory),
                 create_plots,
+                apply_site_valid_filter,
                 volt_var_method,
                 plot_day_limit,
             ): index
