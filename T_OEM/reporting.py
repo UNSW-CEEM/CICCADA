@@ -157,13 +157,13 @@ def summarise_csip_filtered_volt_watt(
                 & ~pl.col("csip_constraint_flag").fill_null(False)
             )
             .sum()
-            .alias("num_eligible_timestamps"),
+            .alias("csip_filtered_num_eligible_timestamps"),
             (
                 pl.col("volt_watt_conformant").fill_null(False)
                 & ~pl.col("csip_constraint_flag").fill_null(False)
             )
             .sum()
-            .alias("num_conformant_timestamps"),
+            .alias("csip_filtered_num_conformant_timestamps"),
             (
                 pl.col("volt_watt_conformant").is_not_null()
                 & pl.col("csip_constraint_flag").fill_null(False)
@@ -172,23 +172,59 @@ def summarise_csip_filtered_volt_watt(
             .alias("num_csip_constraint_excluded_timestamps"),
         )
         .with_columns(
-            pl.when(pl.col("num_eligible_timestamps") > 0)
+            pl.when(pl.col("csip_filtered_num_eligible_timestamps") > 0)
             .then(
                 100
-                * pl.col("num_conformant_timestamps")
-                / pl.col("num_eligible_timestamps")
+                * pl.col("csip_filtered_num_conformant_timestamps")
+                / pl.col("csip_filtered_num_eligible_timestamps")
             )
             .otherwise(None)
-            .alias("conformant_percentage")
+            .alias("csip_filtered_conformant_percentage")
         )
         .select(
             "pseudonym",
             "solar_coupling",
-            "num_eligible_timestamps",
-            "num_conformant_timestamps",
-            "conformant_percentage",
+            "csip_filtered_num_eligible_timestamps",
+            "csip_filtered_num_conformant_timestamps",
+            "csip_filtered_conformant_percentage",
             "num_csip_constraint_excluded_timestamps",
         )
+    )
+
+
+def summarise_csip_filtered_volt_watt_cohort(
+    site_volt_watt_performance: pl.DataFrame,
+) -> pl.DataFrame:
+    """Return one cohort-level Volt-Watt summary row.
+    CSIP-constrained timestamps are excluded.
+    """
+    total_sites = site_volt_watt_performance.height
+    sites_with_sufficient_eligible_evidence = site_volt_watt_performance.filter(
+        pl.col("num_eligible_timestamps") >= 20
+    )
+
+    return pl.DataFrame(
+        {
+            "assessment": ["Volt-Watt (excluding CSIP-AUS timestamps)"],
+            "total_sites": [total_sites],
+            "sites_with_sufficient_eligible_evidence": [
+                sites_with_sufficient_eligible_evidence.height
+            ],
+            "conformant_sites": [
+                sites_with_sufficient_eligible_evidence.filter(
+                    pl.col("conformant_percentage") >= 90
+                ).height
+            ],
+        }
+    ).with_columns(
+        pl.when(pl.col("sites_with_sufficient_eligible_evidence") > 0)
+        .then(
+            100
+            * pl.col("conformant_sites")
+            / pl.col("sites_with_sufficient_eligible_evidence")
+        )
+        .otherwise(None)
+        .alias("conformant_sites_percentage")
     )
 
 
