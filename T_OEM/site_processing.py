@@ -8,7 +8,7 @@ from typing import Any
 import polars as pl
 from as_4777_conformance import combined_conformance
 from csip_conformance import has_usable_csip_export_limit
-from reporting import summarise_site_conformance
+from reporting import summarise_csip_filtered_volt_watt, summarise_site_conformance
 
 _NETWORK_TIMEZONES = {
     "SAPN": "Australia/Adelaide",
@@ -67,9 +67,10 @@ def _process_site_conformance(
     output_directory: str,
     create_plots: bool,
     apply_site_valid_filter: bool,
+    include_csip_filtered_summary: bool,
     volt_var_method: str,
     plot_day_limit: int | None = None,
-) -> tuple[pl.DataFrame, int]:
+) -> tuple[pl.DataFrame, pl.DataFrame | None, int]:
     """Calculate and optionally plot one site inside a worker process."""
     if create_plots:
         import matplotlib
@@ -133,6 +134,11 @@ def _process_site_conformance(
         pl.lit(site_metadata["solar_coupling"]).alias("solar_coupling"),
     )
     site_summary = summarise_site_conformance(site_results)
+    csip_filtered_summary = (
+        summarise_csip_filtered_volt_watt(site_results)
+        if include_csip_filtered_summary
+        else None
+    )
 
     plot_count = 0
     if create_plots:
@@ -150,7 +156,7 @@ def _process_site_conformance(
             output_directory=output_directory,
         )
 
-    return site_summary, plot_count
+    return site_summary, csip_filtered_summary, plot_count
 
 
 def run_site_conformance_batch(
@@ -161,19 +167,27 @@ def run_site_conformance_batch(
     max_workers: int = 2,
     create_plots: bool = True,
     apply_site_valid_filter: bool = False,
+    include_csip_filtered_summary: bool = False,
     volt_var_method: str = "standard",
     plot_day_limit: int | None = None,
     show_progress: bool = True,
-) -> tuple[list[pl.DataFrame], int]:
+) -> (
+    tuple[list[pl.DataFrame], int]
+    | tuple[list[pl.DataFrame], list[pl.DataFrame], int]
+):
     """Process independent sites concurrently and preserve their input order.
 
     Set ``apply_site_valid_filter`` true to apply the
     inverter-battery-balance and solar-consistency mask before conformance assessment.
+    Set ``include_csip_filtered_summary`` true to return separate CSIP-filtered
+    Volt-Watt summaries.
     """
     site_rows = (
         site_data.to_dicts() if isinstance(site_data, pl.DataFrame) else list(site_data)
     )
     if not site_rows:
+        if include_csip_filtered_summary:
+            return [], [], 0
         return [], 0
     if max_workers < 1:
         raise ValueError("max_workers must be at least 1")
@@ -183,9 +197,9 @@ def run_site_conformance_batch(
             f"got {volt_var_method!r}"
         )
 
-    ordered_results: list[tuple[pl.DataFrame, int] | None] = [None] * len(
-        site_rows
-    )
+    ordered_results: list[
+        tuple[pl.DataFrame, pl.DataFrame | None, int] | None
+    ] = [None] * len(site_rows)
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         future_indexes = {
             executor.submit(
@@ -195,6 +209,7 @@ def run_site_conformance_batch(
                 str(output_directory),
                 create_plots,
                 apply_site_valid_filter,
+                include_csip_filtered_summary,
                 volt_var_method,
                 plot_day_limit,
             ): index
@@ -212,6 +227,13 @@ def run_site_conformance_batch(
                 )
 
     completed_results = [result for result in ordered_results if result is not None]
-    summaries = [summary for summary, _ in completed_results]
-    total_plot_count = sum(plot_count for _, plot_count in completed_results)
+    summaries = [summary for summary, _, _ in completed_results]
+    total_plot_count = sum(plot_count for _, _, plot_count in completed_results)
+    if include_csip_filtered_summary:
+        csip_filtered_summaries = [
+            summary
+            for _, summary, _ in completed_results
+            if summary is not None
+        ]
+        return summaries, csip_filtered_summaries, total_plot_count
     return summaries, total_plot_count

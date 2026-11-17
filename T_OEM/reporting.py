@@ -145,6 +145,53 @@ def summarise_site_conformance(
     )
 
 
+def summarise_csip_filtered_volt_watt(
+    site_conformance_results: pl.DataFrame,
+) -> pl.DataFrame:
+    """Return one row of Volt-Watt performance excluding CSIP constraints."""
+    return (
+        site_conformance_results.group_by(["pseudonym", "solar_coupling"])
+        .agg(
+            (
+                pl.col("volt_watt_conformant").is_not_null()
+                & ~pl.col("csip_constraint_flag").fill_null(False)
+            )
+            .sum()
+            .alias("num_eligible_timestamps"),
+            (
+                pl.col("volt_watt_conformant").fill_null(False)
+                & ~pl.col("csip_constraint_flag").fill_null(False)
+            )
+            .sum()
+            .alias("num_conformant_timestamps"),
+            (
+                pl.col("volt_watt_conformant").is_not_null()
+                & pl.col("csip_constraint_flag").fill_null(False)
+            )
+            .sum()
+            .alias("num_csip_constraint_excluded_timestamps"),
+        )
+        .with_columns(
+            pl.when(pl.col("num_eligible_timestamps") > 0)
+            .then(
+                100
+                * pl.col("num_conformant_timestamps")
+                / pl.col("num_eligible_timestamps")
+            )
+            .otherwise(None)
+            .alias("conformant_percentage")
+        )
+        .select(
+            "pseudonym",
+            "solar_coupling",
+            "num_eligible_timestamps",
+            "num_conformant_timestamps",
+            "conformant_percentage",
+            "num_csip_constraint_excluded_timestamps",
+        )
+    )
+
+
 def summarise_cohort_conformance(
     site_conformance_performance: pl.DataFrame,
 ) -> pl.DataFrame:

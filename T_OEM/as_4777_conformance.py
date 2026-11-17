@@ -656,6 +656,31 @@ def combined_conformance(
             pl.lit(None, dtype=pl.Boolean).alias("csip_conformant")
         )
 
+    if solar_coupling == "dc_only" and csip_export_limit_usable:
+        # Compare the CSIP limit with the measured-voltage Volt-Watt response,
+        # excluding the 4% conformance allowance.
+        scored_telemetry = scored_telemetry.with_columns(
+            pl.when(pl.col("volt_watt_conformant").is_null())
+            .then(None)
+            .otherwise(
+                pl.col("csip_conformant").fill_null(False)
+                & (
+                    pl.col("csip_export_limit_w_ffill")
+                    < pl.col("volt_watt_curve_limit_kw") * 1000.0
+                )
+            )
+            .cast(pl.Boolean)
+            .alias("csip_constraint_flag")
+        )
+    else:
+        scored_telemetry = scored_telemetry.with_columns(
+            pl.when(pl.col("volt_watt_conformant").is_not_null())
+            .then(False)
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("csip_constraint_flag")
+        )
+
     as_4777_result_columns = [
         "passive_anti_islanding_conformant",
         "sustained_operation_conformant",
@@ -694,6 +719,7 @@ def combined_conformance(
             "vv_effective_required_reactive_power",
             "vv_required_reactive_power_with_tolerance",
             *individual_result_columns,
+            "csip_constraint_flag",
             "volt_var_method",
             "as_4777_conformant",
         ]
@@ -941,6 +967,31 @@ def combined_conformance_with_voltage_tolerance(
             pl.lit(None, dtype=pl.Boolean).alias("csip_conformant")
         )
 
+    if solar_coupling == "dc_only" and csip_export_limit_usable:
+        # Compare the CSIP limit with the measured-voltage Volt-Watt response,
+        # excluding the 4% conformance allowance.
+        scored_telemetry = scored_telemetry.with_columns(
+            pl.when(pl.col("volt_watt_conformant").is_null())
+            .then(None)
+            .otherwise(
+                pl.col("csip_conformant").fill_null(False)
+                & (
+                    pl.col("csip_export_limit_w_ffill")
+                    < pl.col("volt_watt_curve_limit_kw") * 1000.0
+                )
+            )
+            .cast(pl.Boolean)
+            .alias("csip_constraint_flag")
+        )
+    else:
+        scored_telemetry = scored_telemetry.with_columns(
+            pl.when(pl.col("volt_watt_conformant").is_not_null())
+            .then(False)
+            .otherwise(None)
+            .cast(pl.Boolean)
+            .alias("csip_constraint_flag")
+        )
+
     as_4777_result_columns = [
         "passive_anti_islanding_conformant",
         "sustained_operation_conformant",
@@ -979,6 +1030,7 @@ def combined_conformance_with_voltage_tolerance(
             "vv_effective_required_reactive_power",
             "vv_required_reactive_power_with_tolerance",
             *individual_result_columns,
+            "csip_constraint_flag",
             "volt_var_method",
             "as_4777_conformant",
         ]
