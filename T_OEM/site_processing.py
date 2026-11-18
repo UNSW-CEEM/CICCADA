@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from as_4777_conformance import combined_conformance
+from as_4777_conformance import (
+    combined_conformance,
+    combined_conformance_with_voltage_tolerance,
+)
 from csip_conformance import has_usable_csip_export_limit
 from reporting import summarise_csip_filtered_volt_watt, summarise_site_conformance
 
@@ -68,6 +71,8 @@ def _process_site_conformance(
     create_plots: bool,
     apply_site_valid_filter: bool,
     include_csip_filtered_summary: bool,
+    use_voltage_tolerance: bool,
+    vw_require_measured_above_threshold: bool,
     volt_var_method: str,
     plot_day_limit: int | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame | None, int]:
@@ -123,13 +128,25 @@ def _process_site_conformance(
         site_valid_mask = common_valid_mask & solar_valid_mask
         site_telemetry = site_telemetry.filter(site_valid_mask)
 
-    site_results = combined_conformance(
-        site_telemetry,
-        site_metadata["calc_capacity"],
-        site_metadata["solar_coupling"],
-        csip_export_limit_usable=csip_export_limit_usable,
-        volt_var_method=volt_var_method,
-    ).with_columns(
+    if use_voltage_tolerance:
+        site_results = combined_conformance_with_voltage_tolerance(
+            site_telemetry,
+            site_metadata["calc_capacity"],
+            site_metadata["solar_coupling"],
+            csip_export_limit_usable=csip_export_limit_usable,
+            vw_require_measured_above_threshold=(
+                vw_require_measured_above_threshold
+            ),
+        )
+    else:
+        site_results = combined_conformance(
+            site_telemetry,
+            site_metadata["calc_capacity"],
+            site_metadata["solar_coupling"],
+            csip_export_limit_usable=csip_export_limit_usable,
+            volt_var_method=volt_var_method,
+        )
+    site_results = site_results.with_columns(
         pl.lit(pseudonym).alias("pseudonym"),
         pl.lit(site_metadata["solar_coupling"]).alias("solar_coupling"),
     )
@@ -168,6 +185,8 @@ def run_site_conformance_batch(
     create_plots: bool = True,
     apply_site_valid_filter: bool = False,
     include_csip_filtered_summary: bool = False,
+    use_voltage_tolerance: bool = False,
+    vw_require_measured_above_threshold: bool = True,
     volt_var_method: str = "standard",
     plot_day_limit: int | None = None,
     show_progress: bool = True,
@@ -181,6 +200,8 @@ def run_site_conformance_batch(
     inverter-battery-balance and solar-consistency mask before conformance assessment.
     Set ``include_csip_filtered_summary`` true to return separate CSIP-filtered
     Volt-Watt summaries.
+    Set ``use_voltage_tolerance`` true to use the voltage-tolerance workflow.
+    ``vw_require_measured_above_threshold`` applies only to that workflow.
     """
     site_rows = (
         site_data.to_dicts() if isinstance(site_data, pl.DataFrame) else list(site_data)
@@ -210,6 +231,8 @@ def run_site_conformance_batch(
                 create_plots,
                 apply_site_valid_filter,
                 include_csip_filtered_summary,
+                use_voltage_tolerance,
+                vw_require_measured_above_threshold,
                 volt_var_method,
                 plot_day_limit,
             ): index
