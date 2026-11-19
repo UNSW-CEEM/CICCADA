@@ -17,7 +17,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Ignoring only a lib folder at the repository root:
+/lib/
 lib64/
 parts/
 sdist/
@@ -175,3 +176,13 @@ LSO_anti_islanding/conformance/updated results/
 
 *.csv
 *.png
+.tmp/
+
+## Local mapping:
+local_mapping/
+bms_sa_review/ami_analysis/notebooks/draft.ipynb
+bms_sa_review/synthetic_ami_creation/notebooks/draft.ipynb
+bms_sa_review/synthetic_ami_creation/notebooks/draft.ipynb
+
+
+*/Claude outputs

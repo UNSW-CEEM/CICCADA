@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AS/NZS 4777.2 response explorer</title>
+<style>
+  :root {
+    --ink: #1a1a1a; --ink2: #555555; --ink3: #7f7f7f; --line: #dcdcdc; --grid: #ebebeb;
+    --surface: #ffffff; --page: #f6f6f4; --warn-bg: #fff4d6; --warn-ink: #6b4e00;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 14px 20px 10px; }
+  h1 { font-size: 19px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--ink2); }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-ink); font-weight: 600; }
+  .badge.ok { background: #e6eef6; color: #1c4f80; }
+  main { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 14px; padding: 0 20px 20px; align-items: start; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 2px; font-weight: 650; }
+  .card .hint { color: var(--ink2); font-size: 12.5px; margin: 0 0 8px; }
+  aside { display: grid; gap: 12px; }
+  label.row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; margin: 9px 0 0; font-size: 13px; }
+  label.row output { font-variant-numeric: tabular-nums; font-weight: 600; }
+  label.row input[type=range] { grid-column: 1 / -1; width: 100%; margin: 2px 0 0; accent-color: #1a1a1a; }
+  select { width: 100%; padding: 6px 8px; font: inherit; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-top: 4px; }
+  .seg button { font: inherit; font-size: 13px; padding: 6px 4px; border: 0; background: #fff; color: var(--ink2); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed=true] { background: #1a1a1a; color: #fff; font-weight: 600; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .presets button { font: inherit; font-size: 12.5px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 14px; background: #fff; cursor: pointer; color: var(--ink); }
+  .presets button:hover { border-color: #888; }
+  .presets button span { color: var(--ink3); }
+  .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
+  .note { color: var(--ink2); font-size: 12.5px; margin: 6px 0 0; }
+  dl.read { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin: 6px 0 0; font-size: 13px; }
+  dl.read dt { color: var(--ink2); } dl.read dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  dl.read .sep { grid-column: 1 / -1; border-top: 1px solid var(--grid); margin: 4px 0 1px; }
+  .verdict { margin: 8px 0 0; padding: 8px 10px; border-left: 3px solid #1a1a1a; background: #f4f4f2; font-size: 13px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  .chip i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+  .meta { font-size: 12.5px; color: var(--ink2); margin: 8px 0 0; padding: 0; list-style: none; }
+  .meta li + li { margin-top: 4px; }
+  .charts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.86fr); gap: 12px; }
+  @media (max-width: 1280px) { .charts { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 760px) { .charts { grid-template-columns: 1fr; } }
+  section.right { display: grid; gap: 12px; min-width: 0; }
+  .plot { position: relative; width: 100%; }
+  canvas { display: block; width: 100%; touch-action: none; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink2); margin-top: 6px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend svg { flex: none; }
+  #tip { position: fixed; z-index: 10; pointer-events: none; background: #1a1a1a; color: #fff; font-size: 12px; padding: 5px 8px; border-radius: 5px; white-space: pre; display: none; font-variant-numeric: tabular-nums; }
+  footer { padding: 0 20px 22px; color: var(--ink2); font-size: 12px; }
+  footer .bad { color: #b2182b; font-weight: 700; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AS/NZS 4777.2 response explorer</h1>
+  <span class="sub">Volt-VAr, Volt-Watt and minimum reactive power capability, Australia A</span>
+  <span id="badge" class="badge"></span>
+</header>
+
+<main>
+  <aside>
+    <div class="card">
+      <h2>Site</h2>
+      <select id="src" aria-label="Site"></select>
+      <p class="note" id="srcNote"></p>
+      <ul class="meta" id="meta"></ul>
+    </div>
+
+    <div class="card">
+      <h2>Operating point</h2>
+      <div class="seg" role="group" aria-label="Mode">
+        <button id="mSite" aria-pressed="true">Follow the site day</button>
+        <button id="mFree" aria-pressed="false">Free point</button>
+      </div>
+      <div id="siteCtl">
+        <label class="row">Time of day <output id="oT"></output>
+          <input type="range" id="sT" min="0" max="287" step="1"></label>
+        <label class="row">What if: voltage offset <output id="oDV"></output>
+          <input type="range" id="sDV" min="-15" max="20" step="0.5" value="0"></label>
+        <label class="row">What if: active power scale <output id="oKP"></output>
+          <input type="range" id="sKP" min="0" max="200" step="5" value="100"></label>
+        <div class="presets"><button id="reset">Reset what-if</button><button id="peakV">Go to highest voltage</button></div>
+        <p class="note">Drag on the day plot to move the time cursor.</p>
+      </div>
+      <div id="freeCtl" hidden>
+        <label class="row">Voltage <output id="oV"></output>
+          <input type="range" id="sV" min="215" max="265" step="0.1" value="252"></label>
+        <label class="row">Available active power <output id="oP"></output>
+          <input type="range" id="sP" min="0" max="110" step="1" value="97"></label>
+        <div class="presets" id="presets"></div>
+        <p class="note">You can also drag inside the "Active power against voltage" chart.</p>
+      </div>
+      <label class="check"><input type="checkbox" id="tol" checked> Show the ±4% measurement tolerance</label>
+    </div>
+
+    <div class="card">
+      <h2>What the standard asks here</h2>
+      <dl class="read" id="read"></dl>
+      <div class="verdict" id="verdict"></div>
+      <div class="chips" id="chips"></div>
+    </div>
+  </aside>
+
+  <section class="right">
+    <div class="charts">
+      <div class="card">
+        <h2>Reactive power against voltage</h2>
+        <p class="hint">Volt-VAr curve (Table 3.7) and the range permitted at the current active power. Points: the site's month.</p>
+        <div class="plot"><canvas id="cQV" aria-label="Reactive power against voltage"></canvas></div>
+        <div class="legend" id="lgQV"></div>
+      </div>
+      <div class="card">
+        <h2>Active power against voltage</h2>
+        <p class="hint">Volt-Watt limit (Table 3.6) and the limit left by the rating once Volt-VAr reactive power is delivered.</p>
+        <div class="plot"><canvas id="cPV" aria-label="Active power against voltage"></canvas></div>
+        <div class="legend" id="lgPV"></div>
+      </div>
+      <div class="card">
+        <h2>Power circle</h2>
+        <p class="hint">Rating circle with the Figure 2.1 minimum capability. The arrow shows where the inverter should move.</p>
+        <div class="plot"><canvas id="cPQ" aria-label="Power circle"></canvas></div>
+        <div class="legend" id="lgPQ"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2 id="dayTitle">Site day</h2>
+      <p class="hint" id="dayHint"></p>
+      <div class="plot"><canvas id="cDay" aria-label="Site day: voltage, active power, reactive power"></canvas></div>
+      <div class="legend" id="lgDay"></div>
+    </div>
+  </section>
+</main>
+<footer id="foot"></footer>
+<div id="tip"></div>
+
+<script>
+const DATA = /*__PAYLOAD__*/null;
+</script>
+<script>
+"use strict";
+// =====================================================================================
+// 1. Rules (percent of rated apparent power; Q negative = absorbing). Mirrors
+//    bms_sa_review/shared/as4777_curves.py, profile "review_corrected"; checked on load.
+// =====================================================================================
+const SP = DATA.setpoints, VV = SP.VVAR, VW = SP.VW, QC = SP.QCAP;
+const TOL = SP.TOL_FRAC * 100, Q1 = VV.Q1 * 100, Q4 = VV.Q4 * 100;
+const PMIN = QC.P_MIN * 100, PFLAT = QC.P_FLAT_MAX * 100, PCIRC = QC.P_CIRCLE * 100, QFLAT = QC.Q_FLAT * 100;
+const PF_RATIO = Math.sqrt(1 / (QC.PF_MIN * QC.PF_MIN) - 1);          // 0.75 at power factor 0.8
+const V_CAP_BINDS = VV.V3 + (VV.V4 - VV.V3) * QFLAT / Q4;            // 253.2 V: curve passes 44%
+
+function qCurve(v) {                                   // Volt-VAr curve, Table 3.7
+  if (v <= VV.V1) return Q1;
+  if (v < VV.V2) return Q1 * (VV.V2 - v) / (VV.V2 - VV.V1);
+  if (v <= VV.V3) return 0;
+  if (v < VV.V4) return -Q4 * (v - VV.V3) / (VV.V4 - VV.V3);
+  return -Q4;
+}
+function vwMax(v) {                                    // Volt-Watt limit, Table 3.6
+  if (v <= VW.V1) return 100;
+  if (v < VW.V2) return 100 + (VW.P2 * 100 - 100) * (v - VW.V1) / (VW.V2 - VW.V1);
+  return VW.P2 * 100;
+}
+function floorAbs(p) {                                 // conformance floor from Figure 2.1 (<= 0)
+  const a = Math.abs(p);
+  if (a < PMIN) return 0;
+  if (a <= PFLAT) return -QFLAT;
+  if (a <= PCIRC) return -a * PF_RATIO;
+  return -Q4;                                          // above 80%: no relaxation (Cl. 3.3.2.3)
+}
+function band(v, p, tol) {                             // permitted Q band, as in the Stage 2 tables
+  const q = qCurve(v), f = floorAbs(p), vmax = q + tol, vmin = q - tol;
+  return { q, floor: f,
+    qmax: vmax < 0 ? Math.max(vmax, f + tol) : vmax,
+    qmin: vmin > 0 ? Math.min(vmin, -f - tol) : vmin,
+    assessable: Math.abs(p) >= PMIN };
+}
+function expected(v, pAvail) {                         // what a conformant inverter should do
+  const vw = vwMax(v), p0 = Math.min(pAvail, vw), q = qCurve(v), m = Math.abs(q), s = q < 0 ? -1 : 1;
+  let zone, cap;
+  if (p0 < PMIN) { zone = "low"; cap = null; }
+  else if (p0 <= PFLAT) { zone = "flat"; cap = QFLAT; }
+  else if (p0 <= PCIRC) { zone = "pf"; cap = p0 * PF_RATIO; }
+  else { zone = "high"; cap = Infinity; }
+  const reqM = cap === null ? null : Math.min(m, cap);
+  const capped = cap !== null && cap < m - 1e-9;
+  const pCircle = Math.sqrt(Math.max(0, 1e4 - m * m));
+  const reduced = zone === "high" && p0 > pCircle + 1e-9;
+  return { v, pAvail, vw, vwActive: pAvail > vw + 1e-9, p0, q, m, s, zone, cap, reqM, capped,
+           pCircle, reduced, pExp: reduced ? pCircle : p0 };
+}
+
+function selfCheck() {
+  const c = DATA.check, ix = Object.fromEntries(c.columns.map((k, i) => [k, i]));
+  let bad = 0;
+  for (const r of c.rows) {
+    const b = band(r[ix.v], r[ix.p], TOL);
+    const got = [b.q, b.floor, b.qmin, b.qmax, vwMax(r[ix.v])];
+    const want = [r[ix.q_req], r[ix.floor], r[ix.q_min_final], r[ix.q_max_final], r[ix.vw_max]];
+    if (got.some((g, i) => Math.abs(g - want[i]) > 1e-6)) bad++;
+  }
+  return { n: c.rows.length, bad };
+}
+
+// =====================================================================================
+// 2. State
+// =====================================================================================
+const COL = DATA.colours, CQ = COL.quantity, CR = COL.reference, CS = COL.status;
+const $ = id => document.getElementById(id);
+const st = { src: 0, mode: "site", i: 0, dV: 0, kP: 100, fV: 252, fP: 97, tol: true, hover: null };
+const src = () => DATA.sources[st.src];
+const tolNow = () => st.tol ? TOL : 0;
+const whatIf = () => st.mode === "site" && (st.dV !== 0 || st.kP !== 100);
+
+function dayAt(i) {                                    // measured values with what-if offsets applied
+  const d = src().day, v = d.v[i], p = d.p[i], q = d.q[i];
+  return { t: d.t[i], v: v == null ? null : v + st.dV, p: p == null ? null : p * st.kP / 100, q };
+}
+function point() {
+  if (st.mode === "free") return { v: st.fV, p: st.fP, q: null, ok: true };
+  const a = dayAt(st.i);
+  return { v: a.v, p: a.p == null ? null : Math.max(0, a.p), q: a.q, ok: a.v != null && a.p != null };
+}
+function defaultIndex() {
+  const d = src().day; let best = -1, bv = -1e9;
+  d.v.forEach((v, i) => { if (v != null && d.p[i] != null && d.p[i] >= PMIN && v > bv) { bv = v; best = i; } });
+  if (best < 0) d.p.forEach((p, i) => { if (p != null && p > bv) { bv = p; best = i; } });
+  return Math.max(0, best);
+}
+
+// =====================================================================================
+// 3. Canvas helpers
+// =====================================================================================
+const hhmm = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+const f1 = x => (Math.abs(x) < 0.05 ? 0 : x).toFixed(1);
+const fQ = q => q == null ? "–" : Math.abs(q) < 0.05 ? "0%" : f1(Math.abs(q)) + "% " + (q < 0 ? "absorbing" : "supplying");
+const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; };
+
+function prep(canvas, h) {
+  const w = canvas.parentElement.clientWidth, dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); canvas.style.height = h + "px";
+  const ctx = canvas.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
+  ctx.font = "11px system-ui, sans-serif"; ctx.lineJoin = "round";
+  return { ctx, w, h };
+}
+function frame(x0, y0, x1, y1, xd, yd) {              // pixel box + data domains
+  const sx = x => x0 + (x - xd[0]) / (xd[1] - xd[0]) * (x1 - x0);
+  const sy = y => y1 - (y - yd[0]) / (yd[1] - yd[0]) * (y1 - y0);
+  return { x0, y0, x1, y1, xd, yd, sx, sy,
+    ix: px => xd[0] + (px - x0) / (x1 - x0) * (xd[1] - xd[0]),
+    iy: py => yd[0] + (y1 - py) / (y1 - y0) * (yd[1] - yd[0]),
+    inside: (px, py) => px >= x0 && px <= x1 && py >= y0 && py <= y1 };
+}
+function axes(ctx, f, o) {
+  ctx.save(); ctx.lineWidth = 1; ctx.strokeStyle = CR.grid; ctx.fillStyle = CR.text;
+  ctx.textBaseline = "middle"; ctx.textAlign = "right";
+  for (const y of o.yt) { const py = Math.round(f.sy(y)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(f.x0, py); ctx.lineTo(f.x1, py); ctx.stroke();
+    ctx.fillText(o.yf ? o.yf(y) : y, f.x0 - 6, py); }
+  ctx.textBaseline = "top"; ctx.textAlign = "center";
+  for (const x of o.xt) { const px = Math.round(f.sx(x)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(px, f.y0); ctx.lineTo(px, f.y1); ctx.stroke();
+    if (o.xlabels !== false) ctx.fillText(o.xf ? o.xf(x) : x, px, f.y1 + 5 + (o.xoff || 0)); }
+  if (o.zero != null && o.zero >= f.yd[0] && o.zero <= f.yd[1]) {
+    ctx.strokeStyle = "#9a9a9a"; const py = Math.round(f.sy(o.zero)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(f.x0, py); ctx.lineTo(f.x1, py); ctx.stroke(); }
+  ctx.fillStyle = CR.text;
+  if (o.xl) { ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.fillText(o.xl, (f.x0 + f.x1) / 2, f.y1 + 34); }
+  if (o.yl) { ctx.save(); ctx.translate(f.x0 - 40, (f.y0 + f.y1) / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(o.yl, 0, 0); ctx.restore(); }
+  ctx.restore();
+}
+function clip(ctx, f) { ctx.beginPath(); ctx.rect(f.x0, f.y0, f.x1 - f.x0, f.y1 - f.y0); ctx.clip(); }
+function path(ctx, f, xs, ys, o = {}) {               // polyline with gaps at nulls
+  ctx.save(); clip(ctx, f);
+  ctx.strokeStyle = o.color || "#000"; ctx.lineWidth = o.width || 2; ctx.setLineDash(o.dash || []);
+  ctx.globalAlpha = o.alpha == null ? 1 : o.alpha; ctx.beginPath(); let pen = false;
+  for (let i = 0; i < xs.length; i++) {
+    if (ys[i] == null || xs[i] == null) { pen = false; continue; }
+    const X = f.sx(xs[i]), Y = f.sy(ys[i]); pen ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); pen = true; }
+  ctx.stroke(); ctx.restore();
+}
+function vline(ctx, f, x, o = {}) {
+  if (x < f.xd[0] || x > f.xd[1]) return; const px = Math.round(f.sx(x)) + 0.5;
+  ctx.save(); ctx.strokeStyle = o.color || CR.threshold; ctx.lineWidth = o.width || 1; ctx.setLineDash(o.dash || [2, 3]);
+  ctx.beginPath(); ctx.moveTo(px, f.y0); ctx.lineTo(px, f.y1); ctx.stroke();
+  if (o.label) { ctx.setLineDash([]); ctx.fillStyle = CR.threshold; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    ctx.fillText(o.label, px, f.y0 - 2); }
+  ctx.restore();
+}
+function hline(ctx, f, y, o = {}) {
+  if (y < f.yd[0] || y > f.yd[1]) return; const py = Math.round(f.sy(y)) + 0.5;
+  ctx.save(); ctx.strokeStyle = o.color || CR.threshold; ctx.lineWidth = o.width || 1; ctx.setLineDash(o.dash || [2, 3]);
+  ctx.beginPath(); ctx.moveTo(f.x0, py); ctx.lineTo(f.x1, py); ctx.stroke();
+  if (o.label) { ctx.setLineDash([]); ctx.fillStyle = CR.threshold; ctx.textBaseline = "bottom";
+    if (o.align === "left") { ctx.textAlign = "left"; ctx.fillText(o.label, f.x0 + 4, py - 2); }
+    else if (o.align === "outside") { ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText(o.label, f.x1 + 4, py); }
+    else { ctx.textAlign = "right"; ctx.fillText(o.label, f.x1 - 3, py - 2); } }
+  ctx.restore();
+}
+function dots(ctx, f, xs, ys, colorOf) {
+  ctx.save(); clip(ctx, f);
+  for (let i = 0; i < xs.length; i++) { ctx.fillStyle = colorOf(i); ctx.fillRect(f.sx(xs[i]) - 1.5, f.sy(ys[i]) - 1.5, 3, 3); }
+  ctx.restore();
+}
+function marker(ctx, X, Y, o = {}) {
+  const r = o.r || 6; ctx.save(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(X, Y, r + 2, 0, 7); ctx.fillStyle = "#fff"; ctx.fill();          // surface ring
+  ctx.beginPath(); ctx.arc(X, Y, r, 0, 7);
+  if (o.hollow) { ctx.fillStyle = "#fff"; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = o.color || "#000"; ctx.stroke(); }
+  else { ctx.fillStyle = o.color || "#000"; ctx.fill(); }
+  ctx.restore();
+}
+function arrow(ctx, X0, Y0, X1, Y1) {
+  const d = Math.hypot(X1 - X0, Y1 - Y0); if (d < 14) return;
+  const ux = (X1 - X0) / d, uy = (Y1 - Y0) / d, a = 9, b = 8;
+  const sx = X0 + ux * a, sy = Y0 + uy * a, ex = X1 - ux * a, ey = Y1 - uy * a;
+  ctx.save(); ctx.strokeStyle = "#000"; ctx.fillStyle = "#000"; ctx.lineWidth = 2; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - ux * b - uy * b * 0.5, ey - uy * b + ux * b * 0.5);
+  ctx.lineTo(ex - ux * b + uy * b * 0.5, ey - uy * b - ux * b * 0.5); ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function tag(ctx, text, X, Y, o = {}) {               // small label on a white plate
+  ctx.save(); ctx.font = (o.bold ? "600 " : "") + "11px system-ui, sans-serif";
+  const w = ctx.measureText(text).width + 8; let x = o.align === "right" ? X - w : o.align === "center" ? X - w / 2 : X;
+  if (o.clamp) { if (x + w > o.clamp.x1 - 2 && o.flip != null) x = o.flip - w; x = Math.max(o.clamp.x0 + 2, Math.min(o.clamp.x1 - w - 2, x)); }
+  ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(x, Y - 8, w, 16);
+  ctx.fillStyle = o.ink || "#1a1a1a"; ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText(text, x + 4, Y); ctx.restore();
+}
+const range = (a, b, s) => { const o = []; for (let x = a; x <= b + 1e-9; x += s) o.push(+x.toFixed(6)); return o; };
+const frames = {};
+const V_DOM = [215, 265], V_TICKS = range(220, 260, 10);
+
+// =====================================================================================
+// 4. Charts
+// =====================================================================================
+function thresholds(ctx, f) {
+  for (const t of [VV.V3, VW.V1, VV.V4]) vline(ctx, f, t, { label: String(t) });
+}
+
+function drawQV(pt, e) {
+  const { ctx, w, h } = prep($("cQV"), 330), f = frame(52, 18, w - 10, h - 40, V_DOM, [-70, 55]);
+  frames.qv = f; const T = tolNow(), c = src().cloud;
+  axes(ctx, f, { xt: V_TICKS, yt: range(-60, 40, 20), zero: 0, xl: "Voltage (V)", yl: "Reactive power (% of rating)" });
+  thresholds(ctx, f);
+  dots(ctx, f, c.v, c.q, i => c.p[i] < PMIN ? rgba(CS.not_assessable, 0.22) : rgba(CQ.Q, 0.22));
+  const vs = range(V_DOM[0], V_DOM[1], 0.25);
+  if (pt.ok && e.zone !== "low") {                    // permitted range at the current active power
+    const bs = vs.map(v => band(v, e.p0, T));
+    ctx.save(); clip(ctx, f);
+    ctx.fillStyle = rgba(CR.band, COL.band_alpha + 0.04); ctx.beginPath();
+    vs.forEach((v, i) => i ? ctx.lineTo(f.sx(v), f.sy(bs[i].qmax)) : ctx.moveTo(f.sx(v), f.sy(bs[i].qmax)));
+    for (let i = vs.length - 1; i >= 0; i--) ctx.lineTo(f.sx(vs[i]), f.sy(bs[i].qmin));
+    ctx.closePath(); ctx.fill(); ctx.restore();
+    path(ctx, f, vs, vs.map(v => { const b = band(v, e.p0, 0); return b.q < 0 ? Math.max(b.q, b.floor) : Math.min(b.q, -b.floor); }),
+         { color: "#000", width: 1.6 });
+  }
+  path(ctx, f, vs, vs.map(qCurve), { color: CR.required, width: 2, dash: [6, 4] });
+  if (!pt.ok) return;
+  vline(ctx, f, pt.v, { color: CQ.V, dash: [], width: 1.5 });
+  const X = f.sx(pt.v);
+  if (pt.q != null) marker(ctx, X, f.sy(pt.q), { color: CQ.Q, hollow: true, r: 5 });
+  if (e.zone === "low") tag(ctx, "below 20% P: no minimum defined", X + 8, f.y0 + 26, { clamp: f, flip: X - 8 });
+  else {
+    if (e.capped) marker(ctx, X, f.sy(e.q), { hollow: true, r: 4.5 });
+    marker(ctx, X, f.sy(e.s * e.reqM), { r: 6 });
+    tag(ctx, "minimum " + fQ(e.s * e.reqM), X + 12, f.sy(e.s * e.reqM) + 14, { bold: true, clamp: f, flip: X - 12 });
+  }
+}
+
+function drawPV(pt, e) {
+  const { ctx, w, h } = prep($("cPV"), 330), f = frame(52, 18, w - 10, h - 40, V_DOM, [0, 115]);
+  frames.pv = f; const c = src().cloud;
+  axes(ctx, f, { xt: V_TICKS, yt: range(0, 100, 20), xl: "Voltage (V)", yl: "Active power (% of rating)" });
+  thresholds(ctx, f);
+  for (const y of [PMIN, PFLAT, PCIRC]) hline(ctx, f, y);
+  dots(ctx, f, c.v, c.p, () => rgba(CQ.P, 0.2));
+  for (const [y, t] of [[PMIN / 2, "below 20%: no Q minimum"], [(PMIN + PFLAT) / 2, "20–60%: Q capped at 44%"],
+                        [(PFLAT + PCIRC) / 2, "60–80%: Q capped at 0.75 × P"], [(PCIRC + 100) / 2, "above 80%: no Q cap"]])
+    tag(ctx, t, f.x0 + 3, f.sy(y), { ink: CR.text });
+  const vs = range(V_DOM[0], V_DOM[1], 0.25);
+  path(ctx, f, vs, vs.map(v => Math.sqrt(1e4 - qCurve(v) ** 2)), { color: "#000", width: 1.4, dash: [2, 3] });
+  path(ctx, f, vs, vs.map(vwMax), { color: CR.required, width: 2, dash: [6, 4] });
+  if (!pt.ok) return;
+  vline(ctx, f, pt.v, { color: CQ.V, dash: [], width: 1.5 });
+  const X = f.sx(pt.v), Ya = f.sy(Math.min(pt.p, f.yd[1])), Ye = f.sy(e.pExp);
+  arrow(ctx, X, Ya, X, Ye);
+  marker(ctx, X, Ya, { hollow: true, color: CQ.P, r: 5.5 });
+  marker(ctx, X, Ye, { r: 6 });
+  tag(ctx, "expected " + f1(e.pExp) + "%", X + 12, Ye + 14, { bold: true, clamp: f, flip: X - 12 });
+}
+
+function drawPQ(pt, e) {
+  const H = 330, { ctx, w } = prep($("cPQ"), H), xd = [0, 112], yd = [-72, 60];
+  const bx0 = 52, by0 = 14, bx1 = w - 10, by1 = H - 40;
+  const k = Math.min((bx1 - bx0) / (xd[1] - xd[0]), (by1 - by0) / (yd[1] - yd[0]));       // equal scales: a true circle
+  const pw = k * (xd[1] - xd[0]), ph = k * (yd[1] - yd[0]), x0 = bx0 + (bx1 - bx0 - pw) / 2, y0 = by0 + (by1 - by0 - ph) / 2;
+  const f = frame(x0, y0, x0 + pw, y0 + ph, xd, yd); frames.pq = f; const c = src().cloud;
+  axes(ctx, f, { xt: range(0, 100, 20), yt: range(-60, 60, 20), zero: 0, xl: "Active power (% of rating)", yl: "Reactive power (% of rating)" });
+  ctx.save(); clip(ctx, f);
+  const a0 = Math.atan2(Q4, PCIRC), R = k * 100, cx = f.sx(0), cy = f.sy(0);               // Figure 2.1, generating side
+  ctx.beginPath(); ctx.moveTo(f.sx(PMIN), f.sy(-QFLAT)); ctx.lineTo(f.sx(PFLAT), f.sy(-QFLAT)); ctx.lineTo(f.sx(PCIRC), f.sy(-Q4));
+  ctx.arc(cx, cy, R, a0, -a0, true); ctx.lineTo(f.sx(PFLAT), f.sy(QFLAT)); ctx.lineTo(f.sx(PMIN), f.sy(QFLAT)); ctx.closePath();
+  ctx.fillStyle = rgba("#000000", 0.06); ctx.fill(); ctx.strokeStyle = "#7f7f7f"; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, Math.PI / 2); ctx.strokeStyle = CQ.S; ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.restore();
+  dots(ctx, f, c.p, c.q, () => rgba(CQ.Q, 0.18));
+  if (!pt.ok) return;
+  hline(ctx, f, e.q, { color: CR.required, width: 1.6, dash: [6, 4] });
+  if (e.vw < 100) vline(ctx, f, e.vw, { color: CR.required, width: 1.6, dash: [6, 4] });
+  const Xa = f.sx(Math.min(pt.p, xd[1])), Ya = f.sy(0);
+  if (e.zone !== "low") {
+    const Xe = f.sx(e.pExp), Ye = f.sy(e.s * e.reqM);
+    if (e.capped) { ctx.save(); ctx.strokeStyle = rgba("#000000", 0.4); ctx.lineWidth = 5; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(Xe, Ye); ctx.lineTo(Xe, f.sy(e.q)); ctx.stroke(); ctx.restore(); }
+    arrow(ctx, Xa, Ya, Xe, Ye);
+    marker(ctx, Xa, Ya, { hollow: true, color: CQ.P, r: 5.5 });
+    marker(ctx, Xe, Ye, { r: 6 });
+  } else marker(ctx, Xa, Ya, { hollow: true, color: CQ.P, r: 5.5 });
+  if (pt.q != null) marker(ctx, Xa, f.sy(pt.q), { color: CQ.Q, hollow: true, r: 5 });
+  if (e.m > 0.05) tag(ctx, "curve asks " + f1(e.m) + "%", f.x0 + 4, f.sy(e.q) + (e.q < -58 || e.q > 0 ? -11 : 11), { ink: CR.text });
+  if (e.vw < 100) tag(ctx, "Volt-Watt limit", f.sx(e.vw), f.y0 + 10, { ink: CR.text, align: "center", clamp: f });
+}
+
+function drawDay(pt) {
+  const s = src(), d = s.day, T = tolNow(), n = d.t.length;
+  const rows = [118, 128, 150], gap = 26, top = 18, left = 52, right = 44, bottom = 32;
+  const H = top + rows[0] + rows[1] + rows[2] + 2 * gap + bottom;
+  const { ctx, w } = prep($("cDay"), H), xd = [0, 1440], xt = range(0, 1440, 180);
+  const v = d.v.map(x => x == null ? null : x + st.dV), p = d.p.map(x => x == null ? null : x * st.kP / 100), q = d.q;
+  const ok = a => a.filter(x => x != null);
+  const vd = [Math.min(225, Math.floor(Math.min(...ok(v)) - 2)), Math.max(262, Math.ceil(Math.max(...ok(v)) + 2))];
+  const pd = [0, Math.ceil((Math.max(100, ...ok(p), ...(d.pot ? ok(d.pot) : [])) + 12) / 10) * 10];
+  const qd = [Math.floor(Math.min(-70, ...ok(q)) / 10) * 10, Math.ceil((Math.max(20, ...ok(q)) + 6) / 10) * 10];
+  let y = top; const fV = frame(left, y, w - right, y + rows[0], xd, vd); y += rows[0] + gap;
+  const fP = frame(left, y, w - right, y + rows[1], xd, pd); y += rows[1] + gap;
+  const fQd = frame(left, y, w - right, y + rows[2], xd, qd);
+  frames.day = { x0: left, x1: w - right, y0: top, y1: fQd.y1 };
+  const step = n > 1 ? d.t[1] - d.t[0] : 5;
+  const xa = i => Math.round(fV.sx(Math.max(0, d.t[i] - step / 2))), xb = i => Math.round(fV.sx(Math.min(1440, d.t[i] + step / 2)));
+  const strip = (f, colorOf) => { for (let i = 0; i < n; i++) { const c = colorOf(i); if (!c) continue;
+    ctx.fillStyle = c; ctx.fillRect(xa(i), f.y1 + 2, xb(i) - xa(i), 5); } };
+  const title = (f, t) => { ctx.save(); ctx.fillStyle = "#1a1a1a"; ctx.font = "600 11px system-ui, sans-serif"; ctx.textBaseline = "bottom";
+    ctx.fillText(t, f.x0, f.y0 - 4); ctx.restore(); };
+
+  // --- voltage
+  axes(ctx, fV, { xt, yt: range(Math.ceil(vd[0] / 10) * 10, vd[1], 10), xlabels: false });
+  title(fV, "Voltage (V)" + (s.phases > 1 ? ", average of phases" : ""));
+  for (const t of [VV.V3, VW.V1, VV.V4]) hline(ctx, fV, t, { label: t + " V", align: "outside" });
+  if (st.dV !== 0) path(ctx, fV, d.t, d.v, { color: CQ.V, width: 1.2, alpha: 0.35 });
+  path(ctx, fV, d.t, v, { color: CQ.V, width: 2 });
+
+  // --- active power
+  axes(ctx, fP, { xt, yt: range(0, pd[1], 20), xlabels: false });
+  title(fP, "Active power (% of rating)");
+  hline(ctx, fP, PMIN, { label: "20%", align: "outside" });
+  const ceil = v.map(x => x == null ? null : vwMax(x));
+  if (T) { ctx.save(); clip(ctx, fP); ctx.fillStyle = rgba(CR.band, COL.band_alpha + 0.06);
+    for (let i = 0; i < n; i++) if (ceil[i] != null && v[i] > VW.V1) ctx.fillRect(xa(i), fP.sy(ceil[i] + T), xb(i) - xa(i), fP.sy(ceil[i]) - fP.sy(ceil[i] + T));
+    ctx.restore(); }
+  path(ctx, fP, d.t, ceil, { color: CR.required, width: 1.6, dash: [6, 4] });
+  if (d.pot) path(ctx, fP, d.t, d.pot, { color: CQ.potential, width: 1.6 });
+  if (st.kP !== 100) path(ctx, fP, d.t, d.p, { color: CQ.P, width: 1.2, alpha: 0.35 });
+  path(ctx, fP, d.t, p, { color: CQ.P, width: 2 });
+  if (!whatIf()) strip(fP, i => v[i] == null || p[i] == null ? null : v[i] <= VW.V1 ? CS.not_exposed : p[i] > ceil[i] + T ? CS.nonconformant : CS.conformant);
+
+  // --- reactive power
+  axes(ctx, fQd, { xt, yt: range(Math.ceil(qd[0] / 20) * 20, qd[1], 20), zero: 0, xf: m => hhmm(m % 1440), xoff: 6 });
+  title(fQd, "Reactive power (% of rating; negative = absorbing)");
+  const bs = v.map((x, i) => x == null || p[i] == null ? null : band(x, p[i], T));
+  ctx.save(); clip(ctx, fQd);
+  for (let i = 0; i < n; i++) { const b = bs[i]; if (!b) continue; const X = xa(i), W = xb(i) - X;
+    if (!b.assessable) { ctx.fillStyle = rgba(CS.not_assessable, 0.16); ctx.fillRect(X, fQd.y0, W, fQd.y1 - fQd.y0); }
+    else { ctx.fillStyle = rgba(CR.band, COL.band_alpha + 0.06); const ya = fQd.sy(b.qmax), yb = fQd.sy(b.qmin);
+      ctx.fillRect(X, ya, W, Math.max(1, yb - ya)); } }
+  ctx.restore();
+  path(ctx, fQd, d.t, v.map(x => x == null ? null : qCurve(x)), { color: CR.required, width: 1.6, dash: [6, 4] });
+  path(ctx, fQd, d.t, q, { color: CQ.Q, width: 2 });
+  if (!whatIf()) strip(fQd, i => { const b = bs[i]; if (!b || q[i] == null) return null;
+    return !b.assessable ? CS.not_assessable : (q[i] < b.qmin || q[i] > b.qmax) ? CS.nonconformant : CS.conformant; });
+
+  // --- cursor and hover
+  const cur = (i, color, width) => { const X = Math.round(fV.sx(d.t[i])) + 0.5; ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.beginPath(); ctx.moveTo(X, fV.y0); ctx.lineTo(X, fQd.y1); ctx.stroke(); ctx.restore(); return X; };
+  if (st.hover != null && st.hover !== st.i) cur(st.hover, "#bdbdbd", 1);
+  if (st.mode === "site") { const X = cur(st.i, "#1a1a1a", 1.5);
+    for (const [f, val] of [[fV, v[st.i]], [fP, p[st.i]], [fQd, q[st.i]]]) if (val != null) marker(ctx, X, f.sy(Math.max(f.yd[0], Math.min(f.yd[1], val))), { r: 3.5 });
+    tag(ctx, hhmm(d.t[st.i]), X, fV.y0 - 10, { bold: true, align: "center", clamp: { x0: left + 150, x1: w - right } }); }
+}
+
+// =====================================================================================
+// 5. Text panels
+// =====================================================================================
+function swatch(kind, color) {
+  const s = { line: `<line x1="1" y1="6" x2="21" y2="6" stroke="${color}" stroke-width="2.4"/>`,
+    dash: `<line x1="1" y1="6" x2="21" y2="6" stroke="${color}" stroke-width="2.2" stroke-dasharray="5 3"/>`,
+    dot: `<line x1="1" y1="6" x2="21" y2="6" stroke="${color}" stroke-width="1.6" stroke-dasharray="2 3"/>`,
+    band: `<rect x="1" y="1" width="20" height="10" fill="${color}"/>`,
+    pt: `<rect x="8" y="3" width="6" height="6" fill="${color}"/>`,
+    full: `<circle cx="11" cy="6" r="5" fill="${color}"/>`,
+    ring: `<circle cx="11" cy="6" r="4.2" fill="#fff" stroke="${color}" stroke-width="2.4"/>` }[kind];
+  return `<svg width="22" height="12" aria-hidden="true">${s}</svg>`;
+}
+function legend(id, items) { $(id).innerHTML = items.map(([k, c, t]) => `<span>${swatch(k, c)}${t}</span>`).join(""); }
+
+function sentence(e) {
+  const out = [];
+  if (e.vwActive) out.push(`Volt-Watt limits active power to ${f1(e.vw)}% at this voltage.`);
+  if (e.m < 0.05) out.push(`Inside the ${VV.V2}–${VV.V3} V deadband, so no reactive power is required.`);
+  else if (e.zone === "low") out.push(`The curve asks for ${fQ(e.q)}, but active power is below 20% of rating, where Figure 2.1 defines no minimum. The interval is not assessable.`);
+  else if (e.zone === "flat") out.push(e.capped
+    ? `The curve asks for ${fQ(e.q)}. With active power at 20–60%, Figure 2.1 caps the minimum at ${f1(QFLAT)}%. Anything from ${f1(QFLAT)}% up to the curve is acceptable.`
+    : `The curve asks for ${fQ(e.q)}, which is within the ${f1(QFLAT)}% minimum capability at this power, so the curve applies.`);
+  else if (e.zone === "pf") out.push(e.capped
+    ? `The curve asks for ${fQ(e.q)}. With active power at 60–80%, the power factor 0.8 limit caps the minimum at 0.75 × P = ${f1(e.cap)}%.`
+    : `The curve asks for ${fQ(e.q)}, which is within the 0.75 × P = ${f1(e.cap)}% capability at this power, so the curve applies.`);
+  else out.push(e.reduced
+    ? `The curve asks for ${fQ(e.q)}. Above 80% there is no cap: reactive power has priority, so active power must fall from ${f1(e.p0)}% to ${f1(e.pExp)}% to stay within the rating (Cl. 3.3.2.3).`
+    : `The curve asks for ${fQ(e.q)}. It fits within the rating at this power, so no reduction is needed.`);
+  return out.join(" ");
+}
+
+function panels(pt, e) {
+  const s = src(), T = tolNow(), site = st.mode === "site";
+  if (!pt.ok) { $("read").innerHTML = ""; $("verdict").textContent = "No data at this interval."; $("chips").innerHTML = ""; return; }
+  const b = band(pt.v, e.p0, T), kva = x => (x / 100 * s.rating_kva).toFixed(2);
+  const rows = [
+    ["Voltage", f1(pt.v) + " V"],
+    [site ? "Active power" : "Available active power", `${f1(pt.p)}% (${kva(pt.p)} kW)`],
+    "sep",
+    ["Volt-Watt limit", f1(e.vw) + "%"],
+    ["Rating limit with Volt-VAr Q", f1(e.pCircle) + "%"],
+    ["Expected active power", `${f1(e.pExp)}% (${kva(e.pExp)} kW)`],
+    "sep",
+    ["Volt-VAr curve", fQ(e.q)],
+    ["Figure 2.1 cap at this power", e.zone === "low" ? "no minimum" : e.zone === "high" ? "none above 80%" : f1(e.cap) + "%"],
+    ["Minimum reactive power", e.zone === "low" ? "not defined" : `${fQ(e.s * e.reqM)} (${kva(e.reqM)} kvar)`],
+    [T ? "Permitted range (±4%)" : "Permitted range", e.zone === "low" ? "–" : `${f1(b.qmin)}% to ${f1(b.qmax)}%`],
+  ];
+  if (site) rows.push("sep", ["Measured reactive power", fQ(pt.q)]);
+  $("read").innerHTML = rows.map(r => r === "sep" ? '<div class="sep"></div>' : `<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join("");
+  $("verdict").textContent = sentence(e);
+  let chips = "";
+  if (site && !whatIf() && pt.q != null) {
+    const bm = band(pt.v, pt.p, T);                    // same rule as the Stage 2 tables: band from measured P
+    const vvS = !bm.assessable ? ["not_assessable", "Volt-VAr: not assessable"] : (pt.q < bm.qmin || pt.q > bm.qmax) ? ["nonconformant", "Volt-VAr: outside the permitted range"] : ["conformant", "Volt-VAr: within the permitted range"];
+    const vwS = pt.v <= VW.V1 ? ["not_exposed", "Volt-Watt: not active below 253 V"] : pt.p > e.vw + T ? ["nonconformant", "Volt-Watt: above the limit"] : ["conformant", "Volt-Watt: within the limit"];
+    chips = [vvS, vwS].map(([k, t]) => `<span class="chip"><i style="background:${CS[k]}"></i>${t}</span>`).join("");
+  } else if (whatIf()) chips = '<span class="chip">What-if applied: measured Q is from the actual conditions, so no verdict is shown</span>';
+  $("chips").innerHTML = chips;
+}
+
+// =====================================================================================
+// 6. Render and wiring
+// =====================================================================================
+let raf = 0;
+function render() { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => {
+  const pt = point(), e = pt.ok ? expected(pt.v, pt.p) : null;
+  $("oT").textContent = hhmm(src().day.t[st.i]); $("oDV").textContent = (st.dV > 0 ? "+" : "") + st.dV.toFixed(1) + " V";
+  $("oKP").textContent = st.kP + "%"; $("oV").textContent = st.fV.toFixed(1) + " V"; $("oP").textContent = st.fP + "%";
+  drawQV(pt, e); drawPV(pt, e); drawPQ(pt, e); drawDay(pt); panels(pt, e);
+}); }
+
+function setSource(i) {
+  st.src = i; const s = src(); st.i = defaultIndex(); st.dV = 0; st.kP = 100;
+  $("sT").max = s.day.t.length - 1; $("sT").value = st.i; $("sDV").value = 0; $("sKP").value = 100;
+  $("srcNote").textContent = (s.synthetic ? "Synthetic (invented) data. " : "Real site data, internal use only. ") + (s.note || "");
+  $("meta").innerHTML = s.meta_lines.map(l => `<li>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</li>`).join("");
+  $("dayTitle").textContent = `Site day: ${s.label}`;
+  $("dayHint").textContent = `Rating ${s.rating_kva} kVA` + (s.phases > 1 ? `, ${s.phases} phases (average voltage, total P and Q)` : "") +
+    `. Grey band: permitted reactive power for each interval's voltage and active power. Point clouds above: ${s.cloud.v.length.toLocaleString()} intervals from ${s.month}.`;
+  render();
+}
+function setMode(m) {
+  st.mode = m; $("mSite").setAttribute("aria-pressed", m === "site"); $("mFree").setAttribute("aria-pressed", m === "free");
+  $("siteCtl").hidden = m !== "site"; $("freeCtl").hidden = m !== "free"; render();
+}
+
+const tip = $("tip");
+function showTip(ev, text) { tip.textContent = text; tip.style.display = "block";
+  const r = tip.getBoundingClientRect(); let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + r.width > innerWidth - 6) x = ev.clientX - r.width - 12; if (y + r.height > innerHeight - 6) y = ev.clientY - r.height - 12;
+  tip.style.left = x + "px"; tip.style.top = y + "px"; }
+const hideTip = () => { tip.style.display = "none"; };
+const local = (ev, c) => { const r = c.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+
+function wire() {
+  const sel = $("src");
+  const groups = [["Single-phase", s => !s.synthetic && s.phases === 1], ["Three-phase", s => !s.synthetic && s.phases > 1], ["Synthetic", s => s.synthetic]];
+  sel.innerHTML = groups.map(([name, test]) => { const o = DATA.sources.map((s, i) => test(s) ? `<option value="${i}">${s.label} (${s.rating_kva} kVA)</option>` : "").join("");
+    return o ? `<optgroup label="${name}">${o}</optgroup>` : ""; }).join("");
+  sel.onchange = () => setSource(+sel.value);
+  $("mSite").onclick = () => setMode("site"); $("mFree").onclick = () => setMode("free");
+  $("sT").oninput = e => { st.i = +e.target.value; render(); };
+  $("sDV").oninput = e => { st.dV = +e.target.value; render(); };
+  $("sKP").oninput = e => { st.kP = +e.target.value; render(); };
+  $("sV").oninput = e => { st.fV = +e.target.value; render(); };
+  $("sP").oninput = e => { st.fP = +e.target.value; render(); };
+  $("tol").onchange = e => { st.tol = e.target.checked; render(); };
+  $("reset").onclick = () => { st.dV = 0; st.kP = 100; $("sDV").value = 0; $("sKP").value = 100; render(); };
+  $("peakV").onclick = () => { st.i = defaultIndex(); $("sT").value = st.i; render(); };
+  const presets = [["Deadband", 235, 100], ["Curve applies", 250, 70], ["44% cap", 258, 40], ["0.75 × P cap", 256, 65], ["Cut active power", 252, 97], ["Low power", 255, 15]];
+  $("presets").innerHTML = presets.map((p, i) => `<button data-i="${i}">${p[0]} <span>${p[1]} V, ${p[2]}%</span></button>`).join("");
+  $("presets").onclick = ev => { const b = ev.target.closest("button"); if (!b) return; const p = presets[+b.dataset.i];
+    st.fV = p[1]; st.fP = p[2]; $("sV").value = p[1]; $("sP").value = p[2]; render(); };
+
+  // day plot: hover + drag the cursor
+  const cd = $("cDay"); let dragging = false;
+  const idxAt = px => { const g = frames.day, d = src().day; const m = (px - g.x0) / (g.x1 - g.x0) * 1440;
+    let best = 0, bd = 1e9; d.t.forEach((t, i) => { const dd = Math.abs(t - m); if (dd < bd) { bd = dd; best = i; } }); return best; };
+  const inDay = (x, y) => { const g = frames.day; return x >= g.x0 && x <= g.x1 && y >= g.y0 && y <= g.y1; };
+  cd.addEventListener("pointerdown", ev => { const [x, y] = local(ev, cd); if (!inDay(x, y)) return;
+    dragging = true; cd.setPointerCapture(ev.pointerId); st.i = idxAt(x); $("sT").value = st.i; if (st.mode !== "site") setMode("site"); else render(); });
+  cd.addEventListener("pointermove", ev => { const [x, y] = local(ev, cd), g = frames.day;
+    if (dragging) { st.i = idxAt(Math.max(g.x0, Math.min(g.x1, x))); $("sT").value = st.i; }
+    if (!inDay(x, y)) { if (st.hover != null || dragging) { st.hover = null; render(); } hideTip(); return; }
+    const i = idxAt(x), a = dayAt(i); st.hover = i; render();
+    showTip(ev, `${hhmm(a.t)}\nV  ${a.v == null ? "–" : f1(a.v) + " V"}\nP  ${a.p == null ? "–" : f1(a.p) + "%"}\nQ  ${fQ(a.q)}`); });
+  const end = () => { dragging = false; }; cd.addEventListener("pointerup", end); cd.addEventListener("pointercancel", end);
+  cd.addEventListener("pointerleave", () => { st.hover = null; hideTip(); render(); });
+
+  // P-V chart: drag to set the free point
+  const cp = $("cPV"); let dragP = false;
+  const setFree = ev => { const [x, y] = local(ev, cp), f = frames.pv;
+    st.fV = Math.round(Math.max(215, Math.min(265, f.ix(x))) * 10) / 10; st.fP = Math.round(Math.max(0, Math.min(110, f.iy(y))));
+    $("sV").value = st.fV; $("sP").value = st.fP; if (st.mode !== "free") setMode("free"); else render(); };
+  cp.addEventListener("pointerdown", ev => { const [x, y] = local(ev, cp); if (!frames.pv.inside(x, y)) return; dragP = true; cp.setPointerCapture(ev.pointerId); setFree(ev); });
+  cp.addEventListener("pointermove", ev => { if (dragP) setFree(ev); const [x, y] = local(ev, cp), f = frames.pv;
+    if (!f.inside(x, y)) return hideTip(); const v = f.ix(x);
+    showTip(ev, `${f1(v)} V\nVolt-Watt limit        ${f1(vwMax(v))}%\nRating limit with Q    ${f1(Math.sqrt(1e4 - qCurve(v) ** 2))}%`); });
+  const endP = () => { dragP = false; }; cp.addEventListener("pointerup", endP); cp.addEventListener("pointercancel", endP); cp.addEventListener("pointerleave", hideTip);
+
+  const cq = $("cQV");
+  cq.addEventListener("pointermove", ev => { const [x, y] = local(ev, cq), f = frames.qv; if (!f.inside(x, y)) return hideTip();
+    const v = f.ix(x), pt = point(), lines = [`${f1(v)} V`, `Volt-VAr curve     ${fQ(qCurve(v))}`];
+    if (pt.ok) { const e = expected(pt.v, pt.p); if (e.zone !== "low") { const b = band(v, e.p0, tolNow()); lines.push(`Permitted at ${f1(e.p0)}% P   ${f1(b.qmin)}% to ${f1(b.qmax)}%`); } }
+    showTip(ev, lines.join("\n")); });
+  cq.addEventListener("pointerleave", hideTip);
+  const cc = $("cPQ");
+  cc.addEventListener("pointermove", ev => { const [x, y] = local(ev, cc), f = frames.pq; if (!f.inside(x, y)) return hideTip();
+    const p = f.ix(x), q = f.iy(y); showTip(ev, `P  ${f1(p)}%\nQ  ${fQ(q)}\nS  ${f1(Math.hypot(p, q))}% of rating\nFigure 2.1 minimum at this P  ${p < PMIN ? "none" : f1(p <= PFLAT ? QFLAT : p <= PCIRC ? p * PF_RATIO : Math.sqrt(Math.max(0, 1e4 - p * p))) + "%"}`); });
+  cc.addEventListener("pointerleave", hideTip);
+
+  legend("lgQV", [["dash", CR.required, "Volt-VAr curve"], ["line", "#000", "minimum at current P"], ["band", rgba(CR.band, 0.16), "permitted range"],
+    ["full", "#000", "required now"], ["ring", CQ.Q, "measured now"], ["pt", CQ.Q, "month"], ["pt", CS.not_assessable, "month, P below 20%"]]);
+  legend("lgPV", [["dash", CR.required, "Volt-Watt limit"], ["dot", "#000", "rating limit with Volt-VAr Q"], ["ring", CQ.P, "available"],
+    ["full", "#000", "expected"], ["pt", CQ.P, "month"]]);
+  legend("lgPQ", [["line", CQ.S, "rating (100%)"], ["band", rgba("#000000", 0.1), "Figure 2.1 minimum capability"], ["dash", CR.required, "curve Q / Volt-Watt limit"],
+    ["ring", CQ.P, "available"], ["full", "#000", "expected"], ["ring", CQ.Q, "measured"], ["pt", CQ.Q, "month"]]);
+  legend("lgDay", [["line", CQ.V, "voltage"], ["line", CQ.P, "active power"], ["line", CQ.Q, "reactive power"], ["line", CQ.potential, "PV potential (if known)"],
+    ["dash", CR.required, "requirement"], ["band", rgba(CR.band, 0.18), "permitted / tolerance"], ["band", rgba(CS.not_assessable, 0.3), "P below 20%: not assessable"],
+    ["band", CS.conformant, "within"], ["band", CS.nonconformant, "outside"], ["band", CS.not_exposed, "Volt-Watt not active"]]);
+
+  const b = $("badge");
+  if (DATA.internal) b.textContent = "Internal: contains real site data"; else { b.textContent = "Synthetic data only"; b.className = "badge ok"; }
+  const chk = selfCheck();
+  $("foot").innerHTML = `${DATA.standard}. Rules are those of <code>bms_sa_review/shared/as4777_curves.py</code> (capability profile review_corrected). ` +
+    (chk.bad ? `<span class="bad">Rule check FAILED: ${chk.bad} of ${chk.n} cases differ from the Python module. Rebuild the page.</span>`
+             : `Rule check: ${chk.n} of ${chk.n} cases match the Python module.`) +
+    ` The capability cap can only bind above ${V_CAP_BINDS.toFixed(1)} V. In the three charts the band uses the expected active power; in the day plot it uses each interval's measured active power, as the conformance tables do. Built ${DATA.built}.`;
+  window.__check = chk;
+  window.addEventListener("resize", render);
+  setSource(0);
+}
+wire();
+</script>
+</body>
+</html>

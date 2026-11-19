@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dnsp-analysis"
+version = "0.1.0"
+description = "Local, auditable foundation pipeline for AMI DER telemetry."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=1.2,<2",
+    "pandas>=2.2,<4",
+    "openpyxl>=3.1,<4",
+    "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.9,<1",
+]
+notebook = [
+    "ipykernel>=6,<8",
+    "jupyterlab>=4,<5",
+    "matplotlib>=3.8,<4",
+]
+
+[project.scripts]
+dnsp-foundation = "dnsp_analysis.foundation:main"
+dnsp-structured = "dnsp_analysis.structured_pipeline:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
