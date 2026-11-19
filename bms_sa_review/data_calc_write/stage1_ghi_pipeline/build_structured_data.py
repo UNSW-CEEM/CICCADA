@@ -1,0 +1,442 @@
+"""
+Data calc-write pipeline: Stage 1. Step 1 of 4
+=================================================
+
+WHAT IT DOES
+------------
+Reads raw `ts` (telemetry) + `meta_up23c` (metadata) + `bom_nci.solar`(satellite irradiance),
+Builds one clean row per site per 5-minute interval with:
+- normalised P/Q,
+- voltage,
+- GHI, and
+- an empirical clear-sky reference profile (P_kw_norm_cs, GHI_cs).
+This is the foundational feature table that the GHI model and everything downstream is built on.
+
+
+DELIBERATELY NOT CHANGED HERE
+-----------------------------
+  * Storage partition columns `year`/`month` stay UTC-derived (year(t_stamp),
+    month(t_stamp)) so this table stays ALIGNED with `ts` (which is partitioned on UTC year/month).
+
+SAFE-BY-DEFAULT
+---------------
+Writes to a table named `structured_data{TABLE_SUFFIX}` (default suffix "_v2")
+so original `structured_data` is NOT overwritten.
+"""
+
+import time
+
+from pipeline_options import capacity_column, flex_predicate, voltage_aggregate_sql
+
+TABLE_SUFFIX = "_v2"  # change to "" only if you deliberately want to overwrite
+TARGET = f"structured_data{TABLE_SUFFIX}"
+WAREHOUSE = "Trino-Warehouse/solar_analytics"
+
+# Empirical clear-sky heuristics inherited from original code's cell 7.
+# These are modelling choices, not AS/NZS 4777.2 or BOM requirements.
+CLEAR_SKY_TOP_N = 3
+CLEAR_SKY_MAX_CLOUD_SUM = 60
+CLEAR_SKY_MIN_MAX_GHI = 200
+CLEAR_SKY_MAX_DAY_SEPARATION = 45
+CLEAR_SKY_PROFILE_PERCENTILE = 0.60
+CLEAR_SKY_PROFILE_RADIUS = 3
+CLEAR_SKY_GAP_MINUTES = 30
+
+
+# ---------------------------------------------------------------------------
+# DDL create the empty target table (Iceberg, partitioned by year/month)
+# ---------------------------------------------------------------------------
+def create_table(aq, database, target=TARGET):
+    """Drop & recreate the empty target table. Run once before loading."""
+    aq(f"DROP TABLE IF EXISTS {target}", database=database)
+    aq(
+        f"""
+        CREATE TABLE {target} (
+            site_id       BIGINT,
+            t_stamp       TIMESTAMP,
+            actual_day    DATE,
+            actual_tod    STRING,
+            V             DOUBLE,
+            Q_kvar_norm   DOUBLE,
+            P_kw_norm     DOUBLE,
+            S_norm        DOUBLE,
+            GHI           DOUBLE,
+            cloud_type    INT,
+            cs_day        DATE,
+            cs_tod        STRING,
+            P_kw_norm_cs  DOUBLE,
+            GHI_cs        DOUBLE,
+            cloud_type_cs INT,
+            S_99          DOUBLE,
+            ac_capacity_kw DOUBLE,
+            normalization_capacity DOUBLE,
+            normalization_basis STRING,
+            voltage_aggregation STRING,
+            flex_selection STRING,
+            year          INT,
+            month         INT
+        )
+        PARTITIONED BY (year, month)
+        LOCATION 's3://project-ciccada/{WAREHOUSE}/{target}/'
+        TBLPROPERTIES ('table_type' = 'ICEBERG', 'format' = 'parquet')
+    """,
+        database=database,
+    )
+    return f"Created empty {target}"
+
+
+# ---------------------------------------------------------------------------
+# INSERT one (year, month-set, site-slice) at a time
+# ---------------------------------------------------------------------------
+def _insert_sql(
+    year,
+    month_filter,
+    part_filter,
+    meta_filter,
+    *,
+    target=TARGET,
+    normalization_basis="s_99",
+    voltage_aggregation="avg",
+    flex_selection="exclude",
+):
+    """
+    Build the INSERT ... SELECT statement for one slice.
+    """
+    normalization_col = capacity_column(normalization_basis)
+    voltage_sql = voltage_aggregate_sql(voltage_aggregation, "voltage")
+    return f"""
+    INSERT INTO {target}
+    WITH
+    -- circuit -> site aggregation ------------------------------------------
+    data AS (
+        SELECT
+            site_id, t_stamp,
+            sum(power * circuit_polarity) / 1000 / max({normalization_col}) AS P_kw_norm,
+            sum(energy_reactive * circuit_polarity) / 1000
+                / max({normalization_col}) * 12 AS Q_kvar_norm,
+            {voltage_sql} AS V,
+            max(S_99) AS S_99,
+            max(ac_capacity_kw) AS ac_capacity_kw,
+            max({normalization_col}) AS normalization_capacity
+        FROM ts
+        JOIN (
+            SELECT circuit_id,
+                max(site_id)          AS site_id,
+                max(circuit_polarity) AS circuit_polarity,
+                max(S_99)             AS S_99,
+                max(ac_capacity_kw)   AS ac_capacity_kw
+            FROM meta_up23c
+            WHERE {meta_filter}
+            GROUP BY circuit_id
+        ) AS m ON ts.circuit_id = m.circuit_id
+        WHERE year = {year} AND {month_filter} AND {part_filter}
+          AND ts.is_pv = True AND voltage > 0 AND voltage < 300
+        GROUP BY site_id, t_stamp
+    ),
+    -- BOM satellite irradiance (10-min native) -----------------------------
+    bom10min AS (
+        SELECT DISTINCT time, b.latitude, b.longitude,
+               surface_global_irradiance AS GHI, cloud_type
+        FROM bom_nci.solar AS b
+        JOIN (SELECT DISTINCT site_id, n_lat, n_long FROM meta_up23c WHERE {meta_filter}) AS m
+          ON b.latitude = m.n_lat AND b.longitude = m.n_long
+        WHERE year({{time_col}}) = {year}
+    ),
+    -- duplicate each 10-min reading into the +5-min slot -------------------
+    bom5min AS (
+        (SELECT time AS time_5min, latitude, longitude, GHI, cloud_type FROM bom10min)
+        UNION ALL
+        (SELECT date_add('minute', 5, time) AS time_5min, latitude, longitude, GHI, cloud_type FROM bom10min)
+    ),
+    daily_cloud AS (
+        SELECT latitude, longitude,
+               date_trunc('day',   time + interval '10' hour) AS day,
+               date_trunc('month', time + interval '10' hour) AS month,
+               sum(cloud_type) AS cloud_sum, max(GHI) AS max_GHI
+        FROM bom10min
+        GROUP BY 1, 2, 3, 4
+    ),
+    clear_sky AS (
+        SELECT day, latitude, longitude
+        FROM (
+            SELECT day, latitude, longitude, cloud_sum, max_GHI,
+                   row_number() OVER (PARTITION BY month, latitude, longitude
+                                      ORDER BY cloud_sum ASC, day ASC) AS rn
+            FROM daily_cloud
+        )
+        WHERE rn <= {CLEAR_SKY_TOP_N}
+          AND cloud_sum < {CLEAR_SKY_MAX_CLOUD_SUM}
+          AND max_GHI > {CLEAR_SKY_MIN_MAX_GHI}
+    ),
+    daily_site_days AS (
+        SELECT n_lat, n_long, date_trunc('day', t_stamp + interval '10' hour) AS day
+        FROM data d
+        JOIN (SELECT DISTINCT site_id, n_lat, n_long FROM meta_up23c WHERE {meta_filter}) m
+          ON d.site_id = m.site_id
+        GROUP BY n_lat, n_long, date_trunc('day', t_stamp + interval '10' hour)
+    ),
+    nearest_clear_sky_day AS (
+        SELECT dy.n_lat, dy.n_long, dy.day AS actual_day, c.day AS clear_sky_day,
+               row_number() OVER (
+                   PARTITION BY dy.n_lat, dy.n_long, dy.day
+                   ORDER BY abs(date_diff('day', dy.day, c.day)),
+                            date_diff('day', c.day, dy.day)
+               ) AS rn
+        FROM daily_site_days dy
+        JOIN clear_sky c ON dy.n_lat = c.latitude AND dy.n_long = c.longitude
+    ),
+    nearest_clear_sky AS (
+        SELECT n_lat, n_long, actual_day, clear_sky_day
+        FROM nearest_clear_sky_day WHERE rn = 1
+    ),
+    nearest_cs_days AS (
+        SELECT DISTINCT site_id, clear_sky_day AS cs_day
+        FROM nearest_clear_sky n
+        JOIN (SELECT DISTINCT site_id, n_lat, n_long FROM meta_up23c WHERE {meta_filter}) m
+          ON n.n_lat = m.n_lat AND n.n_long = m.n_long
+    ),
+    base AS (
+        SELECT d.*,
+               lag(t_stamp) OVER (
+                   PARTITION BY site_id, date_trunc('day', t_stamp + interval '10' hour)
+                   ORDER BY t_stamp
+               ) AS prev_ts
+        FROM data d
+    ),
+    gaps AS (
+        SELECT *,
+               CASE WHEN prev_ts IS NULL THEN 0
+                     WHEN t_stamp - prev_ts > interval '{CLEAR_SKY_GAP_MINUTES}' minute THEN 1
+                    ELSE 0 END AS gap_start
+        FROM base
+    ),
+    segments AS (
+        SELECT *,
+               sum(gap_start) OVER (
+                   PARTITION BY site_id, date_trunc('day', t_stamp + interval '10' hour)
+                   ORDER BY t_stamp ROWS UNBOUNDED PRECEDING
+               ) AS segment_id
+        FROM gaps
+    ),
+    nearest_cs_profiles AS (
+        SELECT
+            s.site_id,
+            date_trunc('day', s.t_stamp + interval '10' hour) AS cs_day,
+            CAST(date_trunc('minute', s.t_stamp + interval '10' hour)
+                 - interval '1' minute * (minute(s.t_stamp + interval '10' hour) % 5)
+                 AS TIME) AS cs_tod,
+            approx_percentile(P_kw_norm, {CLEAR_SKY_PROFILE_PERCENTILE}) OVER (
+                PARTITION BY s.site_id, date_trunc('day', s.t_stamp + interval '10' hour), segment_id
+                ORDER BY t_stamp ROWS BETWEEN {CLEAR_SKY_PROFILE_RADIUS} PRECEDING
+                                        AND {CLEAR_SKY_PROFILE_RADIUS} FOLLOWING
+            ) AS P_kw_norm_cs,
+            approx_percentile(GHI, {CLEAR_SKY_PROFILE_PERCENTILE}) OVER (
+                PARTITION BY s.site_id, date_trunc('day', s.t_stamp + interval '10' hour), segment_id
+                ORDER BY t_stamp ROWS BETWEEN {CLEAR_SKY_PROFILE_RADIUS} PRECEDING
+                                        AND {CLEAR_SKY_PROFILE_RADIUS} FOLLOWING
+            ) AS GHI_cs,
+            cloud_type AS cloud_type_cs
+        FROM segments s
+        JOIN nearest_cs_days n
+          ON s.site_id = n.site_id
+         AND date_trunc('day', s.t_stamp + interval '10' hour) = n.cs_day
+        JOIN (SELECT DISTINCT site_id, n_lat, n_long FROM meta_up23c WHERE {meta_filter}) m
+          ON s.site_id = m.site_id
+        JOIN bom5min b
+          ON m.n_lat = b.latitude AND m.n_long = b.longitude AND b.time_5min = s.t_stamp
+    ),
+    assembled AS (
+        SELECT
+            d.site_id, d.t_stamp,
+            CAST(date_trunc('day', d.t_stamp + interval '10' hour) AS DATE) AS actual_day,
+            CAST(CAST(date_trunc('minute', d.t_stamp + interval '10' hour)
+                 - interval '1' minute * (minute(d.t_stamp + interval '10' hour) % 5)
+                 AS TIME) AS VARCHAR) AS actual_tod,
+            d.V, d.Q_kvar_norm, d.P_kw_norm,
+            sqrt(pow(d.Q_kvar_norm, 2) + pow(d.P_kw_norm, 2)) AS S_norm,
+            GHI, cloud_type,
+            CAST(ncs.cs_day AS DATE) AS cs_day,
+            CAST(ncs.cs_tod AS VARCHAR) AS cs_tod,
+            ncs.P_kw_norm_cs, ncs.GHI_cs, ncs.cloud_type_cs,
+            d.S_99,
+            d.ac_capacity_kw,
+            d.normalization_capacity,
+            '{normalization_basis}' AS normalization_basis,
+            '{voltage_aggregation}' AS voltage_aggregation,
+            '{flex_selection}' AS flex_selection,
+            CAST(year(d.t_stamp) AS INT)  AS year,
+            CAST(month(d.t_stamp) AS INT) AS month
+        FROM data d
+        JOIN (SELECT DISTINCT site_id, n_lat, n_long FROM meta_up23c WHERE {meta_filter}) m
+          ON d.site_id = m.site_id
+        JOIN nearest_cs_profiles ncs
+          ON d.site_id = ncs.site_id
+         AND ncs.cs_tod = CAST(date_trunc('minute', d.t_stamp + interval '10' hour)
+                               - interval '1' minute * (minute(d.t_stamp + interval '10' hour) % 5)
+                               AS TIME)
+        JOIN nearest_clear_sky n
+          ON n.n_lat = m.n_lat AND n.n_long = m.n_long
+         AND n.actual_day = date_trunc('day', d.t_stamp + interval '10' hour)
+         AND n.clear_sky_day = ncs.cs_day
+        JOIN bom5min b
+          ON m.n_lat = b.latitude AND m.n_long = b.longitude AND b.time_5min = d.t_stamp
+        WHERE abs(date_diff('day', ncs.cs_day, n.actual_day))
+              < {CLEAR_SKY_MAX_DAY_SEPARATION}
+    )
+    SELECT * FROM assembled
+    """.replace("{time_col}", "time")
+
+
+def run_slice(
+    aq,
+    database,
+    year,
+    months,
+    n_parts=8,
+    parts=None,
+    *,
+    target=TARGET,
+    normalization_basis="s_99",
+    voltage_aggregation="avg",
+    flex_selection="exclude",
+):
+    """
+    Load one slice at a time
+
+    Parameters
+    ----------
+    year   : int          calendar year in `ts`
+    months : list[int]    e.g. [1] for Jan only (test), or range(1,13) for full year
+    n_parts: int          how many site-slices to split into (mod site_id)
+    parts  : list[int]    which slices to run, e.g. [0] to test one slice;
+                          None means all parts 0..n_parts-1
+    """
+    if parts is None:
+        parts = list(range(n_parts))
+
+    results = []
+    for month in months:
+        for part in parts:
+            month_filter = f"month = {month}"
+            part_filter = f"site_id % {n_parts} = {part}"
+            meta_filter = (
+                "is_pv = True AND ac_capacity_kw > 0 AND s_99 > 0 AND "
+                f"{flex_predicate(flex_selection)} AND {part_filter}"
+            )
+            sql = _insert_sql(
+                year,
+                month_filter,
+                part_filter,
+                meta_filter,
+                target=target,
+                normalization_basis=normalization_basis,
+                voltage_aggregation=voltage_aggregation,
+                flex_selection=flex_selection,
+            )
+            aq(sql, database=database)
+            results.append(f"loaded year={year} month={month} part={part}/{n_parts}")
+            print(results[-1])
+    return results
+
+
+def run_resilient(
+    b,
+    aq,
+    database,
+    year,
+    months,
+    n_parts=16,
+    pause=5,
+    max_retries=2,
+    split_on_fail=True,
+    **run_options,
+):
+    """
+    Run Stage 1 slices with pacing, retry, and halve-on-failure.
+
+    A failed slice writes NOTHING (Athena INSERTs are atomic), so retrying or
+    sub-splitting it cannot duplicate rows. Sub-split uses n_parts*2, where
+    parts p and p+n_parts together cover exactly the original slice p.
+
+    Returns (done, failed) lists of (month, n_parts, part) tuples.
+    """
+    done, failed = [], []
+
+    for month in months:
+        for part in range(n_parts):
+            ok = False
+            for attempt in range(max_retries + 1):
+                try:
+                    b.run_slice(
+                        aq,
+                        database=database,
+                        year=year,
+                        months=[month],
+                        n_parts=n_parts,
+                        parts=[part],
+                        **run_options,
+                    )
+                    done.append((month, n_parts, part))
+                    ok = True
+                    break
+                except Exception as e:
+                    if "exhausted resources" not in str(e).lower():
+                        raise  # a real error -- don't mask it
+                    wait = 30 * (attempt + 1)
+                    print(
+                        f"  ! {year}-{month:02d} part {part}/{n_parts} "
+                        f"exhausted resources; retry in {wait}s"
+                    )
+                    time.sleep(wait)
+
+            if not ok and split_on_fail:
+                # Halve this slice: parts p and p+n_parts of a 2x split
+                print(f"  -> splitting {year}-{month:02d} part {part}/{n_parts} in two")
+                for sub in (part, part + n_parts):
+                    try:
+                        b.run_slice(
+                            aq,
+                            database=database,
+                            year=year,
+                            months=[month],
+                            n_parts=n_parts * 2,
+                            parts=[sub],
+                            **run_options,
+                        )
+                        done.append((month, n_parts * 2, sub))
+                    except Exception as e:
+                        print(
+                            f"  !! {year}-{month:02d} part {sub}/{n_parts*2} FAILED: {e}"
+                        )
+                        failed.append((month, n_parts * 2, sub))
+            elif not ok:
+                failed.append((month, n_parts, part))
+
+            time.sleep(pause)  # don't machine-gun Athena
+
+    print(f"\n{year}: {len(done)} slices loaded, {len(failed)} failed")
+    if failed:
+        print("Failed slices (rerun these individually):")
+        for f in failed:
+            print("  ", f)
+    return done, failed
+
+
+def validate(aq, database, target=TARGET):
+    """sanity checks after loading."""
+    n_sites = aq(
+        f"SELECT count(DISTINCT site_id) AS n FROM {target}", database=database
+    )
+    v_stats = aq(
+        f"""
+        SELECT round(min(V),1) AS v_min, round(avg(V),1) AS v_avg,
+               round(max(V),1) AS v_max,
+               round(avg(P_kw_norm),3) AS p_norm_avg
+        FROM {target}
+    """,
+        database=database,
+    )
+    print(f"Distinct sites: {int(n_sites['n'].iloc[0]):,}")
+    print("Voltage / P_norm sanity:")
+    print(v_stats.to_string(index=False))
+    return n_sites, v_stats

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CICCADA Plot Colours</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single reference column; swatch grids wrap, code and diagrams scroll inside their own boxes */
+:root{
+  --bg:#f6f7f8; --surface:#ffffff; --fg:#1a1d21; --muted:#5a636e; --line:#dde1e6; --accent:#0072B2; --night:#efefef;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#121518;--surface:#1b1f24;--fg:#e7eaee;--muted:#9aa3ad;--line:#2e343b;--accent:#56B4E9;--night:#262a30;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121518;--surface:#1b1f24;--fg:#e7eaee;--muted:#9aa3ad;--line:#2e343b;--accent:#56B4E9;--night:#262a30;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.55}
+.wrap{max-width:940px;margin:0 auto;padding-block:36px 72px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:44px}
+h1{font-size:30px;font-weight:600;margin:4px 0 8px;text-wrap:balance;letter-spacing:-.01em}
+h2{font-size:20px;font-weight:600;margin:0 0 8px;text-wrap:balance}
+h3{font-size:14px;font-weight:600;margin:20px 0 8px}
+p{margin:0 0 10px;max-width:68ch}
+.lede{color:var(--muted);font-size:16px;max-width:66ch}
+.eyebrow{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.note{font-size:13.5px;color:var(--muted);max-width:70ch}
+code{font-family:var(--f-mono);font-size:12.5px}
+.principles{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.principles div{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 16px;min-width:0}
+.principles b{display:block;margin-bottom:4px}
+.principles span{font-size:13.5px;color:var(--muted)}
+.swgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(205px,1fr));gap:10px}
+.sw{display:flex;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:9px;min-width:0}
+.chip{width:44px;height:44px;border-radius:4px;flex:none;border:1px solid rgba(127,127,127,.25)}
+.chip.hatch{background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.55) 0 2px,transparent 2px 6px)}
+.sw b{display:block;font-size:13.5px;font-weight:600;line-height:1.3}
+.sw span{display:block;font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}
+.lines{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}
+.ln{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:10px 12px;font-size:13.5px;min-width:0}
+.ln svg{flex:none}
+.ln span{font-family:var(--f-mono);font-size:11.5px;color:var(--muted);display:block}
+.ramp{display:flex;border-radius:5px;overflow:hidden;border:1px solid var(--line)}
+.ramp div{flex:1;min-width:0;height:46px}
+.rampkey{display:grid;grid-template-columns:repeat(auto-fill,minmax(205px,1fr));gap:6px 14px;margin-top:10px;font-size:13px}
+.rampkey div{display:flex;gap:8px;align-items:baseline;min-width:0}
+.rampkey i{width:10px;height:10px;border-radius:2px;flex:none;transform:translateY(1px)}
+.rampkey span{font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}
+.fig{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px;overflow-x:auto}
+.fig svg{min-width:520px}
+ul{margin:0;padding-left:20px;max-width:70ch}
+li{margin-bottom:6px}
+.code{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+.code pre{margin:0;padding:16px;overflow-x:auto;font-family:var(--f-mono);font-size:12.5px;line-height:1.55}
+.code button{position:absolute;top:8px;right:8px;font:500 12px var(--f-body);color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:4px 10px;cursor:pointer}
+.code button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+footer{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">CICCADA project · UNSW Sydney · figure standard · November 2026</div>
+  <h1>CICCADA Plot Colours</h1>
+  <p class="lede">The colours and conventions used in every CICCADA figure on inverter conformance with AS/NZS 4777.2:2020. A given colour means the same thing in every chart, paper and report, so a reader who learns it once can read any figure.</p>
+</header>
+
+<section>
+  <h2>Principles</h2>
+  <div class="principles">
+    <div><b>One colour, one meaning</b><span>Voltage is always vermilion, active power always green, reactive power always blue. No colour is reused for anything else.</span></div>
+    <div><b>Rules are black</b><span>Requirements from the standard (curves, ceilings, permitted bands) are drawn in black with dashed lines, so a rule never looks like data.</span></div>
+    <div><b>One scale for conformance</b><span>Reds mean too little response, blue means conformant, purple means too much. Grey means not judged.</span></div>
+    <div><b>Readable without colour</b><span>Quantity colours come from the Okabe–Ito colour-blind-safe set. Line style, weight and hatching carry meaning as well as hue.</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>Measured quantities</h2>
+  <p class="note">Used whenever a line or point shows one physical quantity.</p>
+  <div class="swgrid">
+    <div class="sw"><div class="chip" style="background:#D55E00"></div><div><b>Voltage, V</b><span>#D55E00 vermilion</span></div></div>
+    <div class="sw"><div class="chip" style="background:#009E73"></div><div><b>Active power, P</b><span>#009E73 bluish green</span></div></div>
+    <div class="sw"><div class="chip" style="background:#0072B2"></div><div><b>Reactive power, Q</b><span>#0072B2 blue</span></div></div>
+    <div class="sw"><div class="chip" style="background:#000000"></div><div><b>Apparent power, rating</b><span>#000000 thin solid</span></div></div>
+    <div class="sw"><div class="chip" style="background:#E69F00"></div><div><b>PV potential and curtailed energy</b><span>#E69F00 orange</span></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Requirements and reference lines</h2>
+  <div class="lines">
+    <div class="ln"><svg width="54" height="12" aria-hidden="true"><line x1="0" y1="6" x2="54" y2="6" stroke="currentColor" stroke-width="2" stroke-dasharray="7 4"/></svg><div>Required curve, Volt-Watt ceiling, required slope<span>black, dashed</span></div></div>
+    <div class="ln"><svg width="54" height="18" aria-hidden="true"><rect width="54" height="18" fill="currentColor" fill-opacity=".14"/><line x1="0" y1="1" x2="54" y2="1" stroke="currentColor" stroke-dasharray="5 3"/><line x1="0" y1="17" x2="54" y2="17" stroke="currentColor" stroke-dasharray="5 3"/></svg><div>Permitted band (tolerance)<span>black at 12% opacity, dashed edges</span></div></div>
+    <div class="ln"><svg width="54" height="12" aria-hidden="true"><line x1="0" y1="6" x2="54" y2="6" stroke="#7F7F7F" stroke-width="1.2" stroke-dasharray="1.5 2.5"/></svg><div>Set-point voltages and power gates<span>#7F7F7F, dotted</span></div></div>
+    <div class="ln"><svg width="54" height="18" aria-hidden="true"><rect width="54" height="18" fill="var(--night)" stroke="var(--line)"/></svg><div>Night (no generation)<span>#F2F2F2 shading; grid #EBEBEB</span></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Phases</h2>
+  <p class="note">Three-phase sites follow the red / white / blue phase convention. White is drawn light grey so it shows on a white page. Each phase is a thin line; the thick line drawn over them is the quantity colour (average voltage, or site total power).</p>
+  <div class="swgrid">
+    <div class="sw"><div class="chip" style="background:#C00000"></div><div><b>L1, red</b><span>#C00000 thin</span></div></div>
+    <div class="sw"><div class="chip" style="background:#B0B0B0"></div><div><b>L2, white</b><span>#B0B0B0 thin</span></div></div>
+    <div class="sw"><div class="chip" style="background:#1F3A93"></div><div><b>L3, blue</b><span>#1F3A93 thin</span></div></div>
+    <div class="sw"><div class="chip" style="background:linear-gradient(90deg,#D55E00 0 33%,#009E73 33% 66%,#0072B2 66%)"></div><div><b>Average or total</b><span>quantity colour, thick</span></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Data source</h2>
+  <p class="note">When a panel already fixes the quantity and several measurements of it are compared, colour and line style identify where the measurement came from.</p>
+  <div class="lines">
+    <div class="ln"><svg width="54" height="12" aria-hidden="true"><line x1="0" y1="6" x2="54" y2="6" stroke="#0072B2" stroke-width="2"/><circle cx="27" cy="6" r="3.5" fill="#0072B2"/></svg><div>Inverter or PV-circuit monitoring (reference)<span>#0072B2 solid, filled markers</span></div></div>
+    <div class="ln"><svg width="54" height="12" aria-hidden="true"><line x1="0" y1="6" x2="54" y2="6" stroke="#E69F00" stroke-width="2" stroke-dasharray="6 3"/><circle cx="27" cy="6" r="3.5" fill="var(--surface)" stroke="#E69F00" stroke-width="1.5"/></svg><div>Household net meter<span>#E69F00 dashed, hollow markers</span></div></div>
+    <div class="ln"><svg width="54" height="12" aria-hidden="true"><line x1="0" y1="6" x2="54" y2="6" stroke="#999999" stroke-width="2" stroke-dasharray="1.5 3"/><rect x="24" y="3" width="6" height="6" fill="#999999"/></svg><div>Earlier method, for comparison<span>#999999 dotted, square markers</span></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Conformance outcomes</h2>
+  <h3>Volt-VAr response categories</h3>
+  <p class="note">Measured reactive power relative to the nearest edge of the permitted band, ordered from wrong direction to over-response. Response-slope classes use the same scale: flat, shallow, conformant, steep.</p>
+  <div class="ramp" role="img" aria-label="Volt-VAr category scale, from adverse in dark red to major surplus in purple, then two greys">
+    <div style="background:#67001F"></div><div style="background:#B2182B"></div><div style="background:#EF8A62"></div><div style="background:#92C5DE"></div><div style="background:#2166AC"></div><div style="background:#762A83"></div><div style="background:#D9D9D9"></div><div style="background-color:#999999;background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.55) 0 2px,transparent 2px 6px)"></div>
+  </div>
+  <div class="rampkey">
+    <div><i style="background:#67001F"></i>Adverse (wrong direction) <span>#67001F</span></div>
+    <div><i style="background:#B2182B"></i>Inactive · flat <span>#B2182B</span></div>
+    <div><i style="background:#EF8A62"></i>Significant shortfall · shallow <span>#EF8A62</span></div>
+    <div><i style="background:#92C5DE"></i>Near-conformant <span>#92C5DE</span></div>
+    <div><i style="background:#2166AC"></i>Conformant <span>#2166AC</span></div>
+    <div><i style="background:#762A83"></i>Major surplus · steep <span>#762A83</span></div>
+    <div><i style="background:#D9D9D9"></i>Not exposed (in deadband) <span>#D9D9D9</span></div>
+    <div><i style="background:#999999"></i>Not assessable, hatched <span>#999999</span></div>
+  </div>
+
+  <h3>Volt-Watt outcomes</h3>
+  <div class="swgrid">
+    <div class="sw"><div class="chip" style="background:#2166AC"></div><div><b>Below the ceiling</b><span>#2166AC</span></div></div>
+    <div class="sw"><div class="chip" style="background:#B2182B"></div><div><b>Above the ceiling</b><span>#B2182B</span></div></div>
+    <div class="sw"><div class="chip" style="background:#E69F00"></div><div><b>Curtailed</b><span>#E69F00</span></div></div>
+    <div class="sw"><div class="chip" style="background:#F0E442"></div><div><b>Limited by sunlight</b><span>#F0E442</span></div></div>
+    <div class="sw"><div class="chip" style="background:#D9D9D9"></div><div><b>Not exposed</b><span>#D9D9D9</span></div></div>
+    <div class="sw"><div class="chip hatch" style="background-color:#999999"></div><div><b>No counterfactual</b><span>#999999 hatched</span></div></div>
+  </div>
+
+  <h3>Site verdicts and joint outcomes</h3>
+  <div class="swgrid">
+    <div class="sw"><div class="chip" style="background:#2166AC"></div><div><b>Pass · both modes conformant</b><span>#2166AC</span></div></div>
+    <div class="sw"><div class="chip" style="background:#92C5DE"></div><div><b>Volt-VAr only</b><span>#92C5DE</span></div></div>
+    <div class="sw"><div class="chip hatch" style="background-color:#D1E5F0"></div><div><b>Volt-Watt only</b><span>#D1E5F0 hatched</span></div></div>
+    <div class="sw"><div class="chip" style="background:#B2182B"></div><div><b>Fail · neither</b><span>#B2182B</span></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Continuous scales and groups</h2>
+  <div class="swgrid">
+    <div class="sw"><div class="chip" style="background:linear-gradient(90deg,#f7fbff,#c6dbef,#6baed6,#2171b5,#08306b)"></div><div><b>Share conformant</b><span>ColorBrewer Blues</span></div></div>
+    <div class="sw"><div class="chip" style="background:linear-gradient(90deg,#00224e,#575d6d,#a59c74,#fee838)"></div><div><b>Counts and densities</b><span>cividis</span></div></div>
+    <div class="sw"><div class="chip" style="background:linear-gradient(90deg,#440154,#31688e,#35b779,#fde725)"></div><div><b>Installation year</b><span>viridis</span></div></div>
+    <div class="sw"><div class="chip" style="background:linear-gradient(90deg,#e2d9e2,#5e43a5,#2f1436,#b0413e,#e2d9e2)"></div><div><b>Hour of day</b><span>twilight (cyclic)</span></div></div>
+  </div>
+  <p class="note" style="margin-top:12px">Unordered groups (network, manufacturer, cohort) use Matplotlib's <code>petroff10</code> colour sequence, assigned once so each group keeps its colour across figures. "Other" and "Unknown" are always #999999.</p>
+</section>
+
+<section>
+  <h2>Site-day figures</h2>
+  <p class="note">One site, one day. Stacked panels share a 00:00–24:00 time axis in Australian Eastern Standard Time (fixed UTC+10, no daylight saving).</p>
+  <div class="fig"><svg viewBox="0 0 640 318" role="img" aria-label="Schematic site-day figure: voltage, active power and reactive power panels sharing a 24-hour axis" style="width:100%;height:auto;display:block">
+<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#999999" fill-opacity=".18"/><line x1="0" y1="0" x2="0" y2="6" stroke="#999999" stroke-width="1.4"/></pattern></defs>
+<g font-size="10" fill="var(--muted)" font-family="var(--f-body)">
+ <text x="8" y="54">V</text><text x="8" y="154">P</text><text x="8" y="254">Q</text>
+</g>
+<!-- panel frames -->
+<g fill="none" stroke="var(--line)"><rect x="56" y="10" width="544" height="80"/><rect x="56" y="110" width="544" height="80"/><rect x="56" y="210" width="544" height="80"/></g>
+<!-- night -->
+<g fill="var(--night)"><rect x="56.0" y="10" width="136.0" height="80"/><rect x="486.7" y="10" width="113.3" height="80"/><rect x="56.0" y="110" width="136.0" height="80"/><rect x="486.7" y="110" width="113.3" height="80"/></g>
+<!-- V thresholds -->
+<g stroke="#7F7F7F" stroke-dasharray="1.5 2.5" stroke-width="1"><line x1="56" x2="600" y1="57.6" y2="57.6"/><line x1="56" x2="600" y1="29.5" y2="29.5"/><line x1="56" x2="600" y1="18.6" y2="18.6"/><line x1="56" x2="600" y1="14.3" y2="14.3"/></g>
+<g font-size="8.5" fill="var(--muted)" font-family="var(--f-mono)"><text x="604" y="60.6">240 V</text><text x="604" y="32.5">253 V</text><text x="604" y="17.3">260 V</text></g>
+<path d="M56.0,70.5 L61.7,68.8 L67.3,71.1 L73.0,72.0 L78.7,69.4 L84.3,69.5 L90.0,72.1 L95.7,71.1 L101.3,68.8 L107.0,70.6 L112.7,72.2 L118.3,69.9 L124.0,69.1 L129.7,71.7 L135.3,71.6 L141.0,69.0 L146.7,70.1 L152.3,72.3 L158.0,70.4 L163.7,68.9 L169.3,71.3 L175.0,71.9 L180.7,69.3 L186.3,69.6 L192.0,72.1 L197.7,69.7 L203.3,65.8 L209.0,65.6 L214.7,64.8 L220.3,59.9 L226.0,56.8 L231.7,56.9 L237.3,53.9 L243.0,48.7 L248.7,47.4 L254.3,46.9 L260.0,42.4 L265.7,38.6 L271.3,38.8 L277.0,37.0 L282.7,32.3 L288.3,30.9 L294.0,31.6 L299.7,28.6 L305.3,25.2 L311.0,26.1 L316.7,26.4 L322.3,23.1 L328.0,22.2 L333.7,24.5 L339.3,23.7 L345.0,21.4 L350.7,23.2 L356.3,25.7 L362.0,24.3 L367.7,24.2 L373.3,27.9 L379.0,29.6 L384.7,28.5 L390.3,31.0 L396.0,35.3 L401.7,35.8 L407.3,36.2 L413.0,40.7 L418.7,44.2 L424.3,44.1 L430.0,46.6 L435.7,51.8 L441.3,53.6 L447.0,53.9 L452.7,58.1 L458.3,62.4 L464.0,62.6 L469.7,63.9 L475.3,68.6 L481.0,70.4 L486.7,69.0 L492.3,70.0 L498.0,72.2 L503.7,70.5 L509.3,68.8 L515.0,71.2 L520.7,72.0 L526.3,69.4 L532.0,69.5 L537.7,72.1 L543.3,71.0 L549.0,68.8 L554.7,70.6 L560.3,72.2 L566.0,69.8 L571.7,69.1 L577.3,71.8 L583.0,71.5 L588.7,69.0 L594.3,70.1 L600.0,72.3" fill="none" stroke="#D55E00" stroke-width="2"/>
+<!-- P: exposure, curtailment, ceiling -->
+<rect x="299.7" y="110" width="85.0" height="80" fill="#D55E00" fill-opacity=".08"/>
+<polygon points="56.0,190.0 61.7,190.0 67.3,190.0 73.0,190.0 78.7,190.0 84.3,190.0 90.0,190.0 95.7,190.0 101.3,190.0 107.0,190.0 112.7,190.0 118.3,190.0 124.0,190.0 129.7,190.0 135.3,190.0 141.0,190.0 146.7,190.0 152.3,190.0 158.0,190.0 163.7,190.0 169.3,190.0 175.0,190.0 180.7,190.0 186.3,190.0 192.0,190.0 197.7,188.2 203.3,185.5 209.0,182.4 214.7,179.0 220.3,175.4 226.0,171.7 231.7,167.8 237.3,163.9 243.0,160.1 248.7,156.2 254.3,152.4 260.0,148.6 265.7,145.0 271.3,141.6 277.0,138.3 282.7,135.2 288.3,132.4 294.0,129.8 299.7,127.4 305.3,125.4 311.0,123.6 316.7,122.1 322.3,121.0 328.0,120.1 333.7,119.6 339.3,119.5 345.0,119.6 350.7,120.1 356.3,121.0 362.0,122.1 367.7,123.6 373.3,125.4 379.0,127.4 384.7,129.8 390.3,132.4 396.0,135.2 401.7,138.3 407.3,141.6 413.0,145.0 418.7,148.6 424.3,152.4 430.0,156.2 435.7,160.1 441.3,163.9 447.0,167.8 452.7,171.7 458.3,175.4 464.0,179.0 469.7,182.4 475.3,185.5 481.0,188.2 486.7,190.0 492.3,190.0 498.0,190.0 503.7,190.0 509.3,190.0 515.0,190.0 520.7,190.0 526.3,190.0 532.0,190.0 537.7,190.0 543.3,190.0 549.0,190.0 554.7,190.0 560.3,190.0 566.0,190.0 571.7,190.0 577.3,190.0 583.0,190.0 588.7,190.0 594.3,190.0 600.0,190.0 600.0,190.0 594.3,190.0 588.7,190.0 583.0,190.0 577.3,190.0 571.7,190.0 566.0,190.0 560.3,190.0 554.7,190.0 549.0,190.0 543.3,190.0 537.7,190.0 532.0,190.0 526.3,190.0 520.7,190.0 515.0,190.0 509.3,190.0 503.7,190.0 498.0,190.0 492.3,190.0 486.7,190.0 481.0,188.2 475.3,185.5 469.7,182.4 464.0,179.0 458.3,175.4 452.7,171.7 447.0,167.8 441.3,163.9 435.7,160.1 430.0,156.2 424.3,152.4 418.7,148.6 413.0,145.0 407.3,141.6 401.7,138.3 396.0,135.2 390.3,132.4 384.7,129.8 379.0,127.4 373.3,125.4 367.7,136.1 362.0,135.5 356.3,130.2 350.7,139.7 345.0,146.7 339.3,137.8 333.7,135.0 328.0,143.9 322.3,140.4 316.7,127.7 311.0,128.7 305.3,132.1 299.7,127.4 294.0,129.8 288.3,132.4 282.7,135.2 277.0,138.3 271.3,141.6 265.7,145.0 260.0,148.6 254.3,152.4 248.7,156.2 243.0,160.1 237.3,163.9 231.7,167.8 226.0,171.7 220.3,175.4 214.7,179.0 209.0,182.4 203.3,185.5 197.7,188.2 192.0,190.0 186.3,190.0 180.7,190.0 175.0,190.0 169.3,190.0 163.7,190.0 158.0,190.0 152.3,190.0 146.7,190.0 141.0,190.0 135.3,190.0 129.7,190.0 124.0,190.0 118.3,190.0 112.7,190.0 107.0,190.0 101.3,190.0 95.7,190.0 90.0,190.0 84.3,190.0 78.7,190.0 73.0,190.0 67.3,190.0 61.7,190.0 56.0,190.0" fill="#E69F00" fill-opacity=".35"/>
+<path d="M56.0,190.0 L61.7,190.0 L67.3,190.0 L73.0,190.0 L78.7,190.0 L84.3,190.0 L90.0,190.0 L95.7,190.0 L101.3,190.0 L107.0,190.0 L112.7,190.0 L118.3,190.0 L124.0,190.0 L129.7,190.0 L135.3,190.0 L141.0,190.0 L146.7,190.0 L152.3,190.0 L158.0,190.0 L163.7,190.0 L169.3,190.0 L175.0,190.0 L180.7,190.0 L186.3,190.0 L192.0,190.0 L197.7,188.2 L203.3,185.5 L209.0,182.4 L214.7,179.0 L220.3,175.4 L226.0,171.7 L231.7,167.8 L237.3,163.9 L243.0,160.1 L248.7,156.2 L254.3,152.4 L260.0,148.6 L265.7,145.0 L271.3,141.6 L277.0,138.3 L282.7,135.2 L288.3,132.4 L294.0,129.8 L299.7,127.4 L305.3,125.4 L311.0,123.6 L316.7,122.1 L322.3,121.0 L328.0,120.1 L333.7,119.6 L339.3,119.5 L345.0,119.6 L350.7,120.1 L356.3,121.0 L362.0,122.1 L367.7,123.6 L373.3,125.4 L379.0,127.4 L384.7,129.8 L390.3,132.4 L396.0,135.2 L401.7,138.3 L407.3,141.6 L413.0,145.0 L418.7,148.6 L424.3,152.4 L430.0,156.2 L435.7,160.1 L441.3,163.9 L447.0,167.8 L452.7,171.7 L458.3,175.4 L464.0,179.0 L469.7,182.4 L475.3,185.5 L481.0,188.2 L486.7,190.0 L492.3,190.0 L498.0,190.0 L503.7,190.0 L509.3,190.0 L515.0,190.0 L520.7,190.0 L526.3,190.0 L532.0,190.0 L537.7,190.0 L543.3,190.0 L549.0,190.0 L554.7,190.0 L560.3,190.0 L566.0,190.0 L571.7,190.0 L577.3,190.0 L583.0,190.0 L588.7,190.0 L594.3,190.0 L600.0,190.0" fill="none" stroke="#E69F00" stroke-width="1.3" stroke-dasharray="5 3"/>
+<line x1="56" x2="600" y1="117.3" y2="117.3" stroke="var(--fg)" stroke-width=".8"/>
+<line x1="56" x2="600" y1="175.5" y2="175.5" stroke="#7F7F7F" stroke-dasharray="1.5 2.5"/>
+<path d="M299.7,117.7 L305.3,130.7 L311.0,127.2 L316.7,126.3 L322.3,139.0 L328.0,142.4 L333.7,133.5 L339.3,136.3 L345.0,145.2 L350.7,138.3 L356.3,128.8 L362.0,134.1 L367.7,134.6 L373.3,120.2 M384.7,118.0" fill="none" stroke="var(--fg)" stroke-width="1.4" stroke-dasharray="5 3"/>
+<path d="M56.0,190.0 L61.7,190.0 L67.3,190.0 L73.0,190.0 L78.7,190.0 L84.3,190.0 L90.0,190.0 L95.7,190.0 L101.3,190.0 L107.0,190.0 L112.7,190.0 L118.3,190.0 L124.0,190.0 L129.7,190.0 L135.3,190.0 L141.0,190.0 L146.7,190.0 L152.3,190.0 L158.0,190.0 L163.7,190.0 L169.3,190.0 L175.0,190.0 L180.7,190.0 L186.3,190.0 L192.0,190.0 L197.7,188.2 L203.3,185.5 L209.0,182.4 L214.7,179.0 L220.3,175.4 L226.0,171.7 L231.7,167.8 L237.3,163.9 L243.0,160.1 L248.7,156.2 L254.3,152.4 L260.0,148.6 L265.7,145.0 L271.3,141.6 L277.0,138.3 L282.7,135.2 L288.3,132.4 L294.0,129.8 L299.7,127.4 L305.3,132.1 L311.0,128.7 L316.7,127.7 L322.3,140.4 L328.0,143.9 L333.7,135.0 L339.3,137.8 L345.0,146.7 L350.7,139.7 L356.3,130.2 L362.0,135.5 L367.7,136.1 L373.3,125.4 L379.0,127.4 L384.7,129.8 L390.3,132.4 L396.0,135.2 L401.7,138.3 L407.3,141.6 L413.0,145.0 L418.7,148.6 L424.3,152.4 L430.0,156.2 L435.7,160.1 L441.3,163.9 L447.0,167.8 L452.7,171.7 L458.3,175.4 L464.0,179.0 L469.7,182.4 L475.3,185.5 L481.0,188.2 L486.7,190.0 L492.3,190.0 L498.0,190.0 L503.7,190.0 L509.3,190.0 L515.0,190.0 L520.7,190.0 L526.3,190.0 L532.0,190.0 L537.7,190.0 L543.3,190.0 L549.0,190.0 L554.7,190.0 L560.3,190.0 L566.0,190.0 L571.7,190.0 L577.3,190.0 L583.0,190.0 L588.7,190.0 L594.3,190.0 L600.0,190.0" fill="none" stroke="#009E73" stroke-width="2"/>
+<g font-size="8.5" fill="var(--muted)" font-family="var(--f-mono)"><text x="604" y="120.3">100%</text><text x="604" y="178.5">20%</text></g>
+<!-- Q -->
+<rect x="56.0" y="210" width="163.2" height="80" fill="url(#hatch)"/><rect x="459.5" y="210" width="140.5" height="80" fill="url(#hatch)"/>
+<polygon points="56.0,231.9 61.7,231.9 67.3,231.9 73.0,231.9 78.7,231.9 84.3,231.9 90.0,231.9 95.7,231.9 101.3,231.9 107.0,231.9 112.7,231.9 118.3,231.9 124.0,231.9 129.7,231.9 135.3,231.9 141.0,231.9 146.7,231.9 152.3,231.9 158.0,231.9 163.7,231.9 169.3,231.9 175.0,231.9 180.7,231.9 186.3,231.9 192.0,231.9 197.7,231.9 203.3,231.9 209.0,231.9 214.7,231.9 220.3,231.9 226.0,232.9 231.7,232.8 237.3,236.7 243.0,243.4 248.7,245.1 254.3,245.8 260.0,251.6 265.7,256.5 271.3,256.3 277.0,258.6 282.7,264.7 288.3,266.6 294.0,265.6 299.7,269.5 305.3,273.9 311.0,272.7 316.7,272.4 322.3,276.7 328.0,277.9 333.7,274.9 339.3,275.8 345.0,278.8 350.7,276.5 356.3,273.3 362.0,275.0 367.7,275.2 373.3,270.4 379.0,268.2 384.7,269.6 390.3,266.4 396.0,260.8 401.7,260.2 407.3,259.7 413.0,253.8 418.7,249.3 424.3,249.4 430.0,246.2 435.7,239.4 441.3,237.0 447.0,236.7 452.7,231.9 458.3,231.9 464.0,231.9 469.7,231.9 475.3,231.9 481.0,231.9 486.7,231.9 492.3,231.9 498.0,231.9 503.7,231.9 509.3,231.9 515.0,231.9 520.7,231.9 526.3,231.9 532.0,231.9 537.7,231.9 543.3,231.9 549.0,231.9 554.7,231.9 560.3,231.9 566.0,231.9 571.7,231.9 577.3,231.9 583.0,231.9 588.7,231.9 594.3,231.9 600.0,231.9 600.0,238.6 594.3,238.6 588.7,238.6 583.0,238.6 577.3,238.6 571.7,238.6 566.0,238.6 560.3,238.6 554.7,238.6 549.0,238.6 543.3,238.6 537.7,238.6 532.0,238.6 526.3,238.6 520.7,238.6 515.0,238.6 509.3,238.6 503.7,238.6 498.0,238.6 492.3,238.6 486.7,238.6 481.0,238.6 475.3,238.6 469.7,238.6 464.0,238.6 458.3,238.6 452.7,238.6 447.0,243.4 441.3,243.8 435.7,246.1 430.0,252.9 424.3,256.1 418.7,256.0 413.0,260.5 407.3,266.4 401.7,266.9 396.0,267.5 390.3,273.1 384.7,276.4 379.0,275.0 373.3,277.1 367.7,282.0 362.0,281.8 356.3,280.0 350.7,283.2 345.0,285.6 339.3,282.5 333.7,281.6 328.0,284.6 322.3,283.4 316.7,279.1 311.0,279.5 305.3,280.6 299.7,276.2 294.0,272.4 288.3,273.3 282.7,271.5 277.0,265.3 271.3,263.0 265.7,263.3 260.0,258.4 254.3,252.5 248.7,251.8 243.0,250.1 237.3,243.4 231.7,239.5 226.0,239.6 220.3,238.6 214.7,238.6 209.0,238.6 203.3,238.6 197.7,238.6 192.0,238.6 186.3,238.6 180.7,238.6 175.0,238.6 169.3,238.6 163.7,238.6 158.0,238.6 152.3,238.6 146.7,238.6 141.0,238.6 135.3,238.6 129.7,238.6 124.0,238.6 118.3,238.6 112.7,238.6 107.0,238.6 101.3,238.6 95.7,238.6 90.0,238.6 84.3,238.6 78.7,238.6 73.0,238.6 67.3,238.6 61.7,238.6 56.0,238.6" fill="var(--fg)" fill-opacity=".12"/>
+<path d="M56.0,231.9 L61.7,231.9 L67.3,231.9 L73.0,231.9 L78.7,231.9 L84.3,231.9 L90.0,231.9 L95.7,231.9 L101.3,231.9 L107.0,231.9 L112.7,231.9 L118.3,231.9 L124.0,231.9 L129.7,231.9 L135.3,231.9 L141.0,231.9 L146.7,231.9 L152.3,231.9 L158.0,231.9 L163.7,231.9 L169.3,231.9 L175.0,231.9 L180.7,231.9 L186.3,231.9 L192.0,231.9 L197.7,231.9 L203.3,231.9 L209.0,231.9 L214.7,231.9 L220.3,231.9 L226.0,232.9 L231.7,232.8 L237.3,236.7 L243.0,243.4 L248.7,245.1 L254.3,245.8 L260.0,251.6 L265.7,256.5 L271.3,256.3 L277.0,258.6 L282.7,264.7 L288.3,266.6 L294.0,265.6 L299.7,269.5 L305.3,273.9 L311.0,272.7 L316.7,272.4 L322.3,276.7 L328.0,277.9 L333.7,274.9 L339.3,275.8 L345.0,278.8 L350.7,276.5 L356.3,273.3 L362.0,275.0 L367.7,275.2 L373.3,270.4 L379.0,268.2 L384.7,269.6 L390.3,266.4 L396.0,260.8 L401.7,260.2 L407.3,259.7 L413.0,253.8 L418.7,249.3 L424.3,249.4 L430.0,246.2 L435.7,239.4 L441.3,237.0 L447.0,236.7 L452.7,231.9 L458.3,231.9 L464.0,231.9 L469.7,231.9 L475.3,231.9 L481.0,231.9 L486.7,231.9 L492.3,231.9 L498.0,231.9 L503.7,231.9 L509.3,231.9 L515.0,231.9 L520.7,231.9 L526.3,231.9 L532.0,231.9 L537.7,231.9 L543.3,231.9 L549.0,231.9 L554.7,231.9 L560.3,231.9 L566.0,231.9 L571.7,231.9 L577.3,231.9 L583.0,231.9 L588.7,231.9 L594.3,231.9 L600.0,231.9" fill="none" stroke="var(--fg)" stroke-dasharray="5 3"/>
+<path d="M56.0,238.6 L61.7,238.6 L67.3,238.6 L73.0,238.6 L78.7,238.6 L84.3,238.6 L90.0,238.6 L95.7,238.6 L101.3,238.6 L107.0,238.6 L112.7,238.6 L118.3,238.6 L124.0,238.6 L129.7,238.6 L135.3,238.6 L141.0,238.6 L146.7,238.6 L152.3,238.6 L158.0,238.6 L163.7,238.6 L169.3,238.6 L175.0,238.6 L180.7,238.6 L186.3,238.6 L192.0,238.6 L197.7,238.6 L203.3,238.6 L209.0,238.6 L214.7,238.6 L220.3,238.6 L226.0,239.6 L231.7,239.5 L237.3,243.4 L243.0,250.1 L248.7,251.8 L254.3,252.5 L260.0,258.4 L265.7,263.3 L271.3,263.0 L277.0,265.3 L282.7,271.5 L288.3,273.3 L294.0,272.4 L299.7,276.2 L305.3,280.6 L311.0,279.5 L316.7,279.1 L322.3,283.4 L328.0,284.6 L333.7,281.6 L339.3,282.5 L345.0,285.6 L350.7,283.2 L356.3,280.0 L362.0,281.8 L367.7,282.0 L373.3,277.1 L379.0,275.0 L384.7,276.4 L390.3,273.1 L396.0,267.5 L401.7,266.9 L407.3,266.4 L413.0,260.5 L418.7,256.0 L424.3,256.1 L430.0,252.9 L435.7,246.1 L441.3,243.8 L447.0,243.4 L452.7,238.6 L458.3,238.6 L464.0,238.6 L469.7,238.6 L475.3,238.6 L481.0,238.6 L486.7,238.6 L492.3,238.6 L498.0,238.6 L503.7,238.6 L509.3,238.6 L515.0,238.6 L520.7,238.6 L526.3,238.6 L532.0,238.6 L537.7,238.6 L543.3,238.6 L549.0,238.6 L554.7,238.6 L560.3,238.6 L566.0,238.6 L571.7,238.6 L577.3,238.6 L583.0,238.6 L588.7,238.6 L594.3,238.6 L600.0,238.6" fill="none" stroke="var(--fg)" stroke-dasharray="5 3"/>
+<line x1="56" x2="600" y1="235.3" y2="235.3" stroke="var(--fg)" stroke-width=".5"/>
+<path d="M56.0,235.3 L61.7,235.3 L67.3,235.3 L73.0,235.3 L78.7,235.3 L84.3,235.3 L90.0,235.3 L95.7,235.3 L101.3,235.3 L107.0,235.3 L112.7,235.3 L118.3,235.3 L124.0,235.3 L129.7,235.3 L135.3,235.3 L141.0,235.3 L146.7,235.3 L152.3,235.3 L158.0,235.3 L163.7,235.3 L169.3,235.3 L175.0,235.3 L180.7,235.3 L186.3,235.3 L192.0,235.3 L197.7,235.3 L203.3,235.3 L209.0,235.3 L214.7,235.3 L220.3,235.3 L226.0,236.0 L231.7,235.9 L237.3,238.7 L243.0,243.5 L248.7,244.8 L254.3,245.2 L260.0,249.5 L265.7,253.0 L271.3,252.8 L277.0,254.5 L282.7,258.9 L288.3,260.2 L294.0,259.6 L299.7,262.3 L305.3,265.5 L311.0,264.7 L316.7,264.4 L322.3,267.5 L328.0,268.4 L333.7,266.2 L339.3,266.9 L345.0,269.0 L350.7,267.4 L356.3,265.0 L362.0,266.3 L367.7,266.5 L373.3,263.0 L379.0,261.4 L384.7,262.4 L390.3,260.1 L396.0,256.1 L401.7,255.6 L407.3,255.3 L413.0,251.0 L418.7,247.8 L424.3,247.8 L430.0,245.5 L435.7,240.6 L441.3,239.0 L447.0,238.7 L452.7,235.3 L458.3,235.3 L464.0,235.3 L469.7,235.3 L475.3,235.3 L481.0,235.3 L486.7,235.3 L492.3,235.3 L498.0,235.3 L503.7,235.3 L509.3,235.3 L515.0,235.3 L520.7,235.3 L526.3,235.3 L532.0,235.3 L537.7,235.3 L543.3,235.3 L549.0,235.3 L554.7,235.3 L560.3,235.3 L566.0,235.3 L571.7,235.3 L577.3,235.3 L583.0,235.3 L588.7,235.3 L594.3,235.3 L600.0,235.3" fill="none" stroke="#0072B2" stroke-width="2"/>
+<!-- time axis -->
+<g font-size="9" fill="var(--muted)" font-family="var(--f-mono)" text-anchor="middle"><text x="56.0" y="304">00:00</text><text x="192.0" y="304">06:00</text><text x="328.0" y="304">12:00</text><text x="464.0" y="304">18:00</text><text x="600.0" y="304">24:00</text></g>
+<text x="328.0" y="316" font-size="9" fill="var(--muted)" text-anchor="middle" font-family="var(--f-body)">Time (AEST, UTC+10)</text>
+</svg></div>
+  <ul style="margin-top:14px">
+    <li><b>Panel order:</b> voltage, active power, Volt-Watt non-conformance, reactive power, Volt-VAr non-conformance. Figures for one mode keep the panels they need, in the same order.</li>
+    <li><b>Units:</b> P and Q as % of the inverter rating on the left axis, kW and kvar on the right axis (the same scale, relabelled).</li>
+    <li><b>Fixed ranges</b> so days can be compared: V 215–265 V, P −5 to 115 %, Q −70 to +55 %, widened only when the data go outside them.</li>
+    <li><b>Sign convention:</b> generator convention of AS/NZS 4777.2. Positive Q is supplying, negative Q is absorbing.</li>
+    <li><b>Not assessable:</b> below 20 % of rated power the standard sets no quantified minimum reactive capability. Those intervals are hatched grey and left out of every total.</li>
+    <li><b>Three-phase sites:</b> each phase as % of a third of the rating, so the thick average line equals the site total as % of rating. Conformance is judged on the thick line.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Palette in code</h2>
+  <div class="code">
+    <button type="button" id="copy-btn">Copy</button>
+<pre id="palette-code">QUANTITY = {"V": "#D55E00", "P": "#009E73", "Q": "#0072B2",
+            "S": "#000000", "potential": "#E69F00"}
+REFERENCE = {"required": "#000000", "band": "#000000",      # band at alpha 0.12
+             "threshold": "#7F7F7F", "night": "#F2F2F2", "grid": "#EBEBEB"}
+PHASE = {"L1": "#C00000", "L2": "#B0B0B0", "L3": "#1F3A93"}
+SOURCE = {"inverter": "#0072B2", "net_meter": "#E69F00", "earlier_method": "#999999"}
+STATUS = {"conformant": "#2166AC", "nonconformant": "#B2182B",
+          "not_assessable": "#999999", "not_exposed": "#D9D9D9"}
+VOLTVAR_CATEGORY = {"adverse": "#67001F", "inactive": "#B2182B",
+                    "significant_shortfall": "#EF8A62", "near_conformant": "#92C5DE",
+                    "conformant": "#2166AC", "major_surplus": "#762A83",
+                    "not_exposed": "#D9D9D9", "not_assessable": "#999999"}
+VOLTWATT_CATEGORY = {"conformant": "#2166AC", "nonconformant": "#B2182B",
+                     "curtailed": "#E69F00", "sun_limited": "#F0E442",
+                     "not_exposed": "#D9D9D9", "no_counterfactual": "#999999"}
+JOINT = {"both conformant": "#2166AC", "Volt-VAr only": "#92C5DE",
+         "Volt-Watt only": "#D1E5F0", "neither": "#B2182B"}
+CMAP = {"rate": "Blues", "count": "cividis", "year": "viridis", "hour": "twilight"}
+OTHER = "#999999"</pre>
+  </div>
+</section>
+
+<footer>CICCADA · Collaboration on Energy and Environmental Markets (CEEM) and School of Photovoltaic and Renewable Energy Engineering (SPREE), UNSW Sydney. Quantity colours from the Okabe-Ito palette. Conformance scale from ColorBrewer.</footer>
+
+</div>
+<script>
+(function(){
+  var b=document.getElementById("copy-btn"), pre=document.getElementById("palette-code");
+  b.addEventListener("click",function(){
+    var done=function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1500)};
+    var fallback=function(){var r=document.createRange();r.selectNodeContents(pre);var s=getSelection();s.removeAllRanges();s.addRange(r);b.textContent="Selected";};
+    try{navigator.clipboard.writeText(pre.textContent).then(done,fallback)}catch(e){fallback()}
+  });
+})();
+</script>
+
+</body>
+</html>
