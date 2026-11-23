@@ -170,9 +170,9 @@ def load_fits(
         bad_v = ok & ~(
             r.v_min_obs.between(v_lo, v_hi) & r.v_max_obs.between(v_lo, v_hi)
         )
-        assert (
-            not bad_v.any()
-        ), f"{name}: {bad_v.sum()} fits use voltages outside [{v_lo}, {v_hi})"
+        assert not bad_v.any(), (
+            f"{name}: {bad_v.sum()} fits use voltages outside [{v_lo}, {v_hi})"
+        )
         pf = ConformancePlot.add_slope_pass_fail(r[ok], tolerance_pct)
         r["passed"] = pd.Series(pd.NA, index=r.index, dtype="boolean")
         r.loc[ok, "passed"] = pf.passed.astype("boolean")
@@ -180,9 +180,9 @@ def load_fits(
         out.append(r.reset_index(drop=True))
     meter, truth = out
     n_dup = truth.dropna(subset=["circuit_id"]).duplicated(KEYS).sum()
-    assert (
-        n_dup == 0
-    ), f"{n_dup} site-months with more than one PV circuit in the reference"
+    assert n_dup == 0, (
+        f"{n_dup} site-months with more than one PV circuit in the reference"
+    )
     return meter, truth
 
 

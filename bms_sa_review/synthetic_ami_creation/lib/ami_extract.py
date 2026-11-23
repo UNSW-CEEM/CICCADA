@@ -155,8 +155,7 @@ def extract_chunk(
     """
     sql = build_extract_sql(circuit_ids_chunk, year, month, is_pv)
     resolved_label = label or (
-        f"extract {year}-{month:02d} is_pv={is_pv} "
-        f"({len(circuit_ids_chunk)} circuits)"
+        f"extract {year}-{month:02d} is_pv={is_pv} ({len(circuit_ids_chunk)} circuits)"
     )
     return aq_fn(sql, database=database, label=resolved_label)
 

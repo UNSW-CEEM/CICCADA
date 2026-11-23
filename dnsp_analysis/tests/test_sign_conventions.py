@@ -186,7 +186,7 @@ def test_canonical_query_applies_single_negation_to_p_and_q(tmp_path) -> None:
         f"""
         SELECT active_power_raw_w, reactive_power_raw_var,
                p_export_w, q_absorbing_var, q_generator_var
-        FROM read_parquet({str(canonical_output_path(config, scope) / '**' / '*.parquet')!r},
+        FROM read_parquet({str(canonical_output_path(config, scope) / "**" / "*.parquet")!r},
                            hive_partitioning=true)
         ORDER BY active_power_raw_w
         """

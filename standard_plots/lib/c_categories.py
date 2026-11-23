@@ -337,7 +337,7 @@ def plot_category_bars(
     )
     sub = "  ·  ".join(x for x in (info.get("label", ""), info.get("date", "")) if x)
     if unit == "sites" or mode == "joint":
-        sub += f"  ·  site conforms if ≤ {SITE_THRESH*100:.0f}% of its judged intervals are non-conforming"
+        sub += f"  ·  site conforms if ≤ {SITE_THRESH * 100:.0f}% of its judged intervals are non-conforming"
     fig.suptitle(f"{head}\n{sub}", x=0.02, ha="left", y=0.995, fontsize=10.5)
     fig.subplots_adjust(
         left=0.2,

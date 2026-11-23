@@ -82,7 +82,7 @@ def _ref_handles():
         Patch(
             facecolor=C.REFERENCE["band"],
             alpha=0.25,
-            label=f"Pass band ±{SLOPE_TOL*100:.0f}% ({BAND[1]:.2f} to {BAND[0]:.2f})",
+            label=f"Pass band ±{SLOPE_TOL * 100:.0f}% ({BAND[1]:.2f} to {BAND[0]:.2f})",
         ),
     ]
 

@@ -497,8 +497,7 @@ def plot_monthly_coverage(
         raise ValueError("monthly coverage frame is empty -- nothing to plot")
     if "year_utc" not in frame.columns or "month_utc" not in frame.columns:
         raise ValueError(
-            "plot_monthly_coverage requires a frame grouped by "
-            "dimensions=('year_utc', 'month_utc')"
+            "plot_monthly_coverage requires a frame grouped by dimensions=('year_utc', 'month_utc')"
         )
     ax = _new_axes(ax)
     ordered = frame.sort_values(["year_utc", "month_utc"])
@@ -574,7 +573,7 @@ def plot_cohort_comparison(
 
     if "analysis_cohort" not in frame.columns:
         raise ValueError(
-            "plot_cohort_comparison requires a frame grouped by " "dimensions=('analysis_cohort',)"
+            "plot_cohort_comparison requires a frame grouped by dimensions=('analysis_cohort',)"
         )
     is_voltwatt = mechanism_name.lower().startswith(
         "volt-watt"

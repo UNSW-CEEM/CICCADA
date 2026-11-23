@@ -138,8 +138,7 @@ def build_sign_diagnostics(
         )
         if n_candidates != mechanism.sign_audit_site_count:
             raise RuntimeError(
-                f"Found {n_candidates} sign candidates; "
-                f"expected {mechanism.sign_audit_site_count}"
+                f"Found {n_candidates} sign candidates; expected {mechanism.sign_audit_site_count}"
             )
 
         site_sql = f"""

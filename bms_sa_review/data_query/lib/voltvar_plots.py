@@ -674,9 +674,9 @@ def plot_fleet_summary(
 
     def _kwh(x):
         if x >= 1e6:
-            return f"{x/1e6:.1f}M"
+            return f"{x / 1e6:.1f}M"
         if x >= 1e3:
-            return f"{x/1e3:.1f}k"
+            return f"{x / 1e3:.1f}k"
         return f"{x:.0f}"
 
     # ── Totals ──────────────────────────────────────────────────
@@ -803,7 +803,7 @@ def plot_fleet_summary(
     fig.suptitle(
         f"Fleet-wide Volt-VAr curtailment  |  {list(params.years)}  |  "
         f"Method A proxy {_kwh(a_proxy)} kWh  vs  Method B attribution {_kwh(b_attr)} kWh "
-        f"({a_proxy/b_attr:.1f}×)",
+        f"({a_proxy / b_attr:.1f}×)",
         fontsize=13,
         weight="bold",
         y=1.01,
@@ -821,9 +821,9 @@ def _fmt_num(x, decimals=1):
     if pd.isna(x):
         return "n/a"
     if abs(x) >= 1_000_000:
-        return f"{x/1_000_000:.{decimals}f}M"
+        return f"{x / 1_000_000:.{decimals}f}M"
     if abs(x) >= 1_000:
-        return f"{x/1_000:.{decimals}f}k"
+        return f"{x / 1_000:.{decimals}f}k"
     if abs(x) >= 10:
         return f"{x:,.0f}"
     if abs(x) >= 1:

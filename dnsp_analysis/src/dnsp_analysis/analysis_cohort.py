@@ -99,9 +99,11 @@ def derive_site_eligibility(
         validate="one_to_many",
     )
     selected["_selected"] = selected.apply(
-        lambda row: str(row["phase"]) in str(row["inferred_der_phases"]).split("|")
-        if pd.notna(row["inferred_der_phases"]) and str(row["inferred_der_phases"])
-        else False,
+        lambda row: (
+            str(row["phase"]) in str(row["inferred_der_phases"]).split("|")
+            if pd.notna(row["inferred_der_phases"]) and str(row["inferred_der_phases"])
+            else False
+        ),
         axis=1,
     )
     selected = selected.loc[selected["_selected"]].copy()

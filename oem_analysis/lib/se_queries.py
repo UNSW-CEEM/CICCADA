@@ -34,11 +34,11 @@ def _cohort_cte(config) -> str:
     return f"""
         cohort AS (
             SELECT i.* EXCLUDE (Q_kvar),
-                   {contract.q_expr(config, 'i')} AS Q_kvar,
+                   {contract.q_expr(config, "i")} AS Q_kvar,
                    s.is_three_phase, s.state AS site_state,
                    c.s_99, c.p_99
             FROM se_interval i
-            {contract.cohort_join_sql('i')}
+            {contract.cohort_join_sql("i")}
             WHERE {contract.cohort_where_sql(config)}
         )
     """

@@ -200,7 +200,7 @@ def _insert_sql(
 
     else:
         raise ValueError(
-            "capability_profile must be " "'review_corrected' or 'hossein_m3'"
+            "capability_profile must be 'review_corrected' or 'hossein_m3'"
         )
 
     tol = tol_kw_sql(rating_col)
@@ -443,7 +443,7 @@ def _insert_sql(
             P_kW,
             V,
             capability_assessable,
-            {temporal_cols('t_stamp')},
+            {temporal_cols("t_stamp")},
 
             Q_adverse,
             Q_inactive,

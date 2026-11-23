@@ -261,11 +261,11 @@ def fetch_vw_energy_site_year(aq, config):
             WHERE {years_sql(config.years, "year(sd.t_stamp + interval '10' hour)")}
         ), scored AS (
             SELECT *,
-                   CASE WHEN V > {AS4777['VW']['V1']}
+                   CASE WHEN V > {AS4777["VW"]["V1"]}
                               AND uncurtailed_P > permitted_p_kw
                               AND measured_p_kw <= permitted_p_kw
                         THEN 1 ELSE 0 END AS curtailed,
-                   CASE WHEN V > {AS4777['VW']['V1']}
+                   CASE WHEN V > {AS4777["VW"]["V1"]}
                               AND uncurtailed_P > permitted_p_kw
                               AND measured_p_kw <= permitted_p_kw
                         THEN greatest(uncurtailed_P - measured_p_kw, 0)
@@ -274,8 +274,8 @@ def fetch_vw_energy_site_year(aq, config):
         )
         SELECT site_id, year,
                count(*) AS counterfactual_covered_count,
-               count_if(V > {AS4777['VW']['V1']}) AS counterfactual_exposed_count,
-               count_if(V > {AS4777['VW']['V1']} AND uncurtailed_P > permitted_p_kw)
+               count_if(V > {AS4777["VW"]["V1"]}) AS counterfactual_exposed_count,
+               count_if(V > {AS4777["VW"]["V1"]} AND uncurtailed_P > permitted_p_kw)
                    AS response_opportunity_count,
                sum(curtailed) AS curtailed_count,
                sum(lost_p_kw) AS curtailed_kw_sum,

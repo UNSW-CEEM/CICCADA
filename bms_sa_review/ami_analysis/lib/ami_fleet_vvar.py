@@ -143,7 +143,7 @@ def _truth_estimate_sql(month: str) -> str:
     return f"""
         pc AS (
             SELECT site_id, circuit_id, t_stamp, V, P_kw_signed AS P_kw, Q_kvar_signed AS Q_kvar
-            FROM read_parquet('{month_dir('ami_raw_phaseseparate', month).as_posix()}/*.parquet')
+            FROM read_parquet('{month_dir("ami_raw_phaseseparate", month).as_posix()}/*.parquet')
             WHERE circuit_type = 'pv_site_net' AND site_id IN (SELECT site_id FROM _sites)
         ),
         baseline AS (

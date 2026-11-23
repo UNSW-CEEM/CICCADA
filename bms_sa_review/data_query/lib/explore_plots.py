@@ -226,7 +226,7 @@ def plot_operational(
         color=Cc,
         lw=1.6,
         zorder=4,
-        label=f"V-Watt ceiling (+{tol*100:.0f}% tol, % S_rated)",
+        label=f"V-Watt ceiling (+{tol * 100:.0f}% tol, % S_rated)",
     )
     ax_p.plot(t, P_pct, color=Cp, lw=1.3, zorder=5, label="Measured P (% S_rated)")
     ax_p.axhline(
@@ -245,7 +245,7 @@ def plot_operational(
         ls=":",
         alpha=0.45,
         zorder=3,
-        label=f"V-Watt floor: {vw['P2']*100:.0f}% at >={vw['V2']:.0f} V",
+        label=f"V-Watt floor: {vw['P2'] * 100:.0f}% at >={vw['V2']:.0f} V",
     )
     ax_p.set_ylabel("Active power\n(% S_rated)", fontsize=8.5, color=Cp)
     ax_p.tick_params(axis="y", colors=Cp, labelsize=8)
@@ -309,7 +309,7 @@ def plot_operational(
             Patch(
                 color=C_REF,
                 alpha=0.40,
-                label=f"Required Q band (±{tol*100:.0f}% S_rated)",
+                label=f"Required Q band (±{tol * 100:.0f}% S_rated)",
             ),
             plt.Line2D([0], [0], color=Cq, lw=1.4, label="Measured Q (% S_rated)"),
         ],
@@ -598,7 +598,7 @@ def plot_protective(
         ls="--",
         alpha=0.65,
         zorder=3,
-        label=f"4% floor ({S*0.04:.2f} kW) — conformance threshold",
+        label=f"4% floor ({S * 0.04:.2f} kW) — conformance threshold",
     )
     ax_p.axhline(0, color="k", lw=0.5, zorder=3)
     ax_p.set_ylabel("Active power (kW)", fontsize=8.5, color=C_P)
@@ -714,7 +714,7 @@ def plot_vvar_month_scatter(
             alpha=0.20,
             linewidth=0,
             zorder=2,
-            label=f"+/-{tol*100:.0f}% S_rated tolerance",
+            label=f"+/-{tol * 100:.0f}% S_rated tolerance",
         )
         ax.axhline(0, color="k", lw=0.5, zorder=1)
         for vx, lbl in [
@@ -888,7 +888,7 @@ def plot_voltwatt_only(
         color=Cc,
         lw=1.6,
         zorder=4,
-        label=f"V-Watt ceiling (+{tol*100:.0f}% tol, % S_rated)",
+        label=f"V-Watt ceiling (+{tol * 100:.0f}% tol, % S_rated)",
     )
     ax_p.plot(t, P_pct, color=Cp, lw=1.3, zorder=5, label="Measured P (% S_rated)")
     ax_p.axhline(
@@ -907,7 +907,7 @@ def plot_voltwatt_only(
         ls=":",
         alpha=0.45,
         zorder=3,
-        label=f"V-Watt floor: {vw['P2']*100:.0f}% at >={vw['V2']:.0f} V",
+        label=f"V-Watt floor: {vw['P2'] * 100:.0f}% at >={vw['V2']:.0f} V",
     )
     ax_p.set_ylabel("Active power\n(% S_rated)", fontsize=8.5, color=Cp)
     ax_p.tick_params(axis="y", colors=Cp, labelsize=8)

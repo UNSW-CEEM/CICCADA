@@ -97,10 +97,10 @@ def fetch_method_a_site_year(aq, config, params):
     ghi_filter = ""
     if params.apply_ghi_filter:
         ghi_join = (
-            f"JOIN {sd} sd " f"ON si.site_id = sd.site_id AND si.t_stamp = sd.t_stamp"
+            f"JOIN {sd} sd ON si.site_id = sd.site_id AND si.t_stamp = sd.t_stamp"
         )
         ghi_filter = (
-            f"AND sd.GHI_cs > 0 " f"AND sd.GHI / sd.GHI_cs >= {params.ghi_cs_ratio_min}"
+            f"AND sd.GHI_cs > 0 AND sd.GHI / sd.GHI_cs >= {params.ghi_cs_ratio_min}"
         )
 
     return aq(
@@ -285,7 +285,7 @@ def fetch_stage2_vvar_baseline(aq, config, params):
                    AS reduced_nonconf_intervals,
                sum(curtailment_eligible_count) AS apparent_limit_symptom_intervals,
                sum(curtailment_voltvar_count) AS counterfactual_curtailment_intervals,
-               sum(curtailment_voltvar_sum)*{AS4777['INTERVAL_H']} AS curtailed_kwh
+               sum(curtailment_voltvar_sum)*{AS4777["INTERVAL_H"]} AS curtailed_kwh
         FROM {table} WHERE {years_sql(params.years)}
         GROUP BY year ORDER BY year
     """,
@@ -447,7 +447,7 @@ def fetch_eligible_context(aq, config, params):
             f"JOIN {sd} sd ON si.site_id = sd.site_id AND si.t_stamp = sd.t_stamp"
         )
         ghi_filter = (
-            f"AND sd.GHI_cs > 0 " f"AND sd.GHI / sd.GHI_cs >= {params.ghi_cs_ratio_min}"
+            f"AND sd.GHI_cs > 0 AND sd.GHI / sd.GHI_cs >= {params.ghi_cs_ratio_min}"
         )
 
     return aq(

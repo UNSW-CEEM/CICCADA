@@ -252,7 +252,7 @@ def add_tolerance_sql(
 
     if direction not in (-1, 1):
         raise ValueError("direction must be -1 or +1")
-    return f"(({value_sql}) + ({direction}) * {tolerance_fraction} " f"* ({capacity_sql}))"
+    return f"(({value_sql}) + ({direction}) * {tolerance_fraction} * ({capacity_sql}))"
 
 
 def q_impact_nearest_edge(
@@ -336,7 +336,7 @@ def classify_voltvar_interval(
         q_capability = q_cap_absorbing(active_power, capacity)
         capability_assessable = abs(active_power) >= Q_CAPABILITY.p_min * capacity
     else:
-        raise ValueError("capability_profile must be 'review_corrected' or " "'figure_2_1_circle'")
+        raise ValueError("capability_profile must be 'review_corrected' or 'figure_2_1_circle'")
 
     q_required = vvar_required_q(voltage_v, capacity)
     tolerance = tolerance_fraction * capacity

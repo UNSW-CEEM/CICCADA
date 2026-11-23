@@ -268,10 +268,12 @@ opt-in, not a behavior change:
 ```python
 build_manifest = Build.run_build(
     Reval.iter_month_partitions(Config.STORE_DIR, FULL_YEAR_MONTHS),
-    final_resolution, circuit_polarity_lookup,
-    Config.store_path("ami_raw"), Config.store_path("ami_meter"),
+    final_resolution,
+    circuit_polarity_lookup,
+    Config.store_path("ami_raw"),
+    Config.store_path("ami_meter"),
     site_capacity=site_capacity_lookup,
-    apply_power_correction=False,   # match structured_data's treatment
+    apply_power_correction=False,  # match structured_data's treatment
 )
 ```
 
@@ -289,8 +291,10 @@ same underlying diagnostic:
 flagged = Resolution.sites_with_power_correction(final_resolution)
 clean_site_ids = flagged[~flagged].index
 dropped_site_ids = flagged[flagged].index
-print(f"{len(dropped_site_ids):,} of {flagged.index.nunique():,} kept sites "
-      f"would be excluded ({len(dropped_site_ids) / flagged.index.nunique():.1%}).")
+print(
+    f"{len(dropped_site_ids):,} of {flagged.index.nunique():,} kept sites "
+    f"would be excluded ({len(dropped_site_ids) / flagged.index.nunique():.1%})."
+)
 
 clean_resolution = final_resolution[final_resolution.site_id.isin(clean_site_ids)]
 
@@ -299,13 +303,16 @@ clean_resolution = final_resolution[final_resolution.site_id.isin(clean_site_ids
 # rather than being filtered out of an already-built table afterwards:
 build_manifest = Build.run_build(
     Reval.iter_month_partitions(Config.STORE_DIR, FULL_YEAR_MONTHS),
-    clean_resolution, circuit_polarity_lookup,
-    Config.store_path("ami_raw_clean"), Config.store_path("ami_meter_clean"),
+    clean_resolution,
+    circuit_polarity_lookup,
+    Config.store_path("ami_raw_clean"),
+    Config.store_path("ami_meter_clean"),
     site_capacity=site_capacity_lookup,
 )
 phase_split_manifest = Build.run_phase_split_build(
     Reval.iter_month_partitions(Config.STORE_DIR, FULL_YEAR_MONTHS),
-    clean_resolution, circuit_polarity_lookup,
+    clean_resolution,
+    circuit_polarity_lookup,
     Config.store_path("ami_raw_phaseseparate_clean"),
 )
 ```

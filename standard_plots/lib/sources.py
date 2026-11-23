@@ -634,9 +634,9 @@ def find_examples(
         WHERE ts.n = c.n_pv AND c.n_pv IN (1, 3) AND m.ac_capacity_kw > 0
     ),
     a AS (
-        SELECT *, {vvar_required_q_sql('V', 'S')} AS q_req,
-                  {q_conformance_floor_absorbing_sql('P', 'S')} AS q_cap,
-                  {vw_max_p_sql('V', 'S')} AS p_max
+        SELECT *, {vvar_required_q_sql("V", "S")} AS q_req,
+                  {q_conformance_floor_absorbing_sql("P", "S")} AS q_cap,
+                  {vw_max_p_sql("V", "S")} AS p_max
         FROM j
     ),
     b AS (
@@ -894,15 +894,15 @@ def category_counts(
 
     vv_case = f"""
         CASE WHEN NOT assessable THEN 'not_assessable'
-             WHEN inside AND V >= {vv['V2']} AND V <= {vv['V3']} THEN 'not_exposed'
+             WHEN inside AND V >= {vv["V2"]} AND V <= {vv["V3"]} THEN 'not_exposed'
              WHEN inside THEN 'conformant'
-             WHEN q_impact < {qi['thr1']} THEN 'adverse'
-             WHEN q_impact <= {qi['thr2']} THEN 'inactive'
-             WHEN q_impact < {qi['thr3']} THEN 'significant_shortfall'
-             WHEN q_impact <= {qi['thr4']} THEN 'near_conformant'
+             WHEN q_impact < {qi["thr1"]} THEN 'adverse'
+             WHEN q_impact <= {qi["thr2"]} THEN 'inactive'
+             WHEN q_impact < {qi["thr3"]} THEN 'significant_shortfall'
+             WHEN q_impact <= {qi["thr4"]} THEN 'near_conformant'
              ELSE 'major_surplus' END"""
     vw_case = f"""
-        CASE WHEN V <= {vw['V1']} THEN 'not_exposed'
+        CASE WHEN V <= {vw["V1"]} THEN 'not_exposed'
              WHEN P > p_max + {tol} * S THEN 'nonconformant'
              ELSE 'conformant' END"""
     cnt = ",\n           ".join(
@@ -925,9 +925,9 @@ def category_counts(
         WHERE ts.n = c.n_pv AND c.n_pv IN {n_pv} AND m.S > 0
     ),
     a AS (
-        SELECT *, {vvar_required_q_sql('V', 'S')} AS q_req,
-                  {q_conformance_floor_absorbing_sql('P', 'S')} AS q_cap,
-                  {vw_max_p_sql('V', 'S')} AS p_max
+        SELECT *, {vvar_required_q_sql("V", "S")} AS q_req,
+                  {q_conformance_floor_absorbing_sql("P", "S")} AS q_cap,
+                  {vw_max_p_sql("V", "S")} AS p_max
         FROM j
     ),
     b AS (

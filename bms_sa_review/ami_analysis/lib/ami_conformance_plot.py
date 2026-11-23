@@ -96,7 +96,7 @@ STATUS_LABELS = {
     "Q_adverse": "Adverse (wrong direction entirely)",
     "Q_major_surplus": "Major surplus (>>110% of required)",
     "Q_not_exposed": "Within deadband (220~240V)",
-    "Q_not_assessable": f"Not assessable (|P| < {_QCAP['P_MIN']*100:.0f}% rating)",
+    "Q_not_assessable": f"Not assessable (|P| < {_QCAP['P_MIN'] * 100:.0f}% rating)",
 }
 
 
@@ -616,7 +616,7 @@ def plot_site_day_conformance(
         (
             _VW["V2"],
             "purple",
-            f"{_VW['V2']:.0f} V -- Volt-Watt reaches {_VW['P2']*100:.0f}%",
+            f"{_VW['V2']:.0f} V -- Volt-Watt reaches {_VW['P2'] * 100:.0f}%",
         ),
     ]:
         axes[0].axhline(
@@ -666,7 +666,7 @@ def plot_site_day_conformance(
         color="grey",
         alpha=0.15,
         linewidth=0,
-        label=f"Not assessable: |P| < {_QCAP['P_MIN']*100:.0f}% rating",
+        label=f"Not assessable: |P| < {_QCAP['P_MIN'] * 100:.0f}% rating",
     )
     axes[2].fill_between(
         plot_times,
@@ -900,7 +900,7 @@ def plot_pv_circuit_vvar_scatter(
             alpha=0.35 if status == "Q_conformant" else 0.55,
             color=STATUS_COLORS[status],
             zorder=3,
-            label=f"{STATUS_LABELS[status]} ({n:,}, {100*n/n_total:.1f}%)",
+            label=f"{STATUS_LABELS[status]} ({n:,}, {100 * n / n_total:.1f}%)",
         )
     ax.plot(
         reference["V"].to_numpy(),
@@ -918,7 +918,7 @@ def plot_pv_circuit_vvar_scatter(
         alpha=0.15,
         linewidth=0,
         zorder=2,
-        label=f"Capability-clamped band (+/-{_TOL_FRAC*100:.0f}%, at 100% rating)",
+        label=f"Capability-clamped band (+/-{_TOL_FRAC * 100:.0f}%, at 100% rating)",
     )
     ax.axhline(0, color="black", linewidth=0.5, zorder=1)
     for voltage, label in [
@@ -965,7 +965,7 @@ def plot_pv_circuit_vvar_scatter(
     print(f"Status breakdown ({n_total:,} intervals total):")
     for status in STATUS_ORDER:
         n = int(counts.get(status, 0))
-        print(f"  {status:<26} {n:>7,}  ({100*n/n_total:5.1f}%)")
+        print(f"  {status:<26} {n:>7,}  ({100 * n / n_total:5.1f}%)")
 
     return fig, pv_classified, rating_kw
 
@@ -1132,12 +1132,12 @@ def plot_assessable_vvar_window(
         else ""
     )
     gate_label = (
-        f", signed gate ({power_col} ≥ {_QCAP['P_MIN']*100:.0f}% rating)"
+        f", signed gate ({power_col} ≥ {_QCAP['P_MIN'] * 100:.0f}% rating)"
         if power_col
         else ""
     )
     print(
-        f"{n_window:,} / {n_total:,} intervals ({100*n_window/n_total:.1f}%) fall in "
+        f"{n_window:,} / {n_total:,} intervals ({100 * n_window / n_total:.1f}%) fall in "
         f"the assessable [{lo}, {hi}) V window{time_label}{gate_label}."
     )
 
@@ -1200,7 +1200,7 @@ def plot_assessable_vvar_window(
     ax.set_title(
         f"Assessable Volt-VAr window [{lo}, {hi}) V{time_label}{gate_label}{title_suffix}\n"
         f"Required {_VVAR_ABSORB_SLOPE_PCT_PER_V:.3f} %/V vs OLS {slope_emp:.3f} %/V "
-        f"(R²={fit_stats['r_squared']:.2f}, ratio {slope_emp/_VVAR_ABSORB_SLOPE_PCT_PER_V:.2f}x)",
+        f"(R²={fit_stats['r_squared']:.2f}, ratio {slope_emp / _VVAR_ABSORB_SLOPE_PCT_PER_V:.2f}x)",
         fontsize=10,
         fontweight="bold",
     )
@@ -1811,7 +1811,7 @@ def plot_assessable_vvar_scatter3d(
             alpha=0.35 if status == "Q_conformant" else 0.55,
             color=STATUS_COLORS[status],
             depthshade=False,
-            label=f"{STATUS_LABELS[status]} ({n:,}, {100*n/fit_stats['n_window']:.1f}%)",
+            label=f"{STATUS_LABELS[status]} ({n:,}, {100 * n / fit_stats['n_window']:.1f}%)",
         )
 
     v_grid = np.linspace(v3, vw_v1, 30)
@@ -2036,7 +2036,7 @@ def plot_assessable_vvar_scatter3d_interactive(
                 z=sub["Q_pct"],
                 mode="markers",
                 marker=dict(size=3, color=STATUS_COLORS[status], opacity=0.6),
-                name=f"{STATUS_LABELS[status]} ({n:,}, {100*n/fit_stats['n_window']:.1f}%)",
+                name=f"{STATUS_LABELS[status]} ({n:,}, {100 * n / fit_stats['n_window']:.1f}%)",
                 hovertemplate="V=%{x:.1f}<br>Time=%{y}<br>Q=%{z:+.1f}%<extra></extra>",
             )
         )

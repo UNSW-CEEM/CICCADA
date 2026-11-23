@@ -194,10 +194,10 @@ def build_voltvar_sql(
                 WHEN NOT voltvar_exposed THEN 'Q_not_exposed'
                 WHEN {reactive_column} < Q_min_final OR {reactive_column} > Q_max_final THEN
                     CASE
-                        WHEN Q_impact < {_QIMP['thr1']} THEN 'Q_adverse'
-                        WHEN Q_impact <= {_QIMP['thr2']} THEN 'Q_inactive'
-                        WHEN Q_impact < {_QIMP['thr3']} THEN 'Q_significant_shortfall'
-                        WHEN Q_impact <= {_QIMP['thr4']} THEN 'Q_near_conformant'
+                        WHEN Q_impact < {_QIMP["thr1"]} THEN 'Q_adverse'
+                        WHEN Q_impact <= {_QIMP["thr2"]} THEN 'Q_inactive'
+                        WHEN Q_impact < {_QIMP["thr3"]} THEN 'Q_significant_shortfall'
+                        WHEN Q_impact <= {_QIMP["thr4"]} THEN 'Q_near_conformant'
                         ELSE 'Q_major_surplus'
                     END
                 ELSE 'Q_conformant'
@@ -231,7 +231,7 @@ def build_voltwatt_sql(
             FROM {source_relation}
         )
         SELECT *,
-            CASE WHEN {voltage_column} > {_VW['V1']}
+            CASE WHEN {voltage_column} > {_VW["V1"]}
                  THEN greatest(0, {power_column} - max_P_volt_watt)
                  ELSE NULL END AS nonconformance_voltwatt
         FROM limits

@@ -185,7 +185,7 @@ def fleet_funnel(year, params, aq_func, database):
         is_pv = True
         {flex_where}
         AND ac_capacity_kw > 0
-        AND ac_capacity_kw <= {P['MAX_AC_CAPACITY_KW']}
+        AND ac_capacity_kw <= {P["MAX_AC_CAPACITY_KW"]}
     """
 
     # Step 0 — every PV site in the size cohort
@@ -218,7 +218,7 @@ def fleet_funnel(year, params, aq_func, database):
               WHERE {base_meta} AND {_limit_col} > 0) sm
           ON t.circuit_id = sm.circuit_id
         WHERE t.year = {year} AND t.is_pv = True
-          AND t.voltage > {P['V_LOW']} AND t.voltage < {P['V_HIGH']}
+          AND t.voltage > {P["V_LOW"]} AND t.voltage < {P["V_HIGH"]}
     """,
         database=database,
     )
@@ -232,9 +232,9 @@ def fleet_funnel(year, params, aq_func, database):
               WHERE {base_meta} AND {_limit_col} > 0) sm
           ON t.circuit_id = sm.circuit_id
         WHERE t.year = {year} AND t.is_pv = True
-          AND t.voltage > {P['V_LOW']} AND t.voltage < {P['V_HIGH']}
+          AND t.voltage > {P["V_LOW"]} AND t.voltage < {P["V_HIGH"]}
           AND hour(t.t_stamp + interval '10' hour)
-              BETWEEN {P['PEAK_HOUR_START']} AND {P['PEAK_HOUR_END']}
+              BETWEEN {P["PEAK_HOUR_START"]} AND {P["PEAK_HOUR_END"]}
     """,
         database=database,
     )

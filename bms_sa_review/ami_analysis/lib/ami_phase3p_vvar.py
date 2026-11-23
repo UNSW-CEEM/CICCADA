@@ -123,12 +123,12 @@ def total_fit_sql(
               GROUP BY e.site_id, e.circuit_id)
         GROUP BY site_id)"""
     return f"""
-        WITH {_ts_cte('x0', month, source, night_hours, v_plausible)},
+        WITH {_ts_cte("x0", month, source, night_hours, v_plausible)},
         {sign_cte},
         x AS (SELECT x0.*, s.rating_kw FROM x0 JOIN _sites s USING (site_id)),
         cnt AS (SELECT site_id, count(*) AS n_ts, sum(CASE WHEN {comp} THEN 1 ELSE 0 END) AS n_complete
                 FROM x GROUP BY site_id),
-        win AS ({win('v_avg', 'avg')} UNION ALL {win('v_max', 'max')}),
+        win AS ({win("v_avg", "avg")} UNION ALL {win("v_max", "max")}),
         fit AS (SELECT site_id, v_mode, regr_count(y, vx) AS n_window, regr_slope(y, vx) AS slope,
                        regr_intercept(y, vx) AS intercept, regr_r2(y, vx) AS r_squared,
                        regr_sxx(y, vx) AS sxx, regr_syy(y, vx) AS syy, regr_sxy(y, vx) AS sxy,
@@ -482,10 +482,10 @@ def total_diag_sql(
     t_comp, t_gate = _complete("t"), f"abs(t.p_tot) >= {p_min_frac} * m.rating_kw"
     shared = f"{t_comp} AND t.v_avg >= {v_lo} AND t.v_avg < {v_hi} AND {t_gate} AND t.q_tot IS NOT NULL"
     return f"""
-        WITH {_ts_cte('m0', month, 'meter_baseline', night_hours, v_plausible)},
-             {_ts_cte('t0', month, 'ground_truth', night_hours, v_plausible)},
+        WITH {_ts_cte("m0", month, "meter_baseline", night_hours, v_plausible)},
+             {_ts_cte("t0", month, "ground_truth", night_hours, v_plausible)},
         m AS (SELECT m0.*, s.rating_kw FROM m0 JOIN _sites s USING (site_id)
-              WHERE {_complete('m0')} AND m0.v_avg >= {v_lo} AND m0.v_avg < {v_hi}
+              WHERE {_complete("m0")} AND m0.v_avg >= {v_lo} AND m0.v_avg < {v_hi}
                 AND m0.p_tot >= {p_min_frac} * s.rating_kw),
         j AS (SELECT m.site_id, m.t_stamp, m.v_avg AS v_b, m.rating_kw,
                      100.0 * (m.q_tot - t.q_tot) / m.rating_kw AS e,

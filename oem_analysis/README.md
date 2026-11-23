@@ -52,8 +52,8 @@ from oem_analysis.config import se_config as C
 from oem_analysis.lib import se_store, se_diagnostics as diag
 
 con = se_store.connect()
-diag.run_d1_checks(con)          # is the delivery what we think it is?
-se_store.store_status(con)       # what has been built so far?
+diag.run_d1_checks(con)  # is the delivery what we think it is?
+se_store.store_status(con)  # what has been built so far?
 ```
 
 If your data is not at `~/OneDrive - UNSW/Documents/CICCADA - Data/OEM analysis`, set
