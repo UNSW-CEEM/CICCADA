@@ -250,7 +250,7 @@ def plot_vvar_month_scatter(
                 alpha=0.35 if status == "conforming" else 0.55,
                 color=STATUS_COLORS[status],
                 zorder=3,
-                label=f"{STATUS_LABELS[status]} ({n:,}, {100*n/n_total:.1f}%)",
+                label=f"{STATUS_LABELS[status]} ({n:,}, {100 * n / n_total:.1f}%)",
             )
         ax.plot(
             V_grid, Q_req_pct, color="#f59e0b", lw=1.8, zorder=5, label="Required Q (AS4777 curve)"
@@ -263,7 +263,7 @@ def plot_vvar_month_scatter(
             alpha=0.15,
             linewidth=0,
             zorder=2,
-            label=f"+/-{tol*100:.0f}% proxy tolerance (unclamped)",
+            label=f"+/-{tol * 100:.0f}% proxy tolerance (unclamped)",
         )
         ax.axhline(0, color="k", lw=0.5, zorder=1)
         for vx, lbl in [
@@ -305,7 +305,7 @@ def plot_vvar_month_scatter(
     print(f"Status breakdown ({n_total:,} intervals total):")
     for status in STATUS_ORDER:
         n = int(counts.get(status, 0))
-        print(f"  {status:<26} {n:>7,}  ({100*n/n_total:5.1f}%)")
+        print(f"  {status:<26} {n:>7,}  ({100 * n / n_total:5.1f}%)")
     return d
 
 
@@ -456,7 +456,7 @@ def plot_operational_dnsp(
         color=Cc,
         lw=1.6,
         zorder=4,
-        label=f"V-Watt ceiling (+{tol*100:.0f}% tol, % proxy)",
+        label=f"V-Watt ceiling (+{tol * 100:.0f}% tol, % proxy)",
     )
     ax_p.plot(t, P_pct, color=Cp, lw=1.3, zorder=5, label="Measured P (% proxy)")
     ax_p.axhline(100, color=Cp, lw=0.6, ls=":", alpha=0.45, zorder=3, label="100% proxy")
@@ -467,7 +467,7 @@ def plot_operational_dnsp(
         ls=":",
         alpha=0.45,
         zorder=3,
-        label=f"V-Watt floor: {vw['P2']*100:.0f}% at >={vw['V2']:.0f} V",
+        label=f"V-Watt floor: {vw['P2'] * 100:.0f}% at >={vw['V2']:.0f} V",
     )
     ax_p.set_ylabel("Active power\n(% proxy)", fontsize=8.5, color=Cp)
     ax_p.tick_params(axis="y", colors=Cp, labelsize=8)
@@ -521,7 +521,7 @@ def plot_operational_dnsp(
             Patch(
                 color=C_REF,
                 alpha=0.40,
-                label=f"Required Q band (+/-{tol*100:.0f}% proxy, UNCLAMPED)",
+                label=f"Required Q band (+/-{tol * 100:.0f}% proxy, UNCLAMPED)",
             ),
             plt.Line2D([0], [0], color=Cq, lw=1.4, label="Measured Q (% proxy)"),
         ],
@@ -569,7 +569,7 @@ def plot_operational_dnsp(
                 color=C_NA,
                 lw=4,
                 alpha=0.80,
-                label=f"Not assessable (|P| < {Q_CAPABILITY.p_min*100:.0f}% proxy)",
+                label=f"Not assessable (|P| < {Q_CAPABILITY.p_min * 100:.0f}% proxy)",
             ),
         ],
         fontsize=7,

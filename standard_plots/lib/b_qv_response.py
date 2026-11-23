@@ -233,7 +233,7 @@ def qv_axes(ax, window: bool = True, cap: bool = False, legend_extra=None):
         Patch(
             facecolor=C.REFERENCE["band"],
             alpha=0.25,
-            label=f"±{TOL*100:.0f}% tolerance",
+            label=f"±{TOL * 100:.0f}% tolerance",
         ),
     ]
     if cap:
@@ -243,7 +243,7 @@ def qv_axes(ax, window: bool = True, cap: bool = False, legend_extra=None):
                 [],
                 color=C.REFERENCE["threshold"],
                 ls=(0, (1, 3)),
-                label=f"Fig. 2.1 minimum, 20–60% P (−{QCAP['Q_FLAT']*100:.0f}%)",
+                label=f"Fig. 2.1 minimum, 20–60% P (−{QCAP['Q_FLAT'] * 100:.0f}%)",
             )
         )
     if window:
@@ -380,7 +380,7 @@ def plot_qv_scatter(
             marker="o",
             mfc="none",
             mec=C.STATUS["not_assessable"],
-            label=f"Not assessable (|P| < {QCAP['P_MIN']*100:.0f}%)",
+            label=f"Not assessable (|P| < {QCAP['P_MIN'] * 100:.0f}%)",
         )
     )
     if colour_by == "assessable":

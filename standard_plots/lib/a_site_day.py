@@ -403,7 +403,7 @@ def panel_active_power(
                 alpha=0.25,
                 edgecolor=C.REFERENCE["required"],
                 ls="--",
-                label=f"Permitted: P ≤ ceiling (curve + {TOL*100:.0f}% tol.)",
+                label=f"Permitted: P ≤ ceiling (curve + {TOL * 100:.0f}% tol.)",
             ),
             Line2D(
                 [],
@@ -449,7 +449,7 @@ def panel_active_power(
             lw=0.9,
             ls=":",
             zorder=2,
-            label=f"{QCAP['P_MIN']*100:.0f}% gate (Fig. 2.1)",
+            label=f"{QCAP['P_MIN'] * 100:.0f}% gate (Fig. 2.1)",
         )
     ax.axhline(100, color=C.QUANTITY["S"], lw=0.7, zorder=2, label="100% rating")
     _lines(
@@ -518,7 +518,7 @@ def panel_reactive_power(ax, day: SiteDay, vv: pd.DataFrame):
                 alpha=0.25,
                 edgecolor=C.REFERENCE["required"],
                 ls="--",
-                label=f"Permitted band (±{TOL*100:.0f}%, Fig. 2.1 capped)",
+                label=f"Permitted band (±{TOL * 100:.0f}%, Fig. 2.1 capped)",
             ),
             Line2D(
                 [],
@@ -532,7 +532,7 @@ def panel_reactive_power(ax, day: SiteDay, vv: pd.DataFrame):
                 facecolor=C.STATUS["not_assessable"],
                 alpha=0.3,
                 hatch="///",
-                label=f"Not assessable (|P| < {QCAP['P_MIN']*100:.0f}%)",
+                label=f"Not assessable (|P| < {QCAP['P_MIN'] * 100:.0f}%)",
             ),
         ],
     )

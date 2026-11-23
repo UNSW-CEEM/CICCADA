@@ -367,14 +367,14 @@ def build_month(
     con.execute(
         f"""
         COPY (SELECT * EXCLUDE (ts_local, ts_aest) FROM _month
-              ORDER BY {', '.join(C.STORE_SORT_KEY)})
+              ORDER BY {", ".join(C.STORE_SORT_KEY)})
         TO '{out_dir.as_posix()}'
         (FORMAT PARQUET,
          PARTITION_BY ({C.PARTITION_KEY}),
          COMPRESSION '{C.PARQUET_COMPRESSION}',
          ROW_GROUP_SIZE {C.PARQUET_ROW_GROUP_SIZE},
-         FILENAME_PATTERN 'part_{source_month.replace('-', '_')}_{{i}}',
-         OVERWRITE_OR_IGNORE {'true' if overwrite else 'false'})
+         FILENAME_PATTERN 'part_{source_month.replace("-", "_")}_{{i}}',
+         OVERWRITE_OR_IGNORE {"true" if overwrite else "false"})
         """
     )
 
@@ -641,7 +641,7 @@ def reconcile(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
             "check": f"reactive energy {q_rule} (kvar-sum)",
             "raw": f"{raw_q:,.3f}",
             "store": f"{store.store_q_kvar:,.3f}",
-            "delta": f"relative {q_rel:.2e} vs " f"{C.REACTIVE_POWER_SIGN:+.0f} x raw",
+            "delta": f"relative {q_rel:.2e} vs {C.REACTIVE_POWER_SIGN:+.0f} x raw",
             "pass": q_rel < 1e-6,
         },
     ]

@@ -139,12 +139,12 @@ def _eligible_cte(config, params, exclude_polarity_suspect: bool, con=None) -> s
                    i.derating_active,
                    s.is_three_phase, s.state
             FROM se_interval i
-            {contract.cohort_join_sql('i')}
+            {contract.cohort_join_sql("i")}
             {join_pol}
             WHERE {contract.cohort_where_sql(config, extra=extra)}
               AND i.P_kW IS NOT NULL AND i.Q_kvar IS NOT NULL AND {v} IS NOT NULL
               AND {contract.v_band_sql(params, v)}
-              AND {contract.peak_hours_sql(params, 'i.ts_aest')}
+              AND {contract.peak_hours_sql(params, "i.ts_aest")}
               AND {limit} > 0
         )
     """
@@ -539,7 +539,7 @@ def cohort_site_count(con: duckdb.DuckDBPyConnection, config=None) -> int:
             f"""
         SELECT count(DISTINCT i.site_alias)
         FROM se_interval i
-        {contract.cohort_join_sql('i')}
+        {contract.cohort_join_sql("i")}
         WHERE {contract.cohort_where_sql(config)}
         """
         ).fetchone()[0]
@@ -608,7 +608,7 @@ def fleet_potential_generation(
                sum(CASE WHEN {cf} IS NOT NULL THEN i.P_kW END) AS covered_measured_kw_sum,
                count(DISTINCT i.site_alias)                    AS n_sites
         FROM se_interval i
-        {contract.cohort_join_sql('i')}
+        {contract.cohort_join_sql("i")}
         {join}
         WHERE {contract.cohort_where_sql(config)}
           AND i.P_kW IS NOT NULL
@@ -1058,7 +1058,7 @@ def method_c_by_voltage(
                round(avg(i.P_kW), 3)                           AS mean_P_kW,
                round(median(i.Q_kvar), 4)                      AS median_Q_kvar
         FROM se_interval i
-        {contract.cohort_join_sql('i')}
+        {contract.cohort_join_sql("i")}
         WHERE {contract.cohort_where_sql(config)}
           AND {v} BETWEEN 235 AND 262 AND i.P_kW > 0.1
         GROUP BY 1 HAVING count(*) >= 500 ORDER BY 1
@@ -1231,7 +1231,7 @@ def voltwatt_curtailment_site_year(
                    s.is_three_phase, s.state,
                    u.uncurtailed_P
             FROM se_interval i
-            {contract.cohort_join_sql('i')}
+            {contract.cohort_join_sql("i")}
             LEFT JOIN se_uncurtailedpv u
                    ON u.site_alias = i.site_alias AND u.ts_aest = i.ts_aest
             WHERE {contract.cohort_where_sql(config)}

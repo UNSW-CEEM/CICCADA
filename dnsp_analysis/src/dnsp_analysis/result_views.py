@@ -693,8 +693,7 @@ def fleet_summary_view(
     if not is_voltwatt:
         responded = _run_query(
             config,
-            f"SELECT coalesce(sum(n_responded), 0) AS n "
-            f"FROM read_parquet({sql_string(str(path))})",
+            f"SELECT coalesce(sum(n_responded), 0) AS n FROM read_parquet({sql_string(str(path))})",
         ).iloc[0]
         n_with_response = int(responded["n"])
 
@@ -882,8 +881,7 @@ def validate_result_views(
         assessable = int(status["n_assessable"].iloc[0])
         if classified != assessable:
             failures.append(
-                f"voltvar_status_view classification sum {classified} != "
-                f"n_assessable {assessable}"
+                f"voltvar_status_view classification sum {classified} != n_assessable {assessable}"
             )
         checks["voltvar_n_source_intervals"] = raw["n_source_intervals"]
         checks["voltvar_n_assessable"] = assessable
@@ -905,8 +903,7 @@ def validate_result_views(
         assessable = int(status["n_assessable"].iloc[0])
         if classified != assessable:
             failures.append(
-                f"voltwatt_status_view classification sum {classified} != "
-                f"n_assessable {assessable}"
+                f"voltwatt_status_view classification sum {classified} != n_assessable {assessable}"
             )
         checks["voltwatt_n_source_intervals"] = raw["n_source_intervals"]
         checks["voltwatt_n_assessable"] = assessable

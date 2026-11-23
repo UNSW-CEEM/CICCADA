@@ -255,7 +255,7 @@ def fit_ghi_model(
               AND GHI > 50
               AND P_kw_norm > 0.05
               AND P_kw_norm <= P_kw_norm_cs
-              AND V_mean <= {C.as4777()['VW']['V1']}
+              AND V_mean <= {C.as4777()["VW"]["V1"]}
               AND (P_kw_norm >= 1
                    OR sqrt(P_kw_norm * P_kw_norm + Q_kvar_norm * Q_kvar_norm) < 1.001)
               -- Train/val split on (site, DAY), matching build_split_days.py:
@@ -609,9 +609,9 @@ def explain_missing_counterfactual(
 
     frame["reason"] = frame.apply(_reason, axis=1)
     frame["verdict"] = frame.bin_covered_other_days.map(
-        lambda n: "transient (this day only)"
-        if n > 0
-        else "structural (missing all year)"
+        lambda n: (
+            "transient (this day only)" if n > 0 else "structural (missing all year)"
+        )
     )
 
     print(f"{site_alias} on {day}: {len(frame)} interval(s) without a counterfactual\n")

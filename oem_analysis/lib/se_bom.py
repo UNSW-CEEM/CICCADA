@@ -77,8 +77,8 @@ def probe_one_day(aq=None, day: str = "2025-06-15", **box) -> pd.DataFrame:
         FROM {BOM_TABLE}
         WHERE time >= TIMESTAMP '{day} 00:00:00'
           AND time <  TIMESTAMP '{day} 00:00:00' + INTERVAL '1' DAY
-          AND latitude BETWEEN {b['lat_min']} AND {b['lat_max']}
-          AND longitude BETWEEN {b['lon_min']} AND {b['lon_max']}
+          AND latitude BETWEEN {b["lat_min"]} AND {b["lat_max"]}
+          AND longitude BETWEEN {b["lon_min"]} AND {b["lon_max"]}
         """,
         database=BOM_DATABASE,
     )
@@ -105,8 +105,8 @@ def probe_coverage(
         WHERE time >= TIMESTAMP '{year}-01-01 00:00:00'
           AND time <  TIMESTAMP '{year + 1}-01-01 00:00:00'
           AND month(time) IN ({month_list})
-          AND latitude BETWEEN {b['lat_min']} AND {b['lat_max']}
-          AND longitude BETWEEN {b['lon_min']} AND {b['lon_max']}
+          AND latitude BETWEEN {b["lat_min"]} AND {b["lat_max"]}
+          AND longitude BETWEEN {b["lon_min"]} AND {b["lon_max"]}
         GROUP BY year(time), month(time)
         ORDER BY month
         """,

@@ -227,7 +227,7 @@ def print_fleet_summary(
     print(
         f"  Sites showing symptom:                   {n_symp_sites:>14,}"
         + (
-            f"  ({100*n_symp_sites/n_elig_sites:.1f}% of eligible)"
+            f"  ({100 * n_symp_sites / n_elig_sites:.1f}% of eligible)"
             if n_elig_sites
             else ""
         )
@@ -235,16 +235,16 @@ def print_fleet_summary(
     print(f"  Eligible intervals (Method A cohort):    {tot_elig_int:>14,}")
     print(
         f"  Symptom (flagged) intervals:             {tot_symp_int:>14,}"
-        + (f"  ({100*tot_symp_int/tot_elig_int:.4f}%)" if tot_elig_int else "")
+        + (f"  ({100 * tot_symp_int / tot_elig_int:.4f}%)" if tot_elig_int else "")
     )
     print(f"  Est. energy curtailed (Method A proxy):  {tot_proxy_kwh:>14,.1f} kWh")
     if eligible_context is not None and tot_el_pot > 0:
         print(
-            f"  Share of eligible potential generation:  {100*tot_proxy_kwh/tot_el_pot:>14.4f}%"
+            f"  Share of eligible potential generation:  {100 * tot_proxy_kwh / tot_el_pot:>14.4f}%"
         )
     if all_context is not None and tot_all_pot > 0:
         print(
-            f"  Share of all potential generation:       {100*tot_proxy_kwh/tot_all_pot:>14.4f}%"
+            f"  Share of all potential generation:       {100 * tot_proxy_kwh / tot_all_pot:>14.4f}%"
         )
     print()
 
@@ -271,7 +271,7 @@ def print_fleet_summary(
     print(f"  Counterfactual-covered potential:        {tot_cov_pot:>14,.0f} kWh")
     if tot_cov_pot > 0:
         print(
-            f"  Attributed / covered potential:          {100*tot_attr/tot_cov_pot:>14.4f}%"
+            f"  Attributed / covered potential:          {100 * tot_attr / tot_cov_pot:>14.4f}%"
         )
     print()
 
@@ -281,7 +281,7 @@ def print_fleet_summary(
     print("-" * W)
     if tot_attr > 0:
         print(
-            f"  Method A proxy is {tot_proxy_kwh/tot_attr:>.1f}x the Method B attribution."
+            f"  Method A proxy is {tot_proxy_kwh / tot_attr:>.1f}x the Method B attribution."
         )
     print(f"  Method A over-counts because it assumes every interval where Q ate")
     print(f"  circle-room was sun-limited; Method B only counts intervals where the")

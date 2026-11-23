@@ -59,7 +59,7 @@ MODE_MAP = {
         "table": TABLES["conformance_voltvar"],
         # R5: adverse + inactive + significant_shortfall
         "rank_expr": (
-            "Q_adverse_count + Q_inactive_count " "+ Q_significant_shortfall_count"
+            "Q_adverse_count + Q_inactive_count + Q_significant_shortfall_count"
         ),
         "logical": "conformance_voltvar",
     },
@@ -250,7 +250,7 @@ def pull_site_telemetry(
             f"""
             SELECT DISTINCT month FROM ts
             JOIN (SELECT DISTINCT circuit_id FROM meta_up23c
-                  WHERE is_pv = True AND site_id = {info['site_id']}) m
+                  WHERE is_pv = True AND site_id = {info["site_id"]}) m
               USING (circuit_id)
             WHERE year = {plot_year} AND is_pv = True
             ORDER BY month
@@ -264,10 +264,10 @@ def pull_site_telemetry(
             monthly = aq_func(
                 f"""
                 SELECT month,
-                       round(100.0 * sum({cfg['rank_expr']})
+                       round(100.0 * sum({cfg["rank_expr"]})
                              / nullif(sum(total_count), 0), 2) AS nc_pct
-                FROM {cfg['table']}
-                WHERE year = {plot_year} AND site_id = {info['site_id']}
+                FROM {cfg["table"]}
+                WHERE year = {plot_year} AND site_id = {info["site_id"]}
                 GROUP BY month
                 HAVING sum(total_count) > 0
                 ORDER BY nc_pct {order}
@@ -294,7 +294,7 @@ def pull_site_telemetry(
                energy_reactive
         FROM ts
         WHERE is_pv = True AND year = {plot_year} {month_clause}
-          AND circuit_id = {info['circuit_id']}
+          AND circuit_id = {info["circuit_id"]}
         ORDER BY t_stamp
     """,
         database=SAI,

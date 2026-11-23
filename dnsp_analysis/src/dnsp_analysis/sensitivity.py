@@ -169,7 +169,7 @@ def capacity_percentile_sensitivity(
                 SELECT
                     avg(capacity_proxy_va) AS mean_capacity_proxy_va,
                     median(capacity_proxy_va) AS median_capacity_proxy_va
-                FROM read_parquet({sql_string(summary['output'])})
+                FROM read_parquet({sql_string(summary["output"])})
                 """
             ).fetchone()
         finally:

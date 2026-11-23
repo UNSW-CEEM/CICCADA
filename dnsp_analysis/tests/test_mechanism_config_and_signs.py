@@ -45,7 +45,7 @@ def test_phase_scope_basis_is_restricted_and_defaults_der_inferred() -> None:
     assert all_phases.comparison_p_column == "p_export_net_observed_w"
     assert all_phases.comparison_q_absorbing_column == "q_absorbing_net_observed_var"
     assert all_phases.power_scope_complete_sql == (
-        "(s.measured_power_phase_rows = s.observed_phase_rows " "AND s.observed_phase_rows > 0)"
+        "(s.measured_power_phase_rows = s.observed_phase_rows AND s.observed_phase_rows > 0)"
     )
     assert all_phases.phase_scope_sql == "'all_phases'"
     assert "__phase_all_phases__" in all_phases.methodology_id

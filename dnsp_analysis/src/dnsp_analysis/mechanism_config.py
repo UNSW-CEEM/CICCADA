@@ -140,9 +140,7 @@ class MechanismAnalysisConfig:
         """
         if self.phase_scope_basis == "der_inferred":
             return "s.der_phase_power_complete"
-        return (
-            "(s.measured_power_phase_rows = s.observed_phase_rows " "AND s.observed_phase_rows > 0)"
-        )
+        return "(s.measured_power_phase_rows = s.observed_phase_rows AND s.observed_phase_rows > 0)"
 
     @property
     def phase_scope_sql(self) -> str:

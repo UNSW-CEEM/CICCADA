@@ -174,7 +174,7 @@ def _insert_sql_basic(
     -- gate the VERDICT on V > 253.
     scored AS (
         SELECT site_id, P_kW, V,
-               {temporal_cols('t_stamp')},
+               {temporal_cols("t_stamp")},
                CASE WHEN V {vw_exposed}
                     THEN greatest(0, P_kW - max_P_volt_watt)
                     ELSE NULL END AS nonconformance_voltwatt
@@ -278,7 +278,7 @@ def _insert_sql_ghi(
             V,
             uncurtailed_P,
             max_P_volt_watt,
-            {temporal_cols('t_stamp')},
+            {temporal_cols("t_stamp")},
 
             -- A Volt-Watt verdict is assessable when:
             --

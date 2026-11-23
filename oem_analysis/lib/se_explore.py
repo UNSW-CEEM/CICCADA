@@ -209,8 +209,8 @@ def site_days_available(
         f"""
         SELECT CAST(ts_aest AS DATE)                        AS day_aest,
                count(*)                                     AS n_intervals,
-               count(*) FILTER (WHERE {v} > {_A['VVAR']['V3']}) AS n_above_240,
-               count(*) FILTER (WHERE {v} > {_A['VW']['V1']})   AS n_above_253,
+               count(*) FILTER (WHERE {v} > {_A["VVAR"]["V3"]}) AS n_above_240,
+               count(*) FILTER (WHERE {v} > {_A["VW"]["V1"]})   AS n_above_253,
                round(max({v}), 1)                           AS max_V,
                round(max(P_kW), 2)                          AS max_P_kW,
                round(max(abs(Q_kvar)), 3)                   AS max_abs_Q_kvar
@@ -434,7 +434,7 @@ def site_voltwatt_day(con, site_alias: str, day: str, config=None) -> pd.DataFra
             SELECT i.ts_aest, {v} AS V, i.P_kW, {rating} AS rating_kva,
                    i.derating_active, {cf_select} AS uncurtailed_P
             FROM se_interval i
-            {contract.cohort_join_sql('i')}
+            {contract.cohort_join_sql("i")}
             {cf_join}
             WHERE i.site_alias = '{site_alias}'
               AND CAST(i.ts_aest AS DATE) = DATE '{day}'
@@ -443,9 +443,9 @@ def site_voltwatt_day(con, site_alias: str, day: str, config=None) -> pd.DataFra
             SELECT *, ({max_p}) + {tol} AS P_ceiling_kW FROM base
         )
         SELECT *,
-               ({v_scored} > {_A['VW']['V1']})                       AS exposed,
-               ({v_scored} > {_A['VW']['V1']} AND P_kW > P_ceiling_kW) AS nonconformant,
-               ({v_scored} > {_A['VW']['V1']}
+               ({v_scored} > {_A["VW"]["V1"]})                       AS exposed,
+               ({v_scored} > {_A["VW"]["V1"]} AND P_kW > P_ceiling_kW) AS nonconformant,
+               ({v_scored} > {_A["VW"]["V1"]}
                  AND P_kW <= P_ceiling_kW
                  AND uncurtailed_P > P_ceiling_kW)                   AS curtailed
         FROM ceil
@@ -546,7 +546,7 @@ def plot_voltwatt_day(frame, site_alias: str, day: str, config=None, figsize=(13
             color=C_ACCENT,
             alpha=0.32,
             zorder=2,
-            label="Curtailment" "the ceiling",
+            label="Curtailmentthe ceiling",
         )
     ax.fill_between(
         t,
@@ -835,9 +835,7 @@ def site_voltwatt_categories(
     """
     frame = site_voltwatt_day(con, site_alias, day, config) if day else None
     if frame is None:
-        raise ValueError(
-            "site_voltwatt_categories needs a day; " "pass day='YYYY-MM-DD'"
-        )
+        raise ValueError("site_voltwatt_categories needs a day; pass day='YYYY-MM-DD'")
 
     d = frame.copy()
     exposed = d.exposed.fillna(False).to_numpy(bool)
@@ -962,7 +960,7 @@ def voltwatt_counterfactual_gaps(
                    CAST(date_trunc('minute', ts_aest)
                         - INTERVAL '1' MINUTE
                           * (minute(ts_aest) % {ctf.TIME_BIN_MIN}) AS TIME) AS tod_bin,
-                   {contract.voltage_sql(config.voltage_aggregation, 'i')} AS V
+                   {contract.voltage_sql(config.voltage_aggregation, "i")} AS V
             FROM se_interval i
             WHERE site_alias = '{site_alias}'
               AND CAST(ts_aest AS DATE) = DATE '{day}'
@@ -970,7 +968,7 @@ def voltwatt_counterfactual_gaps(
         SELECT d.tod_bin,
                count(*)                                    AS intervals_on_day,
                round(avg(d.V), 1)                          AS mean_V,
-               count(*) FILTER (WHERE d.V > {_A['VW']['V1']}) AS n_exposed,
+               count(*) FILTER (WHERE d.V > {_A["VW"]["V1"]}) AS n_exposed,
                (m.site_alias IS NOT NULL)                  AS model_exists,
                any_value(m.n)                              AS model_train_points
         FROM day_bins d
@@ -1452,7 +1450,7 @@ def plot_operational(
         color=Cc,
         lw=1.6,
         zorder=4,
-        label=f"Volt-Watt ceiling (+{tol*100:.0f}% tol)",
+        label=f"Volt-Watt ceiling (+{tol * 100:.0f}% tol)",
     )
     ax_p.plot(t, P_pct, color=Cp, lw=1.3, zorder=5, label="Measured P (% of s_99)")
     ax_p.axhline(100, color=Cp, lw=0.6, ls=":", alpha=0.45)
@@ -1501,7 +1499,7 @@ def plot_operational(
             Patch(
                 color=C_REF,
                 alpha=0.40,
-                label=f"Required Q band (+/-{tol*100:.0f}% of s_99)",
+                label=f"Required Q band (+/-{tol * 100:.0f}% of s_99)",
             ),
             plt.Line2D(
                 [0], [0], color=Cq, lw=1.4, label=f"Measured Q - {orientation.upper()}"
@@ -1551,7 +1549,7 @@ def plot_operational(
                 color=C_NA,
                 lw=4,
                 alpha=0.80,
-                label=f"Not assessable (|P| < {_A['QCAP']['P_MIN']*100:.0f}% of s_99)",
+                label=f"Not assessable (|P| < {_A['QCAP']['P_MIN'] * 100:.0f}% of s_99)",
             ),
         ],
         fontsize=7,

@@ -180,7 +180,7 @@ def voltvar_interval_sql(
                s.is_three_phase,
                s.state
         FROM se_interval i
-        {contract.cohort_join_sql('i')}
+        {contract.cohort_join_sql("i")}
         WHERE {contract.cohort_where_sql(config)}
           AND i.P_kW IS NOT NULL
           AND i.Q_kvar IS NOT NULL
@@ -226,7 +226,7 @@ def voltvar_interval_sql(
                   AND Q_kvar < 0
                   AND sqrt(power(Q_kvar, 2) + power(P_kW, 2)) >= empirical_limit
                  THEN 1 ELSE 0 END AS curtailment_eligible,
-            CASE WHEN V > {_A['VVAR']['V3']} THEN 1 ELSE 0 END AS exposed
+            CASE WHEN V > {_A["VVAR"]["V3"]} THEN 1 ELSE 0 END AS exposed
         FROM q_impact
     )
     SELECT * FROM classified
@@ -985,7 +985,7 @@ def voltwatt_site_day(con: duckdb.DuckDBPyConnection, config=None) -> pd.DataFra
                    {rating} AS rating_capacity,
                    i.derating_active, s.is_three_phase, s.state
             FROM se_interval i
-            {contract.cohort_join_sql('i')}
+            {contract.cohort_join_sql("i")}
             WHERE {contract.cohort_where_sql(config)}
               AND i.P_kW IS NOT NULL AND {v} IS NOT NULL
         ),
@@ -1211,7 +1211,7 @@ def voltwatt_ghi_site_day(con: duckdb.DuckDBPyConnection, config=None) -> pd.Dat
                    {rating} AS rating_capacity,
                    s.is_three_phase, s.state
             FROM se_interval i
-            {contract.cohort_join_sql('i')}
+            {contract.cohort_join_sql("i")}
             WHERE {contract.cohort_where_sql(config)}
               AND i.P_kW IS NOT NULL AND {v} IS NOT NULL
         ),

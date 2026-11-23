@@ -406,7 +406,7 @@ def run_resilient(
                         done.append((month, n_parts * 2, sub))
                     except Exception as e:
                         print(
-                            f"  !! {year}-{month:02d} part {sub}/{n_parts*2} FAILED: {e}"
+                            f"  !! {year}-{month:02d} part {sub}/{n_parts * 2} FAILED: {e}"
                         )
                         failed.append((month, n_parts * 2, sub))
             elif not ok:

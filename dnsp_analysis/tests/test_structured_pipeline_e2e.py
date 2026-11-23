@@ -174,7 +174,7 @@ def test_structured_telemetry_structures_and_validates_without_claiming_conforma
     assert validation["structured_site_rows"] == 3
     assert validation["formal_conformance_rows"] == 0
     profile = duckdb.sql(
-        f"SELECT * FROM read_parquet('{site_profile_path(config, scope)}') " "WHERE serial='2'"
+        f"SELECT * FROM read_parquet('{site_profile_path(config, scope)}') WHERE serial='2'"
     ).fetchone()
     assert profile is not None
     site_glob = str(structured_site_output_path(config, scope) / "**" / "*.parquet")

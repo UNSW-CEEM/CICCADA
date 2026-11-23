@@ -239,9 +239,9 @@ def test_sql_matches_zoneinfo_across_the_year(con):
             for local, produced in got
             if produced != ing.resolve_timestamp(local, tz)
         ]
-        assert (
-            not mismatches
-        ), f"{tz}: {len(mismatches)} mismatches, first {mismatches[0]}"
+        assert not mismatches, (
+            f"{tz}: {len(mismatches)} mismatches, first {mismatches[0]}"
+        )
 
 
 def test_analysis_frame_is_a_fixed_ten_hour_offset(con):
@@ -251,7 +251,7 @@ def test_analysis_frame_is_a_fixed_ten_hour_offset(con):
     """
     got = con.execute(
         f"""
-        SELECT ts, {ing.ts_aest_sql('ts')} AS aest
+        SELECT ts, {ing.ts_aest_sql("ts")} AS aest
         FROM (VALUES (TIMESTAMP '2025-01-15 02:00:00'),
                      (TIMESTAMP '2025-06-15 02:00:00'),
                      (TIMESTAMP '{DST_END} 16:30:00'),

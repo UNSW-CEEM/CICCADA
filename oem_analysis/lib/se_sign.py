@@ -62,7 +62,7 @@ def site_response_classification(
             SELECT i.site_alias, s.is_three_phase, s.state,
                    {v} AS V, i.Q_kvar, i.P_kW
             FROM se_interval i
-            {contract.cohort_join_sql('i')}
+            {contract.cohort_join_sql("i")}
             WHERE {contract.cohort_where_sql(config)}
               AND i.P_kW > 0.2 AND i.Q_kvar IS NOT NULL
               AND {v} BETWEEN 200 AND 270
@@ -117,7 +117,7 @@ def deadband_shape(
                round(median(abs(i.Q_kvar)), 4)          AS median_abs_Q_kvar,
                round(median(i.P_kW), 3)                 AS median_P_kW
         FROM se_interval i
-        {contract.cohort_join_sql('i')}
+        {contract.cohort_join_sql("i")}
         WHERE {contract.cohort_where_sql(config)}
           AND i.P_kW > 0.5 AND i.Q_kvar IS NOT NULL
           AND {v} BETWEEN 210 AND 262
@@ -420,7 +420,7 @@ def sign_examples(
                    abs(median(i.Q_kvar) FILTER (WHERE {v} > 250)
                      - median(i.Q_kvar) FILTER (WHERE {v} < 235)) AS swing
             FROM se_interval i
-            {contract.cohort_join_sql('i')}
+            {contract.cohort_join_sql("i")}
             WHERE {contract.cohort_where_sql(config)}
               AND i.P_kW > {min_p_kw} AND {v} BETWEEN 200 AND 270
             GROUP BY 1, 2
@@ -486,9 +486,9 @@ def sign_example_errors(examples: pd.DataFrame, v_min: float = 240.0) -> pd.Data
         mean_err_flipped=("err_flipped", "mean"),
     )
     out["better"] = out.apply(
-        lambda r: "flipped"
-        if r.mean_err_flipped < r.mean_err_as_stored
-        else "as stored",
+        lambda r: (
+            "flipped" if r.mean_err_flipped < r.mean_err_as_stored else "as stored"
+        ),
         axis=1,
     )
     out["improvement_kvar"] = (out.mean_err_as_stored - out.mean_err_flipped).round(4)

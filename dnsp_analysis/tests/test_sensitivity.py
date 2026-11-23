@@ -293,7 +293,7 @@ def _write_voltvar_inputs(config: FoundationConfig) -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         connection.register("_frame", frame)
         connection.execute(
-            f"COPY _frame TO '{output}' " "(FORMAT PARQUET, PARTITION_BY (year_utc, month_utc))"
+            f"COPY _frame TO '{output}' (FORMAT PARQUET, PARTITION_BY (year_utc, month_utc))"
         )
         connection.unregister("_frame")
     eligibility_path = site_eligibility_path(config)
