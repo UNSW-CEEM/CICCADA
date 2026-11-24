@@ -620,7 +620,6 @@ def _vvar_sql_categories(tol: float) -> str:
 LEGACY_FAILURES = ("adverse", "inactive", "significant_shortfall")
 
 
-
 def find_examples(
     month: str,
     n: int = 3,
@@ -673,7 +672,9 @@ def find_examples(
     fdef = failure_definition or CONFORMANCE["FAILURE_DEFINITION_DEFAULT"]
     fails = ", ".join(f"'{c}'" for c in failure_categories(fdef))
     v_lo, v_hi = CONFORMANCE["VALID_V_OPEN"]
-    v_pred = f"V >= {v_floor} AND V < {v_hi}" if v_floor else f"V > {v_lo} AND V < {v_hi}"
+    v_pred = (
+        f"V >= {v_floor} AND V < {v_hi}" if v_floor else f"V > {v_lo} AND V < {v_hi}"
+    )
 
     store = local_store_dir()
     files, t0, t1 = _month_scan(store, month)
@@ -729,10 +730,14 @@ def find_examples(
         days = con.execute(sql).df()
     finally:
         con.close()
-    return _pick_examples(days, n, vv_min, vw_min, conform_max, fail_min, all_days, month, tol)
+    return _pick_examples(
+        days, n, vv_min, vw_min, conform_max, fail_min, all_days, month, tol
+    )
 
 
-def _pick_examples(days, n, vv_min, vw_min, conform_max, fail_min, all_days, month, tol):
+def _pick_examples(
+    days, n, vv_min, vw_min, conform_max, fail_min, all_days, month, tol
+):
     """Status per mode and the example picks (split out so it can be tested offline)."""
 
     def status(nc, total, need):
@@ -746,7 +751,9 @@ def _pick_examples(days, n, vv_min, vw_min, conform_max, fail_min, all_days, mon
     vv_nc = days.vv_fail_A + days.vv_fail_C
     vv_den = days.vv_n + days.vv_fail_C
     days["cohort"] = np.where(days.n_pv == 3, "3P", "1P")
-    days["volt_var"] = np.where(days.vv_n < vv_min, "not exposed", status(vv_nc, vv_den, 0))
+    days["volt_var"] = np.where(
+        days.vv_n < vv_min, "not exposed", status(vv_nc, vv_den, 0)
+    )
     days["volt_watt"] = status(days.vw_nc, days.vw_n, vw_min)
     days["vv_nc_share"] = (vv_nc / vv_den.where(vv_den > 0)).round(2)
     days["vw_nc_share"] = (days.vw_nc / days.vw_n.where(days.vw_n > 0)).round(2)
@@ -789,7 +796,6 @@ def _pick_examples(days, n, vv_min, vw_min, conform_max, fail_min, all_days, mon
         f"{month}: {days.site_id.nunique():,} sites, {len(days):,} full site-days scanned"
     )
     return out[cols]
-
 
 
 # =============================================================================
@@ -983,13 +989,16 @@ def category_counts(
         for z in ZONE_CODES
         for c in VV_CATEGORIES
     ]
-    zn = [f"count(*) FILTER (WHERE valid AND zone = '{z}') AS n_{z}" for z in ZONE_CODES]
+    zn = [
+        f"count(*) FILTER (WHERE valid AND zone = '{z}') AS n_{z}" for z in ZONE_CODES
+    ]
     lc = [
         f"count(*) FILTER (WHERE valid AND legacy_category = '{c}') AS legacy_{c}"
         for c in LEGACY_CATEGORIES
     ]
     vc = [
-        f"count(*) FILTER (WHERE valid AND vw_cat = '{c}') AS vw_{c}" for c in VW_CATEGORIES
+        f"count(*) FILTER (WHERE valid AND vw_cat = '{c}') AS vw_{c}"
+        for c in VW_CATEGORIES
     ]
     legacy_fail = ", ".join(f"'{c}'" for c in LEGACY_FAILURES)
     cnt = ",\n           ".join(
@@ -1114,12 +1123,20 @@ def make_synthetic_category_counts(
         # category probabilities per zone, in VV_CATEGORIES order:
         # adverse, inactive, sig. shortfall, voltage deadband violation, near, pass, over
         p = {
-            "A": [0.0, 0.01, 0.02, 0, 0.03, 0.92, 0.02] if ok else rng.dirichlet([1, 6, 3, 0.01, 1, 1, 0.3]),
+            "A": [0.0, 0.01, 0.02, 0, 0.03, 0.92, 0.02]
+            if ok
+            else rng.dirichlet([1, 6, 3, 0.01, 1, 1, 0.3]),
             "B": [0, 0, 0, 0.02, 0, 0.98, 0] if ok else [0, 0, 0, 0.25, 0, 0.75, 0],
             "C": [0.005, 0, 0, 0, 0, 0.99, 0.005],
             "D": [0, 0, 0, 0.01, 0, 0.99, 0] if ok else [0, 0, 0, 0.08, 0, 0.92, 0],
         }
-        row = {"site_id": 8000 + i, "cohort": cohort, "n_rows": n, "n_valid": n_valid, "n_incomplete": n_inc}
+        row = {
+            "site_id": 8000 + i,
+            "cohort": cohort,
+            "n_rows": n,
+            "n_valid": n_valid,
+            "n_incomplete": n_inc,
+        }
         for z in ZONE_CODES:
             pz = np.asarray(p[z], dtype=float)
             k = rng.multinomial(zone_n[z], pz / pz.sum())
@@ -1127,14 +1144,18 @@ def make_synthetic_category_counts(
             row.update({f"n_{z}_{c}": int(v) for c, v in zip(VV_CATEGORIES, k)})
         row["n_days_A"] = int(min(31, max(0, row["n_A"] // 12)))
         legacy_total = row["n_A"] + row["n_B"]
-        legacy_fail = row["n_A_inactive"] + row["n_A_significant_shortfall"] + row["n_A_adverse"]
+        legacy_fail = (
+            row["n_A_inactive"] + row["n_A_significant_shortfall"] + row["n_A_adverse"]
+        )
         row["n_legacy_total"], row["n_legacy_fail"] = legacy_total, legacy_fail
         row.update({f"legacy_{c}": 0 for c in LEGACY_CATEGORIES})
         row["legacy_adverse"] = row["n_A_adverse"]
         row["legacy_inactive"] = row["n_A_inactive"]
         row["legacy_significant_shortfall"] = row["n_A_significant_shortfall"]
         row["legacy_near_conformant"] = row["n_A_near_conformant"]
-        row["legacy_major_surplus"] = row["n_A_over_response"] + row["n_B_voltage_deadband_violation"]
+        row["legacy_major_surplus"] = (
+            row["n_A_over_response"] + row["n_B_voltage_deadband_violation"]
+        )
         row["legacy_inside_band"] = row["n_A_pass"] + row["n_B_pass"]
         row["legacy_not_assessable"] = row["n_C"] + row["n_D"]
         vw_exposed = int(n_valid * rng.uniform(0, 0.05))
@@ -1157,7 +1178,6 @@ def make_synthetic_category_counts(
         rows.append(row)
     pd.DataFrame(rows).to_csv(path, index=False)
     return path
-
 
 
 def slope_sites() -> pd.DataFrame:

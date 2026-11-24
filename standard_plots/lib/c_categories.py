@@ -35,7 +35,6 @@ site is conformant if its non-conforming share <= that metric's threshold (10%),
 'not assessable' below that metric's minimum. Voltage exposure is carried along.
 """
 
-
 from __future__ import annotations
 
 import sys
@@ -70,7 +69,11 @@ STANDARD_MANDATORY = pd.Timestamp("2021-12-18")
 VV = [
     ("adverse", "Adverse", C.VVAR_INTERVAL["adverse"]),
     ("inactive", "Inactive", C.VVAR_INTERVAL["inactive"]),
-    ("significant_shortfall", "Significant shortfall", C.VVAR_INTERVAL["significant_shortfall"]),
+    (
+        "significant_shortfall",
+        "Significant shortfall",
+        C.VVAR_INTERVAL["significant_shortfall"],
+    ),
     (
         "voltage_deadband_violation",
         "Voltage deadband violation",
@@ -232,7 +235,9 @@ def site_verdicts(
     for name in METRIC_LABELS:
         vcol = metric_columns(name)["verdict"]
         if vcol in d:
-            d[f"{name}_ok"] = (d[vcol] == "conformant").where(d[vcol] != "not assessable")
+            d[f"{name}_ok"] = (d[vcol] == "conformant").where(
+                d[vcol] != "not assessable"
+            )
     return d
 
 
@@ -281,9 +286,13 @@ def category_table(
     elif mode == "voltvar":
         zones = tuple(zones)
         cats = [c for c, _, _ in VV]
-        t = pd.DataFrame(
-            {c: d[[f"n_{z}_{c}" for z in zones]].sum(axis=1) for c in cats}
-        ).groupby(d[key]).sum()
+        t = (
+            pd.DataFrame(
+                {c: d[[f"n_{z}_{c}" for z in zones]].sum(axis=1) for c in cats}
+            )
+            .groupby(d[key])
+            .sum()
+        )
         t.attrs["zones"] = zones
     else:
         pre = "legacy_" if mode == "voltvar_legacy" else "vw_"
@@ -294,7 +303,6 @@ def category_table(
     t.index.name = by or ""
     t.attrs.update(metric=metric or CONFORMANCE["METRIC_DEFAULT"])
     return t[t.n > 0]
-
 
 
 # =============================================================================
@@ -450,7 +458,6 @@ def interval_categories(
         {"vv": pts.category, "zone": pts.zone, "vw": vw, "date": pts.date},
         index=pts.index,
     )
-
 
 
 def plot_category_days(

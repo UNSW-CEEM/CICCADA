@@ -32,10 +32,10 @@ Workflow, identical in every pipeline:
     counts = zone_counts(scored, by=["site_id", "month"])
     out    = conformance_metrics(counts, failure_definition="reduced")
 
-`zone_counts` stores interval counts per zone x category, 
-so every metric is a sum of columns and all columns are additive across months 
-(also n_days_A, because days do not overlap between months). 
-The failure definition is applied at metric time, so one count table serves both. 
+`zone_counts` stores interval counts per zone x category,
+so every metric is a sum of columns and all columns are additive across months
+(also n_days_A, because days do not overlap between months).
+The failure definition is applied at metric time, so one count table serves both.
 The tolerance is baked into the categories and recorded in a `tol` column,
 never add up count tables with different `tol`.
 
@@ -101,7 +101,7 @@ def expected_intervals(year, month, interval_minutes=CONFORMANCE["INTERVAL_MINUT
 # ---------------------------------------------------------------------------
 def legacy_category(q, v, p, s_rated, tol=CONFORMANCE["TOL_DEFAULT"]):
     """
-    Existing Stage 2 bucket per interval 
+    Existing Stage 2 bucket per interval
     (build_conformance_voltvar.py, capability_profile='review_corrected'): clamped band, nearest-edge Q_impact, then QIMP thresholds.
     Returns (assessable, category) arrays.
     Category is None when Q is inside the band or the interval is below 20% P.
@@ -154,8 +154,8 @@ def score_intervals(
     with_legacy=True,
 ):
     """
-    Add validity flags, zone, category (and the legacy-metric bucket) to a one-row-per-interval DataFrame. 
-    Column names are parameters so every pipeline can pass its own. 
+    Add validity flags, zone, category (and the legacy-metric bucket) to a one-row-per-interval DataFrame.
+    Column names are parameters so every pipeline can pass its own.
     `key` (e.g. ["site_id", "t_stamp"]) drops duplicate timestamps; the number dropped is returned in `attrs`.
     """
     tol = _check_tol(tol)
@@ -226,11 +226,11 @@ def count_columns():
 
 def zone_counts(scored, by=("site_id", "month"), day_col="day"):
     """
-    Counts per group. 
-    
+    Counts per group.
+
     All columns are additive across groups with the same `tol` (n_days_A too, as long as groups do not share days).
 
-    Columns: 
+    Columns:
     n_rows, n_valid, n_missing_v, n_v_out_of_range, n_missing_p,
     n_missing_q, n_missing_rating, n_A..n_D, n_{zone}_{category},
     n_days_A, n_legacy_total, n_legacy_fail, tol, p_tol_vvar.
@@ -405,9 +405,13 @@ def conformance_metrics(
 
     # 3. Legacy conformance rate (back-comparison)
     if "n_legacy_total" in out.columns:
-        ok = (out["n_legacy_total"] > 0) & (out["n_legacy_total"] >= legacy_min_intervals)
+        ok = (out["n_legacy_total"] > 0) & (
+            out["n_legacy_total"] >= legacy_min_intervals
+        )
         out["legacy_conformance_rate_assessable"] = ok
-        out["legacy_nonconformance_rate"] = _div(out["n_legacy_fail"], out["n_legacy_total"])
+        out["legacy_nonconformance_rate"] = _div(
+            out["n_legacy_fail"], out["n_legacy_total"]
+        )
         out["legacy_conformance_rate"] = 1.0 - out["legacy_nonconformance_rate"]
         out["legacy_conformance_rate_verdict"] = _verdict(
             out["legacy_nonconformance_rate"], ok, legacy_threshold

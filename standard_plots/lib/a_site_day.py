@@ -208,14 +208,18 @@ NOT_COUNTED_REASON = {
 def _options(metric=None, tol=None, failure_definition=None):
     metric = metric or CONFORMANCE["METRIC_DEFAULT"]
     if metric not in METRIC_LABELS:
-        raise ValueError(f"metric must be one of {sorted(METRIC_LABELS)}, got {metric!r}")
+        raise ValueError(
+            f"metric must be one of {sorted(METRIC_LABELS)}, got {metric!r}"
+        )
     tol = CONFORMANCE["TOL_DEFAULT"] if tol is None else tol
     fdef = failure_definition or CONFORMANCE["FAILURE_DEFINITION_DEFAULT"]
     return metric, tol, fdef
 
 
 def assess_voltvar(
-    day: SiteDay, metric: str | None = None, tol: float | None = None,
+    day: SiteDay,
+    metric: str | None = None,
+    tol: float | None = None,
     failure_definition: str | None = None,
 ) -> pd.DataFrame:
     """
@@ -265,7 +269,9 @@ def assess_voltvar(
     a["counted"] = counted
     a["failure"] = counted & fail
     above, below = a.q > a.q_max_final, a.q < a.q_min_final
-    a["nc_pct"] = np.where(above, a.q - a.q_max_final, np.where(below, a.q - a.q_min_final, 0.0))
+    a["nc_pct"] = np.where(
+        above, a.q - a.q_max_final, np.where(below, a.q - a.q_min_final, 0.0)
+    )
     a["nc_kvar"] = a.nc_pct.abs() / 100 * S
     counts = zone_counts(sc, by=["site"], day_col="day")
     a.attrs.update(
@@ -320,7 +326,6 @@ def metric_summary(vv: pd.DataFrame) -> str:
         )
     )
     return line + "\n" + line2
-
 
 
 def assess_voltwatt(day: SiteDay) -> pd.DataFrame:
@@ -583,8 +588,15 @@ def _zone_strip(ax, day: SiteDay, vv: pd.DataFrame):
     """Thin strip along the top of the panel: the zone of every interval."""
     for z in ZONES:
         ax.fill_between(
-            day.t, 0.965, 1.0, where=(vv.zone == z).to_numpy(), step="mid",
-            transform=ax.get_xaxis_transform(), facecolor=C.ZONE[z], lw=0, zorder=5,
+            day.t,
+            0.965,
+            1.0,
+            where=(vv.zone == z).to_numpy(),
+            step="mid",
+            transform=ax.get_xaxis_transform(),
+            facecolor=C.ZONE[z],
+            lw=0,
+            zorder=5,
         )
     return [
         Patch(facecolor=C.ZONE[z], label=ZONE_LABELS[z])
@@ -671,10 +683,10 @@ def panel_reactive_power(ax, day: SiteDay, vv: pd.DataFrame):
 
 def panel_nc_voltvar(ax, day: SiteDay, vv: pd.DataFrame):
     outside = vv.nc_pct != 0
-    colors = np.where(
-        vv.failure, C.STATUS["nonconformant"], C.NOT_COUNTED
+    colors = np.where(vv.failure, C.STATUS["nonconformant"], C.NOT_COUNTED)
+    ax.bar(
+        day.t, vv.nc_pct.where(outside), width=_bar_width(day), color=colors, zorder=3
     )
-    ax.bar(day.t, vv.nc_pct.where(outside), width=_bar_width(day), color=colors, zorder=3)
     ax.axhline(0, color=C.REFERENCE["zero"], lw=0.5)
     ax.set_ylabel("Volt-VAr\n(pp outside band)")
     ax.text(
@@ -690,7 +702,9 @@ def panel_nc_voltvar(ax, day: SiteDay, vv: pd.DataFrame):
     _legend(
         ax,
         handles=[
-            Patch(color=C.STATUS["nonconformant"], label="Outside band: counted failure"),
+            Patch(
+                color=C.STATUS["nonconformant"], label="Outside band: counted failure"
+            ),
             Patch(
                 color=C.NOT_COUNTED,
                 label="Outside band: not a failure under this metric / definition",
@@ -702,7 +716,6 @@ def panel_nc_voltvar(ax, day: SiteDay, vv: pd.DataFrame):
     )
     lim = max(2.0, float(np.nanmax(np.abs(vv.nc_pct))) * 1.6)
     ax.set_ylim(-lim, lim)
-
 
 
 def panel_nc_voltwatt(ax, day: SiteDay, vw: pd.DataFrame):
@@ -926,7 +939,6 @@ def plot_operational_day(
     panel_reactive_power(a_q, day, vv)
     panel_nc_voltvar(a_qnc, day, vv)
     return fig
-
 
 
 def plot_protective_day(df, rating_kva=None, meta: dict | None = None):

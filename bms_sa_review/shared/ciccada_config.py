@@ -70,33 +70,29 @@ AS4777 = {
 # ═══════════════════════════════════════════════════════════════════════════
 CONFORMANCE = {
     # Table 2.5 measurement accuracy: +/-4% of S_rated for P and Q.
-    # Default 4% for EVERY dataset (incl. OEM inverter telemetry, for now). 
+    # Default 4% for EVERY dataset (incl. OEM inverter telemetry, for now).
     # 0.0 = literal reading.
     # One parameter sets the Q band edges, the low-power band and the deadband.
     "TOL_OPTIONS": (0.0, 0.04),
     "TOL_DEFAULT": 0.04,
-    
-    # Active-power tolerance. 
-    # Applied to Volt-Watt now. 
-    # For Volt-VAr it is OFF by default; switch on with `apply_p_tol_vvar=True`, 
+    # Active-power tolerance.
+    # Applied to Volt-Watt now.
+    # For Volt-VAr it is OFF by default; switch on with `apply_p_tol_vvar=True`,
     ## which reads the20/60/80% capability boundaries at max(|P| - p_tol*S_rated, 0)
     # (i.e. in the inverter's favour).
     "P_TOL_DEFAULT": 0.04,
     "APPLY_P_TOL_VVAR": False,
-
     # Valid interval: V, P, Q and S_rated present, 0 < V < 300 V.
-    # Same voltage range as the original Volt-VAr build (voltage > 0 and voltage < 300). 
+    # Same voltage range as the original Volt-VAr build (voltage > 0 and voltage < 300).
     # Missing P or Q is DROPPED and counted (not scored as a pass, which a CASE ... ELSE 0 failure column does implicitly).
     "VALID_V_OPEN": (0.0, 300.0),
     "INTERVAL_MINUTES": 5,
-
-    # Remote conformance rate (option 3): a site/period is "not assessable" below these. 
+    # Remote conformance rate (option 3): a site/period is "not assessable" below these.
     # Lenient start values.
     # sensitivity planned.
     "MIN_ZONE_A_INTERVALS": 10,
     "MIN_ZONE_A_DAYS": 1,
-
-    # Interval categories (see as4777_curves.vvar_category) that count as a failure. 
+    # Interval categories (see as4777_curves.vvar_category) that count as a failure.
     # "reduced" = current Stage 2 headline (adverse + inactive + significant shortfall)
     #   PLUS voltage_deadband_violation (|Q| > tol while 220-240 V, zones B and D),
     #   which the current headline scores as a pass.
@@ -118,17 +114,14 @@ CONFORMANCE = {
     },
     "FAILURE_DEFINITION_DEFAULT": "reduced",
     # Selectable outputs.
-
     # Non-conformance frequency: Which sites to fix first (operational view):
     ### Non-conformant intervals as a share of all daily intervals, counting failures anywhere: high or low voltage, deadband, and low power.
     ### Mainly for networks (but potentially also useful to OEMs and installers for targeting remote setting fixes).
-
     # Remote conformance rate. Answering: Which inverters will respond when needed.
     ### Only intervals where the standard asks for a response and we can test it remotely (e.g. for Volt-VAr: P of at least 20% and voltage above 240 V or below 220 V).
     ### Deadband intervals are excluded (e.g. 220-240V for Volt-VAr).
     ### Low-power intervals are added only when they show a clear failure.
     ### Sites with too few of these intervals are reported as “not assessable” rather than as conformant.
-
     # legacy_conformance_rate = the Stage 2 / OEM headline used before the rework
     #   (P >= 20% at any voltage; voltage deadband intervals scored as passes).
     "METRICS": (
@@ -166,7 +159,6 @@ CONFORMANCE = {
 # so it cannot be forgotten mid-analysis.
 #
 TABLES = {
-
     # Stage 1 rebuilt
     "structured_data": "structured_data_v2_flex_included",
     "all_uncurtailedpv": "all_uncurtailedpv_v2_flex_included",

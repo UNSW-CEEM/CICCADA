@@ -8,8 +8,9 @@ Sign convention (generator convention, AS/NZS 4777.2 Fig 3.2):
   In the 240-258 V band the standard REQUIRES Q < 0 (absorbing).
 """
 
-import numpy as np
 import math
+
+import numpy as np
 from shared.ciccada_config import AS4777
 
 # ---------------------------------------------------------------------------
@@ -128,9 +129,9 @@ def q_cap_absorbing(p, s_rated):
     """
     Minimum absorbing reactive-power capability required by Figure 2.1. (Clause 2.6)
 
-    `s_rated` must be rated apparent power. 
+    `s_rated` must be rated apparent power.
 
-    In the current CICCADA metadata form 3rd party monitoring devices, 
+    In the current CICCADA metadata form 3rd party monitoring devices,
     `ac_capacity_kw` is used as an explicitly documented proxy
     because aseparate rated-apparent-power field is unavailable.
 
@@ -143,7 +144,7 @@ def q_cap_absorbing(p, s_rated):
         >0.80 S to 1.00 S  : apparent-power circle
         |P| >= S           :  0
 
-    Below 20% S_rated, zero means that Figure 2.1 specifies no quantified minimum capability. 
+    Below 20% S_rated, zero means that Figure 2.1 specifies no quantified minimum capability.
     It does not mean that the inverter is physically incapable of producing reactive power.
     """
 
@@ -176,7 +177,7 @@ def q_cap_absorbing_sql(p_col, s_col):
     Athena/Trino equivalent of q_cap_absorbing().
 
     `s_col` must represent rated apparent power.
-    It may be the documented `ac_capacity_kw` proxy, 
+    It may be the documented `ac_capacity_kw` proxy,
     or `S_99` only for an explicitly labelled sensitivity run.
     `S_99` is empirical and must not be presented as verified manufacturer S_rated.
 
@@ -207,7 +208,7 @@ def q_conformance_floor_absorbing(p, s_rated):
     """
     Minimum absorbing-Q response used by the field conformance assessment.
 
-    Unlike q_cap_absorbing(), this does not relax the required Volt-VAr response above 80% S_rated. 
+    Unlike q_cap_absorbing(), this does not relax the required Volt-VAr response above 80% S_rated.
     In that region, reactive-power priority requires active power to be reduced where necessary.
 
         |P| < 0.20 S       : no quantified minimum
@@ -238,7 +239,7 @@ def q_conformance_floor_absorbing(p, s_rated):
         q_to_p = math.sqrt(1.0 / pf_min**2 - 1.0)
         return -p_abs * q_to_p
 
-    # Above 80%, do not use the falling edge of the fixed-P circle as an excuse for deficient Q. 
+    # Above 80%, do not use the falling edge of the fixed-P circle as an excuse for deficient Q.
     # In that region, reactive-power priority requires active power to be reduced where necessary!!!
     return -q_absorbing_max * s_rated
 

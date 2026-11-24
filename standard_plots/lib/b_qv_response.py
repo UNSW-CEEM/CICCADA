@@ -131,9 +131,10 @@ def _counts_text(pts: pd.DataFrame) -> str:
     line2 = "Outside band:  " + "  ·  ".join(
         f"{lab} {c[k]:,} ({pct(c[k])})" for k, lab in CATEGORIES
     )
-    line3 = "Zones:  " + "  ·  ".join(f"{ZONE_LABELS[z]} {c['zone_' + z]:,}" for z in ZONES)
+    line3 = "Zones:  " + "  ·  ".join(
+        f"{ZONE_LABELS[z]} {c['zone_' + z]:,}" for z in ZONES
+    )
     return line1 + "\n" + line2 + "\n" + line3
-
 
 
 def binned_median(
@@ -187,7 +188,11 @@ def fit_slope(pts: pd.DataFrame, window: tuple[float, float] = SLOPE_WINDOW) -> 
 # 2. Shared axes
 # =============================================================================
 def qv_axes(
-    ax, window: bool = True, cap: bool = False, legend_extra=None, tol: float | None = None
+    ax,
+    window: bool = True,
+    cap: bool = False,
+    legend_extra=None,
+    tol: float | None = None,
 ):
     """Requirement, references and fixed ranges for any Q-V panel. cap: dashed Figure 2.1 44% line."""
     tol = TOL if tol is None else tol
@@ -429,10 +434,23 @@ def plot_qv_scatter(
             sub = pts[pts.zone == z]
             if len(sub):
                 ax.scatter(
-                    sub.V, sub.q_pct, s=8, color=C.ZONE_POINT[z], alpha=0.5, lw=0, zorder=3
+                    sub.V,
+                    sub.q_pct,
+                    s=8,
+                    color=C.ZONE_POINT[z],
+                    alpha=0.5,
+                    lw=0,
+                    zorder=3,
                 )
                 handles.append(
-                    Line2D([], [], ls="", marker="o", color=C.ZONE_POINT[z], label=ZONE_LABELS[z])
+                    Line2D(
+                        [],
+                        [],
+                        ls="",
+                        marker="o",
+                        color=C.ZONE_POINT[z],
+                        label=ZONE_LABELS[z],
+                    )
                 )
     else:
         col, cmap, lab, lim = {

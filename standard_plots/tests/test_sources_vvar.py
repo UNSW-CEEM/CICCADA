@@ -6,8 +6,8 @@ bms_sa_review/shared/vvar_metrics on the same intervals.
 Runs on a small invented local store written to a temp folder (no real data).
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -40,7 +40,9 @@ def _fake_store(tmp_path, tol_case_sites=6, days=4, seed=7):
         v = 236 + 10 * sun + rng.normal(0, 3, len(t_aest)) - 20 * (k == 5) * (hour < 8)
         p_tot = S * sun * rng.uniform(0.6, 1.0)
         gain = [0.0, -1.0, 1.0, -0.5, -1.2, 0.3][k]  # response strength / sign
-        q_tot = gain * np.clip((v - 240) / 18, 0, 1) * 0.6 * S + rng.normal(0, 0.03 * S, len(v))
+        q_tot = gain * np.clip((v - 240) / 18, 0, 1) * 0.6 * S + rng.normal(
+            0, 0.03 * S, len(v)
+        )
         for c in range(n_pv):
             vc = v + rng.normal(0, 0.5, len(v))
             pc, qc = p_tot / n_pv, q_tot / n_pv
@@ -87,10 +89,20 @@ def _python_counts(raw, meta, tol):
     g = (
         r[r.ok]
         .groupby(["site_id", "t_aest"])
-        .agg(V=("V", "mean"), P_kW=("P_kw_signed", "sum"), Q_kvar=("Q_kvar_signed", "sum"), n_ok=("V", "size"))
+        .agg(
+            V=("V", "mean"),
+            P_kW=("P_kw_signed", "sum"),
+            Q_kvar=("Q_kvar_signed", "sum"),
+            n_ok=("V", "size"),
+        )
         .reset_index()
         .merge(n_pv, on="site_id")
-        .merge(meta[["site_id", "ac_capacity_kw"]].rename(columns={"ac_capacity_kw": "s_rated"}), on="site_id")
+        .merge(
+            meta[["site_id", "ac_capacity_kw"]].rename(
+                columns={"ac_capacity_kw": "s_rated"}
+            ),
+            on="site_id",
+        )
     )
     g = g[g.n_ok == g.n_pv]  # complete timestamps only
     g["day"] = g.t_aest.dt.date
@@ -107,7 +119,11 @@ def test_category_counts_match_shared_python(tmp_path, monkeypatch, tol):
     py = _python_counts(raw, meta, tol)
     sql = sql.set_index("site_id").sort_index()
     py = py.set_index("site_id").sort_index()
-    cols = [c for c in py.columns if c.startswith("n_") and c in sql.columns and not c.startswith("n_missing")]
+    cols = [
+        c
+        for c in py.columns
+        if c.startswith("n_") and c in sql.columns and not c.startswith("n_missing")
+    ]
     cols = [c for c in cols if c not in ("n_rows",)]
     assert "n_A_adverse" in cols and "n_legacy_fail" in cols and "n_days_A" in cols
     pd.testing.assert_frame_equal(
@@ -115,8 +131,12 @@ def test_category_counts_match_shared_python(tmp_path, monkeypatch, tol):
     )
     # metrics run directly on the scan output
     m = conformance_metrics(sql.reset_index())
-    assert {"nonconformance_frequency_verdict", "remote_conformance_rate_verdict",
-            "legacy_conformance_rate_verdict", "voltage_exposure"} <= set(m.columns)
+    assert {
+        "nonconformance_frequency_verdict",
+        "remote_conformance_rate_verdict",
+        "legacy_conformance_rate_verdict",
+        "voltage_exposure",
+    } <= set(m.columns)
 
 
 def test_find_examples_uses_zone_rules(tmp_path, monkeypatch):
@@ -124,7 +144,9 @@ def test_find_examples_uses_zone_rules(tmp_path, monkeypatch):
     monkeypatch.setenv("CICCADA_AMI_STORE_DIR", str(store))
     from lib import sources
 
-    days = sources.find_examples("2025-01", all_days=True, temp_dir=str(tmp_path / "tmp"))
+    days = sources.find_examples(
+        "2025-01", all_days=True, temp_dir=str(tmp_path / "tmp")
+    )
     py = _python_counts(raw, meta, 0.04)
     tot = days.groupby("site_id")[["vv_n", "vv_fail_A", "vv_fail_C"]].sum().sort_index()
     m = conformance_metrics(py).set_index("site_id").sort_index()
@@ -138,6 +160,8 @@ def test_synthetic_counts_have_the_shared_columns():
 
     d, _ = sources.load_synthetic_category_counts()
     m = conformance_metrics(d)
-    assert m["remote_conformance_rate_verdict"].isin(
-        ["conformant", "non-conformant", "not assessable"]
-    ).all()
+    assert (
+        m["remote_conformance_rate_verdict"]
+        .isin(["conformant", "non-conformant", "not assessable"])
+        .all()
+    )

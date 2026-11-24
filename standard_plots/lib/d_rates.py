@@ -74,7 +74,9 @@ def wilson(k, n, z: float = Z95):
     return mid - half, mid + half
 
 
-def rate_table(df: pd.DataFrame, by, ok="passed", exposure: str | None = None) -> pd.DataFrame:
+def rate_table(
+    df: pd.DataFrame, by, ok="passed", exposure: str | None = None
+) -> pd.DataFrame:
     """
     Rate per group. `by`: column name, list of columns, or None (overall); `ok`: verdict
     column or list of them. Long format: group column(s), verdict, n, k, rate, lo, hi
@@ -231,11 +233,20 @@ def plot_rate_by_year(
     )
     leg = _verdict_legend(oks, col, labels) or []
     if exposure:
-        s0 = t[t.verdict == oks[0]].set_index(t[t.verdict == oks[0]][year].astype(int)).reindex(years)
+        s0 = (
+            t[t.verdict == oks[0]]
+            .set_index(t[t.verdict == oks[0]][year].astype(int))
+            .reindex(years)
+        )
         ax2 = ax.twinx()
         ax2.plot(
-            np.arange(len(years)), s0.exposure, ls="", marker="D", ms=5,
-            color=C.REFERENCE["text"], zorder=5,
+            np.arange(len(years)),
+            s0.exposure,
+            ls="",
+            marker="D",
+            ms=5,
+            color=C.REFERENCE["text"],
+            zorder=5,
         )
         top = max(5.0, float(np.nanmax(s0.exposure)) * 1.25)
         ax2.set_ylim(-top * 0.14, top)
@@ -244,8 +255,14 @@ def plot_rate_by_year(
         ax2.grid(False)
         ax2.spines["right"].set_visible(True)
         leg = leg + [
-            Line2D([], [], ls="", marker="D", color=C.REFERENCE["text"],
-                   label="Mean voltage exposure (zone A share of valid intervals), right axis")
+            Line2D(
+                [],
+                [],
+                ls="",
+                marker="D",
+                color=C.REFERENCE["text"],
+                label="Mean voltage exposure (zone A share of valid intervals), right axis",
+            )
         ]
     if leg:
         ax.legend(handles=leg, loc="upper left")
@@ -308,13 +325,15 @@ def plot_rate_by_group(
             zorder=3,
         )
         for yi, (hi, n, ex) in zip(
-            yy, zip(s.hi, s.n, s.exposure if (exposure and j == 0) else [np.nan] * len(s))
+            yy,
+            zip(s.hi, s.n, s.exposure if (exposure and j == 0) else [np.nan] * len(s)),
         ):
             if pd.notna(n):
                 ax.text(
                     hi + 1,
                     yi,
-                    f"n = {int(n):,}" + (f"  ·  exposure {ex:.0f}%" if pd.notna(ex) else ""),
+                    f"n = {int(n):,}"
+                    + (f"  ·  exposure {ex:.0f}%" if pd.notna(ex) else ""),
                     va="center",
                     fontsize=7,
                     color=C.REFERENCE["text"],
@@ -338,9 +357,15 @@ def plot_rate_by_group(
     leg = _verdict_legend(oks, col, labels)
     if leg:
         ax.legend(handles=leg, loc="lower right")
-    sub = _subtitle(info, unit) + (
-        f"  ·  {len(small)} groups with n < {min_n} not shown" if len(small) else ""
-    ) + ("  ·  exposure = mean voltage exposure (zone A share of valid intervals)" if exposure else "")
+    sub = (
+        _subtitle(info, unit)
+        + (f"  ·  {len(small)} groups with n < {min_n} not shown" if len(small) else "")
+        + (
+            "  ·  exposure = mean voltage exposure (zone A share of valid intervals)"
+            if exposure
+            else ""
+        )
+    )
     fig.suptitle(
         f"{title or 'Conformance rate by ' + (group_label or by)}\n{sub}",
         x=0.02,

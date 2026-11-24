@@ -87,11 +87,11 @@ STATUS = {
 # Volt-VAr Q_impact categories, worst -> best -> not judged.
 VOLTVAR_CATEGORY = {
     "Q_adverse": "#67001F",
-    "Q_inactive": "#B2182B",  
-    "Q_significant_shortfall": "#EF8A62",  
+    "Q_inactive": "#B2182B",
+    "Q_significant_shortfall": "#EF8A62",
     "Q_near_conformant": "#92C5DE",
-    "Q_conformant": "#2166AC", 
-    "Q_major_surplus": "#762A83", 
+    "Q_conformant": "#2166AC",
+    "Q_major_surplus": "#762A83",
     "Q_not_exposed": "#D9D9D9",
     "Q_not_assessable": "#999999",
 }
