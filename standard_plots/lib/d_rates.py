@@ -53,6 +53,9 @@ VERDICT_LABELS = {
     "conformant": "Conformant",
     "vv_ok": "Volt-VAr",
     "vw_ok": "Volt-Watt",
+    "nonconformance_frequency_ok": "Volt-VAr, non-conformance frequency",
+    "remote_conformance_rate_ok": "Volt-VAr, remote conformance rate",
+    "legacy_conformance_rate_ok": "Volt-VAr, legacy conformance rate",
 }
 VERDICT_SOURCE = {"passed": "net_meter", "pass_truth": "pv_circuit"}
 
@@ -71,11 +74,12 @@ def wilson(k, n, z: float = Z95):
     return mid - half, mid + half
 
 
-def rate_table(df: pd.DataFrame, by, ok="passed") -> pd.DataFrame:
+def rate_table(df: pd.DataFrame, by, ok="passed", exposure: str | None = None) -> pd.DataFrame:
     """
     Rate per group. `by`: column name, list of columns, or None (overall); `ok`: verdict
     column or list of them. Long format: group column(s), verdict, n, k, rate, lo, hi
-    (rates in %).
+    (rates in %). exposure: optional column (e.g. 'voltage_exposure', a fraction) whose
+    mean over the same units is added as `exposure` (%).
     """
     oks = [ok] if isinstance(ok, str) else list(ok)
     keys = [] if by is None else ([by] if isinstance(by, str) else list(by))
@@ -89,6 +93,13 @@ def rate_table(df: pd.DataFrame, by, ok="passed") -> pd.DataFrame:
             else d.assign(_k="All").groupby("_k")["_ok"]
         )
         t = g.agg(n="size", k="sum").reset_index()
+        if exposure:
+            ge = (
+                d.groupby(keys, observed=True)[exposure]
+                if keys
+                else d.assign(_k="All").groupby("_k")[exposure]
+            )
+            t["exposure"] = 100 * ge.mean().to_numpy()
         lo, hi = wilson(t.k, t.n)
         t["rate"], t["lo"], t["hi"] = 100 * t.k / t.n, 100 * lo, 100 * hi
         t["verdict"] = o
@@ -141,10 +152,15 @@ def plot_rate_by_year(
     labels: dict | None = None,
     title: str | None = None,
     mandatory: pd.Timestamp | None = STANDARD_MANDATORY,
+    exposure: str | None = None,
 ):
-    """D.1 Rate per install year (ordered x), with the date the standard became mandatory marked."""
+    """
+    D.1 Rate per install year (ordered x), with the date the standard became mandatory marked.
+    exposure: column name (e.g. 'voltage_exposure') -> mean per year drawn as diamonds on a
+    right-hand axis, so the rate can be read against how often the sites were exposed.
+    """
     oks = [ok] if isinstance(ok, str) else list(ok)
-    t = rate_table(df.dropna(subset=[year]), year, oks)
+    t = rate_table(df.dropna(subset=[year]), year, oks, exposure)
     t = t[t.n >= min_n]
     years = sorted(t[year].astype(int).unique())
     col = _colours(oks)
@@ -213,7 +229,24 @@ def plot_rate_by_year(
         ha="right",
         va="top",
     )
-    leg = _verdict_legend(oks, col, labels)
+    leg = _verdict_legend(oks, col, labels) or []
+    if exposure:
+        s0 = t[t.verdict == oks[0]].set_index(t[t.verdict == oks[0]][year].astype(int)).reindex(years)
+        ax2 = ax.twinx()
+        ax2.plot(
+            np.arange(len(years)), s0.exposure, ls="", marker="D", ms=5,
+            color=C.REFERENCE["text"], zorder=5,
+        )
+        top = max(5.0, float(np.nanmax(s0.exposure)) * 1.25)
+        ax2.set_ylim(-top * 0.14, top)
+        ax2.set_yticks([v for v in ax2.get_yticks() if 0 <= v <= top])
+        ax2.set_ylabel("Mean voltage exposure (%)", color=C.REFERENCE["text"])
+        ax2.grid(False)
+        ax2.spines["right"].set_visible(True)
+        leg = leg + [
+            Line2D([], [], ls="", marker="D", color=C.REFERENCE["text"],
+                   label="Mean voltage exposure (zone A share of valid intervals), right axis")
+        ]
     if leg:
         ax.legend(handles=leg, loc="upper left")
     fig.suptitle(
@@ -238,15 +271,17 @@ def plot_rate_by_group(
     labels: dict | None = None,
     title: str | None = None,
     group_label: str | None = None,
+    exposure: str | None = None,
 ):
     """
     D.2 Rate per unordered group (network, manufacturer, cohort ...), horizontal bars,
     sorted by rate (the first verdict column) unless sort=None / 'n' / 'label'. Groups
     with fewer than `min_n` units are left out (count printed in the subtitle). The
     dotted line is the overall rate of the first verdict column.
+    exposure: column name (e.g. 'voltage_exposure') -> its mean is printed next to n.
     """
     oks = [ok] if isinstance(ok, str) else list(ok)
-    t = rate_table(df, by, oks)
+    t = rate_table(df, by, oks, exposure)
     small = t[(t.verdict == oks[0]) & (t.n < min_n)]
     keep = t[(t.verdict == oks[0]) & (t.n >= min_n)].set_index(by)
     order = {
@@ -272,12 +307,14 @@ def plot_rate_by_group(
             capsize=2,
             zorder=3,
         )
-        for yi, (hi, n) in zip(yy, zip(s.hi, s.n)):
+        for yi, (hi, n, ex) in zip(
+            yy, zip(s.hi, s.n, s.exposure if (exposure and j == 0) else [np.nan] * len(s))
+        ):
             if pd.notna(n):
                 ax.text(
                     hi + 1,
                     yi,
-                    f"n = {int(n):,}",
+                    f"n = {int(n):,}" + (f"  ·  exposure {ex:.0f}%" if pd.notna(ex) else ""),
                     va="center",
                     fontsize=7,
                     color=C.REFERENCE["text"],
@@ -303,7 +340,7 @@ def plot_rate_by_group(
         ax.legend(handles=leg, loc="lower right")
     sub = _subtitle(info, unit) + (
         f"  ·  {len(small)} groups with n < {min_n} not shown" if len(small) else ""
-    )
+    ) + ("  ·  exposure = mean voltage exposure (zone A share of valid intervals)" if exposure else "")
     fig.suptitle(
         f"{title or 'Conformance rate by ' + (group_label or by)}\n{sub}",
         x=0.02,

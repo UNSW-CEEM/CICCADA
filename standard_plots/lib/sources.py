@@ -560,6 +560,67 @@ def _finish(df, site, site_id, date, source):
 # =============================================================================
 # 5. Finding example site-days (local store)
 # =============================================================================
+# ---- shared Volt-VAr SQL used by find_examples and category_counts ---------
+def _vvar_sql_columns(tol: float, p_tol_vvar: float = 0.0) -> str:
+    """
+    SELECT-list fragment for a CTE with columns V, P, Q, S (site total, kW / kvar):
+    curve, accepted band, zone and category from bms_sa_review/shared (the same
+    rules as the Stage 2 and OEM pipelines), plus the LEGACY category (P >= 20%,
+    nearest-edge Q_impact) for back-comparison.
+    """
+    from shared.as4777_curves import (
+        q_conformance_floor_absorbing_sql,
+        vvar_band_sql,
+        vvar_required_q_sql,
+        vvar_zone_sql,
+    )
+    from shared.ciccada_config import AS4777
+
+    q_min, q_max = vvar_band_sql("V", "P", "S", tol=tol, p_tol=p_tol_vvar)
+    pmin = AS4777["QCAP"]["P_MIN"]
+    return f"""
+            {vvar_required_q_sql('V', 'S')} AS q_req,
+            {q_min} AS q_lo,
+            {q_max} AS q_hi,
+            {vvar_zone_sql('V', 'P', 'S', p_tol_vvar)} AS zone,
+            {q_conformance_floor_absorbing_sql('P', 'S')} AS q_cap_legacy,
+            abs(P) >= {pmin} * S AS legacy_assessable"""
+
+
+def _vvar_sql_categories(tol: float) -> str:
+    """SELECT-list fragment on top of _vvar_sql_columns: category and legacy_category."""
+    from shared.as4777_curves import vvar_category_sql
+    from shared.ciccada_config import AS4777
+
+    qi = AS4777["QIMP"]
+    # Legacy band (Stage 2 'review_corrected' clamp) and nearest-edge Q_impact.
+    l_hi = f"""CASE WHEN q_req + {tol} * S < 0
+                    THEN greatest(q_req + {tol} * S, q_cap_legacy + {tol} * S)
+                    ELSE q_req + {tol} * S END"""
+    l_lo = f"""CASE WHEN q_req - {tol} * S > 0
+                    THEN least(q_req - {tol} * S, -q_cap_legacy - {tol} * S)
+                    ELSE q_req - {tol} * S END"""
+    edge = f"(CASE WHEN abs(Q - ({l_hi})) <= abs(Q - ({l_lo})) THEN ({l_hi}) ELSE ({l_lo}) END)"
+    impact = f"""((CASE WHEN abs(({l_hi}) + ({l_lo})) <= 1e-9 THEN 1 ELSE sign({edge}) * sign(Q) END)
+                  * abs(Q) / (abs({edge}) + 1e-9))"""
+    legacy = f"""
+            CASE WHEN NOT legacy_assessable THEN 'not_assessable'
+                 WHEN Q >= ({l_lo}) AND Q <= ({l_hi}) THEN 'inside_band'
+                 WHEN {impact} <  {qi['thr1']} THEN 'adverse'
+                 WHEN {impact} <= {qi['thr2']} THEN 'inactive'
+                 WHEN {impact} <  {qi['thr3']} THEN 'significant_shortfall'
+                 WHEN {impact} <= {qi['thr4']} THEN 'near_conformant'
+                 ELSE 'major_surplus' END"""
+    return f"""
+            {vvar_category_sql('Q', 'q_req', 'q_lo', 'q_hi')} AS category,
+            {legacy} AS legacy_category"""
+
+
+#: Legacy categories (outside the band, P >= 20%) counted as failures.
+LEGACY_FAILURES = ("adverse", "inactive", "significant_shortfall")
+
+
+
 def find_examples(
     month: str,
     n: int = 3,
@@ -568,9 +629,12 @@ def find_examples(
     vw_min: int = 6,
     conform_max: float = 0.10,
     fail_min: float = 0.50,
+    tol: float | None = None,
+    p_tol: float | None = None,
+    failure_definition: str | None = None,
     memory_limit: str = "6GB",
     threads: int = 4,
-    v_floor: float | None = 238.0,
+    v_floor: float | None = None,
     where: str = "",
     temp_dir: str | None = None,
     all_days: bool = False,
@@ -578,49 +642,59 @@ def find_examples(
     """
     Scan one month of the local store and return example site-days for every
     combination of cohort (1P = one PV circuit, 3P = three PV circuits) and
-    Volt-VAr / Volt-Watt outcome, using the SAME rules the family-A plots draw:
+    Volt-VAr / Volt-Watt outcome, using the SAME rules as family A
+    (bms_sa_review/shared: zones, accepted band, interval categories):
 
-      Volt-VAr   assessable (|P_total| >= 20% rating) intervals with V_avg > 240 V;
-                 non-conforming = Q_total outside the Figure-2.1-capped band.
+      Volt-VAr   remote conformance rate for the day: failures in zone
+                 "A - response required" plus failing zone "C - low power,
+                 voltage exposed" intervals, over (zone A + failing zone C).
+                 vv_n = zone A intervals (high OR low voltage, P >= 20%).
       Volt-Watt  intervals with V_avg > 253 V and P_total >= 20% rating;
-                 non-conforming = P_total above the ceiling + 4%.
+                 non-conforming = P_total above the curve + p_tol.
 
-    A mode is "conforms" if <= `conform_max` of those intervals are
-    non-conforming, "fails" if >= `fail_min`, and needs at least `vv_min` /
-    `vw_min` such intervals (1 h / 30 min at 5-min data) to be judged at all.
-    Point-wise, one day: an illustration, not a site verdict.
-    v_floor (V): circuit readings below it are dropped before aggregating, which
-    makes the scan several times faster. Only intervals with V_avg > 240 V are
-    judged, so this loses at most a few 3-phase intervals where one phase sits
-    below the floor. None = no prefilter.
-    where: extra SQL predicate on the raw rows, e.g. "site_id % 10 = 0" to scan a
-    tenth of the sites (for a quick look or to split a long scan).
+    A mode "conforms" if <= `conform_max` of its judged intervals fail, "fails"
+    if >= `fail_min`, and needs at least `vv_min` / `vw_min` judged intervals
+    (1 h / 30 min at 5-min data). Point-wise, one day: an illustration, not a
+    site verdict.
+    tol / p_tol / failure_definition: default to ciccada_config.CONFORMANCE.
+    v_floor (V): optional prefilter dropping circuit readings below it (faster),
+    but it also drops zone A undervoltage (< 220 V) intervals. None = no
+    prefilter (default, correct for both voltage sides).
+    where: extra SQL predicate on the raw rows, e.g. "site_id % 10 = 0".
     all_days=True returns every scanned site-day instead of the picks.
     """
     import duckdb
-    from shared.as4777_curves import (
-        q_conformance_floor_absorbing_sql,
-        vvar_required_q_sql,
-        vw_max_p_sql,
-    )
-    from shared.ciccada_config import AS4777
+    from shared.as4777_curves import vw_max_p_sql
+    from shared.ciccada_config import AS4777, CONFORMANCE
+    from shared.vvar_metrics import failure_categories
+
+    tol = CONFORMANCE["TOL_DEFAULT"] if tol is None else tol
+    p_tol = CONFORMANCE["P_TOL_DEFAULT"] if p_tol is None else p_tol
+    fdef = failure_definition or CONFORMANCE["FAILURE_DEFINITION_DEFAULT"]
+    fails = ", ".join(f"'{c}'" for c in failure_categories(fdef))
+    v_lo, v_hi = CONFORMANCE["VALID_V_OPEN"]
+    v_pred = f"V >= {v_floor} AND V < {v_hi}" if v_floor else f"V > {v_lo} AND V < {v_hi}"
 
     store = local_store_dir()
     files, t0, t1 = _month_scan(store, month)
-    tol, pmin = AS4777["TOL_FRAC"], AS4777["QCAP"]["P_MIN"]
+    pmin = AS4777["QCAP"]["P_MIN"]
     meta = (store / "ami_site_metadata.parquet").as_posix()
+    extra = "AND " + where if where else ""
 
     sql = f"""
     WITH pv AS (
         SELECT site_id, circuit_id, t_stamp + INTERVAL 10 HOUR AS t_aest, V,
                P_kw_signed AS P, Q_kvar_signed AS Q
         FROM read_parquet({files})
-        WHERE circuit_type = 'pv_site_net' AND V BETWEEN {v_floor or 150} AND 300 AND t_stamp >= TIMESTAMP '{t0}' AND t_stamp < TIMESTAMP '{t1}' {"AND " + where if where else ""}
+        WHERE circuit_type = 'pv_site_net' AND {v_pred}
+          AND P_kw_signed IS NOT NULL AND Q_kvar_signed IS NOT NULL
+          AND t_stamp >= TIMESTAMP '{t0}' AND t_stamp < TIMESTAMP '{t1}' {extra}
     ),
     ncirc AS (
         SELECT site_id, count(DISTINCT circuit_id) AS n_pv
         FROM read_parquet({files})
-        WHERE circuit_type = 'pv_site_net' AND t_stamp >= TIMESTAMP '{t0}' AND t_stamp < TIMESTAMP '{t1}' {"AND " + where if where else ""} GROUP BY 1
+        WHERE circuit_type = 'pv_site_net' AND t_stamp >= TIMESTAMP '{t0}' AND t_stamp < TIMESTAMP '{t1}' {extra}
+        GROUP BY 1
     ),
     ts AS (
         SELECT site_id, t_aest, avg(V) AS V, sum(P) AS P, sum(Q) AS Q, count(*) AS n
@@ -633,27 +707,15 @@ def find_examples(
           USING (site_id)
         WHERE ts.n = c.n_pv AND c.n_pv IN (1, 3) AND m.ac_capacity_kw > 0
     ),
-    a AS (
-        SELECT *, {vvar_required_q_sql('V', 'S')} AS q_req,
-                  {q_conformance_floor_absorbing_sql('P', 'S')} AS q_cap,
-                  {vw_max_p_sql('V', 'S')} AS p_max
-        FROM j
-    ),
-    b AS (
-        SELECT *,
-            CASE WHEN q_req + {tol} * S < 0 THEN greatest(q_req + {tol} * S, q_cap + {tol} * S)
-                 ELSE q_req + {tol} * S END AS q_hi,
-            CASE WHEN q_req - {tol} * S > 0 THEN least(q_req - {tol} * S, -q_cap - {tol} * S)
-                 ELSE q_req - {tol} * S END AS q_lo,
-            abs(P) >= {pmin} * S AS assessable
-        FROM a
-    )
+    a AS (SELECT *, {_vvar_sql_columns(tol)}, {vw_max_p_sql('V', 'S')} AS p_max FROM j),
+    b AS (SELECT *, {_vvar_sql_categories(tol)} FROM a)
     SELECT site_id, CAST(t_aest AS DATE) AS date, any_value(n_pv) AS n_pv, any_value(S) AS rating_kw,
            round(max(V), 1) AS v_max,
-           count(*) FILTER (WHERE assessable AND V > 240) AS vv_n,
-           count(*) FILTER (WHERE assessable AND V > 240 AND (Q > q_hi OR Q < q_lo)) AS vv_nc,
+           count(*) FILTER (WHERE zone = 'A') AS vv_n,
+           count(*) FILTER (WHERE zone = 'A' AND category IN ({fails})) AS vv_fail_A,
+           count(*) FILTER (WHERE zone = 'C' AND category IN ({fails})) AS vv_fail_C,
            count(*) FILTER (WHERE V > 253 AND P >= {pmin} * S) AS vw_n,
-           count(*) FILTER (WHERE V > 253 AND P >= {pmin} * S AND P > p_max + {tol} * S) AS vw_nc
+           count(*) FILTER (WHERE V > 253 AND P >= {pmin} * S AND P > p_max + {p_tol} * S) AS vw_nc
     FROM b GROUP BY 1, 2
     """
     con = duckdb.connect()
@@ -667,6 +729,11 @@ def find_examples(
         days = con.execute(sql).df()
     finally:
         con.close()
+    return _pick_examples(days, n, vv_min, vw_min, conform_max, fail_min, all_days, month, tol)
+
+
+def _pick_examples(days, n, vv_min, vw_min, conform_max, fail_min, all_days, month, tol):
+    """Status per mode and the example picks (split out so it can be tested offline)."""
 
     def status(nc, total, need):
         share = nc / total.where(total > 0)
@@ -676,12 +743,15 @@ def find_examples(
             "mixed",
         )
 
+    vv_nc = days.vv_fail_A + days.vv_fail_C
+    vv_den = days.vv_n + days.vv_fail_C
     days["cohort"] = np.where(days.n_pv == 3, "3P", "1P")
-    days["volt_var"] = status(days.vv_nc, days.vv_n, vv_min)
+    days["volt_var"] = np.where(days.vv_n < vv_min, "not exposed", status(vv_nc, vv_den, 0))
     days["volt_watt"] = status(days.vw_nc, days.vw_n, vw_min)
-    days["vv_nc_share"] = (days.vv_nc / days.vv_n.where(days.vv_n > 0)).round(2)
+    days["vv_nc_share"] = (vv_nc / vv_den.where(vv_den > 0)).round(2)
     days["vw_nc_share"] = (days.vw_nc / days.vw_n.where(days.vw_n > 0)).round(2)
     days["date"] = days["date"].astype(str)
+    days["tol"] = tol
     if all_days:
         return days
 
@@ -713,11 +783,13 @@ def find_examples(
         "vv_nc_share",
         "vw_n",
         "vw_nc_share",
+        "tol",
     ]
     print(
         f"{month}: {days.site_id.nunique():,} sites, {len(days):,} full site-days scanned"
     )
     return out[cols]
+
 
 
 # =============================================================================
@@ -829,18 +901,28 @@ def slope_verdicts(month: str | None = None, columns=None) -> pd.DataFrame:
 # =============================================================================
 # 7. Category counts per site (family C)
 # =============================================================================
-#: Interval categories, in plotting order (worst -> best -> not judged).
+#: Volt-VAr interval categories (bms_sa_review/shared), plotting order worst -> best.
 VV_CATEGORIES = (
     "adverse",
     "inactive",
     "significant_shortfall",
+    "voltage_deadband_violation",
     "near_conformant",
-    "conformant",
+    "pass",
+    "over_response",
+)
+#: Legacy categories (P >= 20%, nearest-edge Q_impact), kept for back-comparison.
+LEGACY_CATEGORIES = (
+    "adverse",
+    "inactive",
+    "significant_shortfall",
+    "near_conformant",
+    "inside_band",
     "major_surplus",
-    "not_exposed",
     "not_assessable",
 )
 VW_CATEGORIES = ("nonconformant", "conformant", "not_exposed")
+ZONE_CODES = ("A", "B", "C", "D")
 SYNTHETIC_CATEGORY_CSV = ROOT / "synthetic_category_counts.csv"
 
 
@@ -849,6 +931,8 @@ def category_counts(
     *,
     cohort: str | None = None,
     site_ids=None,
+    tol: float | None = None,
+    p_tol: float | None = None,
     memory_limit: str = "6GB",
     threads: int = 4,
     temp_dir: str | None = None,
@@ -856,34 +940,33 @@ def category_counts(
     _intervals: bool = False,
 ) -> pd.DataFrame:
     """
-    One row per site for one month: how many 5-min intervals fall in each Volt-VAr and
-    Volt-Watt category, using exactly the rules of families A and B (site total P and Q,
-    mean phase voltage, rating = ac_capacity_kw):
+    One row per site for one month: interval counts per Volt-VAr zone x category
+    and per Volt-Watt category, using the rules in bms_sa_review/shared (site
+    total P and Q, mean phase voltage, rating = ac_capacity_kw).
 
-      Volt-VAr  not_assessable   |P| < 20 % of rating (Figure 2.1 gate)
-                not_exposed      assessable, inside the band, 220 <= V <= 240 (deadband)
-                conformant       assessable, inside the Figure-2.1-capped band, outside the deadband
-                adverse ... major_surplus   assessable, outside the band, by Q_impact (Stage 2 thresholds)
-      Volt-Watt not_exposed      V <= 253
-                conformant       V > 253 and P <= ceiling (curve + 4 %)
-                nonconformant    V > 253 and P > ceiling
+    The Volt-VAr columns have the SAME names as shared.vvar_metrics.zone_counts,
+    so shared.vvar_metrics.conformance_metrics(counts) gives all three metrics
+    and the site tags directly:
+      n_rows, n_valid, n_incomplete (a PV circuit missing, or V/P/Q invalid),
+      n_A..n_D, n_<zone>_<category>, n_days_A, n_legacy_total, n_legacy_fail,
+      legacy_<category> (legacy breakdown), tol, p_tol_vvar.
+    Valid interval: every PV circuit present with 0 < V < 300 V and P, Q not null.
 
-    Columns: site_id, cohort, vv_<category>..., vw_<category>..., plus site metadata
-    (state, dnsp_name, manufacturer, pv_install_date, ac_capacity_kw) if with_metadata.
-    Reads every interval of the month (no prefilter): about a minute per month.
+    Volt-Watt  vw_not_exposed (V <= 253), vw_conformant / vw_nonconformant
+               (P above the curve + p_tol).
+    tol / p_tol default to ciccada_config.CONFORMANCE. Plus site metadata
+    (state, dnsp_name, manufacturer, pv_install_date, ac_capacity_kw) if
+    with_metadata. Reads every interval of the month: about a minute.
     """
     import duckdb
-    from shared.as4777_curves import (
-        q_conformance_floor_absorbing_sql,
-        vvar_required_q_sql,
-        vw_max_p_sql,
-    )
-    from shared.ciccada_config import AS4777
+    from shared.as4777_curves import vw_max_p_sql
+    from shared.ciccada_config import CONFORMANCE
 
+    tol = CONFORMANCE["TOL_DEFAULT"] if tol is None else tol
+    p_tol = CONFORMANCE["P_TOL_DEFAULT"] if p_tol is None else p_tol
+    v_lo, v_hi = CONFORMANCE["VALID_V_OPEN"]
     store = local_store_dir()
     files, t0, t1 = _month_scan(store, month)
-    tol, pmin = AS4777["TOL_FRAC"], AS4777["QCAP"]["P_MIN"]
-    vv, vw, qi = AS4777["VVAR"], AS4777["VW"], AS4777["QIMP"]
     meta = (store / "ami_site_metadata.parquet").as_posix()
     n_pv = {"1P": "(1)", "3P": "(3)", None: "(1, 3)"}[cohort]
     sites = (
@@ -891,66 +974,65 @@ def category_counts(
         if site_ids is not None
         else ""
     )
-
-    vv_case = f"""
-        CASE WHEN NOT assessable THEN 'not_assessable'
-             WHEN inside AND V >= {vv['V2']} AND V <= {vv['V3']} THEN 'not_exposed'
-             WHEN inside THEN 'conformant'
-             WHEN q_impact < {qi['thr1']} THEN 'adverse'
-             WHEN q_impact <= {qi['thr2']} THEN 'inactive'
-             WHEN q_impact < {qi['thr3']} THEN 'significant_shortfall'
-             WHEN q_impact <= {qi['thr4']} THEN 'near_conformant'
-             ELSE 'major_surplus' END"""
     vw_case = f"""
-        CASE WHEN V <= {vw['V1']} THEN 'not_exposed'
-             WHEN P > p_max + {tol} * S THEN 'nonconformant'
+        CASE WHEN V <= 253 THEN 'not_exposed'
+             WHEN P > p_max + {p_tol} * S THEN 'nonconformant'
              ELSE 'conformant' END"""
+    zc = [
+        f"count(*) FILTER (WHERE valid AND zone = '{z}' AND category = '{c}') AS n_{z}_{c}"
+        for z in ZONE_CODES
+        for c in VV_CATEGORIES
+    ]
+    zn = [f"count(*) FILTER (WHERE valid AND zone = '{z}') AS n_{z}" for z in ZONE_CODES]
+    lc = [
+        f"count(*) FILTER (WHERE valid AND legacy_category = '{c}') AS legacy_{c}"
+        for c in LEGACY_CATEGORIES
+    ]
+    vc = [
+        f"count(*) FILTER (WHERE valid AND vw_cat = '{c}') AS vw_{c}" for c in VW_CATEGORIES
+    ]
+    legacy_fail = ", ".join(f"'{c}'" for c in LEGACY_FAILURES)
     cnt = ",\n           ".join(
-        [f"count(*) FILTER (WHERE vv_cat = '{c}') AS vv_{c}" for c in VV_CATEGORIES]
-        + [f"count(*) FILTER (WHERE vw_cat = '{c}') AS vw_{c}" for c in VW_CATEGORIES]
+        [
+            "count(*) AS n_rows",
+            "count(*) FILTER (WHERE valid) AS n_valid",
+            "count(*) FILTER (WHERE NOT valid) AS n_incomplete",
+        ]
+        + zn
+        + zc
+        + [
+            "count(DISTINCT CAST(t_aest AS DATE)) FILTER (WHERE valid AND zone = 'A') AS n_days_A",
+            "count(*) FILTER (WHERE valid AND legacy_assessable) AS n_legacy_total",
+            f"count(*) FILTER (WHERE valid AND legacy_category IN ({legacy_fail})) AS n_legacy_fail",
+        ]
+        + lc
+        + vc
     )
 
     sql = f"""
     WITH pv AS (
-        SELECT site_id, circuit_id, t_stamp, V, P_kw_signed AS P, Q_kvar_signed AS Q
+        SELECT site_id, circuit_id, t_stamp + INTERVAL 10 HOUR AS t_aest, V,
+               P_kw_signed AS P, Q_kvar_signed AS Q,
+               (V > {v_lo} AND V < {v_hi} AND P_kw_signed IS NOT NULL
+                AND Q_kvar_signed IS NOT NULL) AS ok
         FROM read_parquet({files})
-        WHERE circuit_type = 'pv_site_net' AND V BETWEEN 150 AND 300 AND t_stamp >= TIMESTAMP '{t0}' AND t_stamp < TIMESTAMP '{t1}' {sites}
+        WHERE circuit_type = 'pv_site_net' AND t_stamp >= TIMESTAMP '{t0}' AND t_stamp < TIMESTAMP '{t1}' {sites}
     ),
     ncirc AS (SELECT site_id, count(DISTINCT circuit_id) AS n_pv FROM pv GROUP BY 1),
-    ts AS (SELECT site_id, t_stamp, avg(V) AS V, sum(P) AS P, sum(Q) AS Q, count(*) AS n FROM pv GROUP BY 1, 2),
+    ts AS (
+        SELECT site_id, t_aest,
+               avg(V) FILTER (WHERE ok) AS V, sum(P) FILTER (WHERE ok) AS P,
+               sum(Q) FILTER (WHERE ok) AS Q, count(*) FILTER (WHERE ok) AS n_ok
+        FROM pv GROUP BY 1, 2
+    ),
     j AS (
-        SELECT ts.*, c.n_pv, m.S
+        SELECT ts.*, c.n_pv, m.S, (ts.n_ok = c.n_pv AND m.S > 0) AS valid
         FROM ts JOIN ncirc c USING (site_id)
         JOIN (SELECT site_id, any_value(ac_capacity_kw) AS S FROM read_parquet('{meta}') GROUP BY 1) m USING (site_id)
-        WHERE ts.n = c.n_pv AND c.n_pv IN {n_pv} AND m.S > 0
+        WHERE c.n_pv IN {n_pv}
     ),
-    a AS (
-        SELECT *, {vvar_required_q_sql('V', 'S')} AS q_req,
-                  {q_conformance_floor_absorbing_sql('P', 'S')} AS q_cap,
-                  {vw_max_p_sql('V', 'S')} AS p_max
-        FROM j
-    ),
-    b AS (
-        SELECT *,
-            CASE WHEN q_req + {tol} * S < 0 THEN greatest(q_req + {tol} * S, q_cap + {tol} * S)
-                 ELSE q_req + {tol} * S END AS q_hi,
-            CASE WHEN q_req - {tol} * S > 0 THEN least(q_req - {tol} * S, -q_cap - {tol} * S)
-                 ELSE q_req - {tol} * S END AS q_lo,
-            abs(P) >= {pmin} * S AS assessable
-        FROM a
-    ),
-    c AS (
-        SELECT *, Q >= q_lo AND Q <= q_hi AS inside,
-            CASE WHEN abs(Q - q_hi) <= abs(Q - q_lo) THEN q_hi ELSE q_lo END AS edge
-        FROM b
-    ),
-    e AS (
-        SELECT *,
-            (CASE WHEN abs(q_hi + q_lo) <= 1e-9 THEN 1 ELSE sign(edge) * sign(Q) END)
-                * abs(Q) / (abs(edge) + 1e-9) AS q_impact
-        FROM c
-    ),
-    f AS (SELECT site_id, t_stamp, V, P, Q, q_lo, q_hi, n_pv, {vv_case} AS vv_cat, {vw_case} AS vw_cat FROM e)
+    a AS (SELECT *, {_vvar_sql_columns(tol)}, {vw_max_p_sql('V', 'S')} AS p_max FROM j),
+    f AS (SELECT *, {_vvar_sql_categories(tol)}, {vw_case} AS vw_cat FROM a)
     SELECT site_id, any_value(n_pv) AS n_pv,
            {cnt}
     FROM f GROUP BY site_id
@@ -980,13 +1062,17 @@ def category_counts(
         con.close()
     out.insert(1, "cohort", np.where(out.pop("n_pv") == 3, "3P", "1P"))
     out["month"] = month
-    print(f"{month}: {len(out):,} sites")
+    out["tol"] = tol
+    out["p_tol_vvar"] = 0.0
+    print(f"{month}: {len(out):,} sites (tol {tol:.0%})")
     return out
 
 
 def load_synthetic_category_counts():
-    """Invented category_counts table (400 sites), building the CSV if absent."""
-    if not SYNTHETIC_CATEGORY_CSV.exists():
+    """Invented category_counts table (400 sites), building the CSV if absent or outdated."""
+    if not SYNTHETIC_CATEGORY_CSV.exists() or "n_A_pass" not in pd.read_csv(
+        SYNTHETIC_CATEGORY_CSV, nrows=0
+    ):
         make_synthetic_category_counts()
     d = pd.read_csv(SYNTHETIC_CATEGORY_CSV, parse_dates=["pv_install_date"])
     return d, {
@@ -1000,9 +1086,9 @@ def make_synthetic_category_counts(
     path: Path = SYNTHETIC_CATEGORY_CSV, seed: int = 4780, n_sites: int = 400
 ) -> Path:
     """
-    Invented per-site counts in the category_counts format. Sites installed after the
-    standard became mandatory conform more often; three networks and six manufacturers
-    differ a little. Not real data.
+    Invented per-site counts in the category_counts format (tol 4%). Sites
+    installed after the standard became mandatory conform more often; three
+    networks and six manufacturers differ a little. Not real data.
     """
     rng = np.random.default_rng(seed)
     rows = []
@@ -1019,37 +1105,59 @@ def make_synthetic_category_counts(
             "Network B": 0.05,
             "Network C": -0.05,
         }[dnsp]
-        n = 8640
-        night = rng.uniform(0.5, 0.6)
-        judged = rng.uniform(0.05, 0.25)
-        if rng.random() < good:
-            vv_p = [0.0, 0.005, 0.01, 0.04, 0.92, 0.025]
-        else:
-            vv_p = rng.dirichlet([0.3, 6, 3, 1, 1, 0.3])
-        vv_judged = rng.multinomial(int(n * judged), vv_p)
-        deadband = int(n * (1 - night - judged))
-        vw_exposed = int(n * rng.uniform(0, 0.05))
-        vw_nc = rng.binomial(vw_exposed, 0.05 if rng.random() < good else 0.6)
-        row = {"site_id": 8000 + i, "cohort": cohort}
-        row.update({f"vv_{c}": int(v) for c, v in zip(VV_CATEGORIES[:6], vv_judged)})
+        ok = rng.random() < good
+        n = 8928
+        n_inc = int(n * rng.uniform(0, 0.03))
+        n_valid = n - n_inc
+        share = rng.dirichlet([2, 4, 1, 8])  # A, B, C, D
+        zone_n = dict(zip(ZONE_CODES, rng.multinomial(n_valid, share)))
+        # category probabilities per zone, in VV_CATEGORIES order:
+        # adverse, inactive, sig. shortfall, voltage deadband violation, near, pass, over
+        p = {
+            "A": [0.0, 0.01, 0.02, 0, 0.03, 0.92, 0.02] if ok else rng.dirichlet([1, 6, 3, 0.01, 1, 1, 0.3]),
+            "B": [0, 0, 0, 0.02, 0, 0.98, 0] if ok else [0, 0, 0, 0.25, 0, 0.75, 0],
+            "C": [0.005, 0, 0, 0, 0, 0.99, 0.005],
+            "D": [0, 0, 0, 0.01, 0, 0.99, 0] if ok else [0, 0, 0, 0.08, 0, 0.92, 0],
+        }
+        row = {"site_id": 8000 + i, "cohort": cohort, "n_rows": n, "n_valid": n_valid, "n_incomplete": n_inc}
+        for z in ZONE_CODES:
+            pz = np.asarray(p[z], dtype=float)
+            k = rng.multinomial(zone_n[z], pz / pz.sum())
+            row[f"n_{z}"] = int(zone_n[z])
+            row.update({f"n_{z}_{c}": int(v) for c, v in zip(VV_CATEGORIES, k)})
+        row["n_days_A"] = int(min(31, max(0, row["n_A"] // 12)))
+        legacy_total = row["n_A"] + row["n_B"]
+        legacy_fail = row["n_A_inactive"] + row["n_A_significant_shortfall"] + row["n_A_adverse"]
+        row["n_legacy_total"], row["n_legacy_fail"] = legacy_total, legacy_fail
+        row.update({f"legacy_{c}": 0 for c in LEGACY_CATEGORIES})
+        row["legacy_adverse"] = row["n_A_adverse"]
+        row["legacy_inactive"] = row["n_A_inactive"]
+        row["legacy_significant_shortfall"] = row["n_A_significant_shortfall"]
+        row["legacy_near_conformant"] = row["n_A_near_conformant"]
+        row["legacy_major_surplus"] = row["n_A_over_response"] + row["n_B_voltage_deadband_violation"]
+        row["legacy_inside_band"] = row["n_A_pass"] + row["n_B_pass"]
+        row["legacy_not_assessable"] = row["n_C"] + row["n_D"]
+        vw_exposed = int(n_valid * rng.uniform(0, 0.05))
+        vw_nc = rng.binomial(vw_exposed, 0.05 if ok else 0.6)
         row.update(
             {
-                "vv_not_exposed": deadband,
-                "vv_not_assessable": n - deadband - int(vv_judged.sum()),
                 "vw_nonconformant": int(vw_nc),
                 "vw_conformant": int(vw_exposed - vw_nc),
-                "vw_not_exposed": n - vw_exposed,
+                "vw_not_exposed": n_valid - vw_exposed,
                 "state": "NSW",
                 "dnsp_name": dnsp,
                 "manufacturer": oem,
                 "pv_install_date": pd.Timestamp(year, int(rng.integers(1, 13)), 1),
                 "ac_capacity_kw": 15.0 if cohort == "3P" else 5.0,
                 "month": "2025-01",
+                "tol": 0.04,
+                "p_tol_vvar": 0.0,
             }
         )
         rows.append(row)
     pd.DataFrame(rows).to_csv(path, index=False)
     return path
+
 
 
 def slope_sites() -> pd.DataFrame:

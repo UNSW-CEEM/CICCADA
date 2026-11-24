@@ -14,7 +14,7 @@ Shared axes (all figures)
 x = voltage, 205-265 V; y = Q as % of rating, generator convention (+ supplying,
 - absorbing), -70 to +55 %. Behind the data: the Volt-VAr curve (black dashed) with its
 +/-4 % band, set-point voltages (207, 220, 240, 258 V) dotted, and the Figure 2.1
-absorbing minimum for 20-60 % P (-44 %) only if cap=True. The slope-method window
+absorbing minimum for 20-60 % P (-44 %), dashed (on by default in B.1, cap=True). The slope-method window
 (242-253 V) is shaded lightly.
 
 Input
@@ -43,7 +43,7 @@ for _p in (_REPO, _REPO / "bms_sa_review"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from shared.as4777_curves import vvar_required_q  # noqa: E402
+from shared.as4777_curves import ZONE_LABELS, ZONES, vvar_required_q  # noqa: E402
 from shared.ciccada_config import AS4777  # noqa: E402
 
 from . import palette as C  # noqa: E402
@@ -51,14 +51,14 @@ from .a_site_day import assess_voltvar, metadata_lines, prepare  # noqa: E402
 
 VV, TOL, QCAP, QIMP = AS4777["VVAR"], AS4777["TOL_FRAC"], AS4777["QCAP"], AS4777["QIMP"]
 
-# Outside-band categories, as in the Stage 2 table (build_conformance_voltvar.py): Q_impact
-# = signed |Q| / |nearest permitted band edge|, for assessable intervals outside the band.
+# Outside-band categories (bms_sa_review/shared/as4777_curves.vvar_category).
 CATEGORIES = [
-    ("Q_adverse", "adverse"),
-    ("Q_inactive", "inactive"),
-    ("Q_significant_shortfall", "significant shortfall"),
-    ("Q_near_conformant", "near-conformant"),
-    ("Q_major_surplus", "major surplus"),
+    ("adverse", "adverse"),
+    ("inactive", "inactive"),
+    ("significant_shortfall", "significant shortfall"),
+    ("voltage_deadband_violation", "voltage deadband violation"),
+    ("near_conformant", "near-conformant"),
+    ("over_response", "over-response"),
 ]
 
 V_RANGE = (205.0, 265.0)
@@ -74,14 +74,17 @@ MIN_FIT_N, MIN_FIT_SPREAD = 20, 5.0
 # =============================================================================
 # 1. Data
 # =============================================================================
-def qv_points(df: pd.DataFrame, rating_kva: float) -> pd.DataFrame:
+def qv_points(
+    df: pd.DataFrame, rating_kva: float, tol: float | None = None
+) -> pd.DataFrame:
     """
-    One row per interval: V (mean of phases), P and Q (sum, % of rating), assessable, the
-    Figure-2.1-capped permitted band (as family A), inside/outside, Q_impact and the
-    outside-band category, plus hour and date.
+    One row per interval: V (mean of phases), P and Q (sum, % of rating), the accepted
+    band, zone and category (bms_sa_review/shared, as family A), the legacy category,
+    `assessable` (= P >= 20% of rating, zones A and B; the population for medians and
+    the slope fit, unchanged), `inside` (category 'pass'), plus hour and date.
     """
     day = prepare(df, rating_kva)
-    vv = assess_voltvar(day)
+    vv = assess_voltvar(day, "nonconformance_frequency", tol)
     pts = pd.DataFrame(
         {
             "V": day.v,
@@ -89,33 +92,23 @@ def qv_points(df: pd.DataFrame, rating_kva: float) -> pd.DataFrame:
             "q_pct": day.q_pct,
             "q_lo": vv.q_min_final,
             "q_hi": vv.q_max_final,
+            "zone": vv.zone,
+            "category": vv.category,
+            "legacy_category": vv.legacy_category,
         },
         index=day.t,
-    ).dropna()
+    )
+    pts = pts[vv.valid.to_numpy(bool)].copy()
     pts["assessable"] = pts.p_pct.abs() >= QCAP["P_MIN"] * 100
-    pts["inside"] = (pts.q_pct >= pts.q_lo) & (pts.q_pct <= pts.q_hi)
-    # Q_impact against the nearest band edge (same rule as shared.as4777_curves.q_impact_nearest_edge)
-    near_hi = (pts.q_pct - pts.q_hi).abs() <= (pts.q_pct - pts.q_lo).abs()
-    edge = np.where(near_hi, pts.q_hi, pts.q_lo)
-    sym = (pts.q_hi + pts.q_lo).abs() <= 1e-9
-    direction = np.where(sym, 1.0, np.sign(edge) * np.sign(pts.q_pct))
-    pts["q_impact"] = direction * pts.q_pct.abs() / (np.abs(edge) + 1e-9)
-    qi = pts.q_impact
-    cat = np.select(
-        [qi < QIMP["thr1"], qi <= QIMP["thr2"], qi < QIMP["thr3"], qi <= QIMP["thr4"]],
-        ["Q_adverse", "Q_inactive", "Q_significant_shortfall", "Q_near_conformant"],
-        "Q_major_surplus",
-    )
-    pts["category"] = np.where(
-        ~pts.assessable, "Q_not_assessable", np.where(pts.inside, "Q_conformant", cat)
-    )
+    pts["inside"] = pts.category == "pass"
     pts["hour"] = pts.index.hour + pts.index.minute / 60
     pts["date"] = pts.index.date
+    pts.attrs["tol"] = vv.attrs["tol"]
     return pts
 
 
 def vv_counts(pts: pd.DataFrame) -> dict:
-    """Assessable intervals inside / outside the permitted band, and outside-band counts per category."""
+    """P >= 20% intervals inside / outside the accepted band, outside-band counts per category, zone counts."""
     a = pts[pts.assessable]
     out = {
         "assessable": len(a),
@@ -124,6 +117,7 @@ def vv_counts(pts: pd.DataFrame) -> dict:
         "outside": int((~a.inside).sum()),
     }
     out.update({k: int((a.category == k).sum()) for k, _ in CATEGORIES})
+    out.update({f"zone_{z}": int((pts.zone == z).sum()) for z in ZONES})
     return out
 
 
@@ -131,13 +125,15 @@ def _counts_text(pts: pd.DataFrame) -> str:
     c = vv_counts(pts)
     pct = lambda x: f"{100 * x / c['assessable']:.0f}%" if c["assessable"] else "–"
     line1 = (
-        f"Assessable {c['assessable']:,} of {c['total']:,} intervals  ·  inside band {c['inside']:,} "
-        f"({pct(c['inside'])})  ·  outside {c['outside']:,} ({pct(c['outside'])})"
+        f"P ≥ 20% (zones A, B) {c['assessable']:,} of {c['total']:,} intervals  ·  inside band {c['inside']:,} "
+        f"({pct(c['inside'])})  ·  outside {c['outside']:,} ({pct(c['outside'])})  ·  tol ±{100 * pts.attrs.get('tol', TOL):.0f}%"
     )
     line2 = "Outside band:  " + "  ·  ".join(
         f"{lab} {c[k]:,} ({pct(c[k])})" for k, lab in CATEGORIES
     )
-    return line1 + "\n" + line2
+    line3 = "Zones:  " + "  ·  ".join(f"{ZONE_LABELS[z]} {c['zone_' + z]:,}" for z in ZONES)
+    return line1 + "\n" + line2 + "\n" + line3
+
 
 
 def binned_median(
@@ -190,14 +186,17 @@ def fit_slope(pts: pd.DataFrame, window: tuple[float, float] = SLOPE_WINDOW) -> 
 # =============================================================================
 # 2. Shared axes
 # =============================================================================
-def qv_axes(ax, window: bool = True, cap: bool = False, legend_extra=None):
-    """Requirement, references and fixed ranges for any Q-V panel."""
+def qv_axes(
+    ax, window: bool = True, cap: bool = False, legend_extra=None, tol: float | None = None
+):
+    """Requirement, references and fixed ranges for any Q-V panel. cap: dashed Figure 2.1 44% line."""
+    tol = TOL if tol is None else tol
     v = np.linspace(*V_RANGE, 241)
     req = np.array([vvar_required_q(x, 100.0) for x in v])
     ax.fill_between(
         v,
-        req - TOL * 100,
-        req + TOL * 100,
+        req - tol * 100,
+        req + tol * 100,
         color=C.REFERENCE["band"],
         alpha=C.BAND_ALPHA,
         lw=0,
@@ -210,8 +209,8 @@ def qv_axes(ax, window: bool = True, cap: bool = False, legend_extra=None):
         ax.axhline(
             -QCAP["Q_FLAT"] * 100,
             color=C.REFERENCE["threshold"],
-            lw=0.8,
-            ls=(0, (1, 3)),
+            lw=1.0,
+            ls="--",
             zorder=1,
         )
     if window:
@@ -233,7 +232,7 @@ def qv_axes(ax, window: bool = True, cap: bool = False, legend_extra=None):
         Patch(
             facecolor=C.REFERENCE["band"],
             alpha=0.25,
-            label=f"±{TOL*100:.0f}% tolerance",
+            label=f"±{tol*100:.0f}% tolerance",
         ),
     ]
     if cap:
@@ -242,7 +241,7 @@ def qv_axes(ax, window: bool = True, cap: bool = False, legend_extra=None):
                 [],
                 [],
                 color=C.REFERENCE["threshold"],
-                ls=(0, (1, 3)),
+                ls="--",
                 label=f"Fig. 2.1 minimum, 20–60% P (−{QCAP['Q_FLAT']*100:.0f}%)",
             )
         )
@@ -306,7 +305,7 @@ def _median_line(ax, med):
     )
 
 
-def _median_handle(label: str = "Median per 1 V bin (assessable)"):
+def _median_handle(label: str = "Median per 1 V bin (P ≥ 20%, zones A, B)"):
     return Line2D(
         [],
         [],
@@ -345,22 +344,26 @@ def plot_qv_scatter(
     colour_by: str = "assessable",
     fit: bool = True,
     show_meta: bool = True,
+    cap: bool = True,
+    tol: float | None = None,
 ):
     """
     B.1 Every interval as a point, the binned median (assessable only) and, if `fit`,
     the OLS slope over the slope window with its verdict.
 
     colour_by: 'assessable' (Q colour vs faint grey), 'category' (inside the band in the
-               conformant colour, outside by Volt-VAr category), 'hour' (time of day,
-               cyclic map) or 'P' (active power as % of rating).
+               conformant colour, outside by Volt-VAr category), 'zone' (A-D),
+               'hour' (time of day, cyclic map) or 'P' (active power as % of rating).
+    cap: draw the Figure 2.1 minimum for 20-60% P (-44%) as a dashed line (default on).
+    tol: band tolerance (default ciccada_config.CONFORMANCE).
     The box at the bottom gives the slope fit, the assessable intervals inside and outside
     the permitted band (Figure 2.1 capped, as family A), and the outside-band intervals
     per category (Stage 2 Q_impact thresholds); percentages are of assessable intervals.
     """
     _print_meta(df, info, show_meta)
-    pts = qv_points(df, info["rating_kva"])
+    pts = qv_points(df, info["rating_kva"], tol)
     fig, ax = plt.subplots(figsize=(10, 8))
-    handles = qv_axes(ax)
+    handles = qv_axes(ax, cap=cap, tol=pts.attrs["tol"])
     na, ok = pts[~pts.assessable], pts[pts.assessable]
     ax.scatter(
         na.V,
@@ -380,7 +383,7 @@ def plot_qv_scatter(
             marker="o",
             mfc="none",
             mec=C.STATUS["not_assessable"],
-            label=f"Not assessable (|P| < {QCAP['P_MIN']*100:.0f}%)",
+            label=f"Low power, P < {QCAP['P_MIN']*100:.0f}% (zones C, D)",
         )
     )
     if colour_by == "assessable":
@@ -394,11 +397,11 @@ def plot_qv_scatter(
                 ls="",
                 marker="o",
                 color=C.QUANTITY["Q"],
-                label="Assessable interval",
+                label="P ≥ 20% (zones A, B)",
             )
         )
     elif colour_by == "category":
-        cats = [("Q_conformant", "inside band")] + CATEGORIES
+        cats = [("pass", "inside band")] + CATEGORIES
         for k, lab in cats:
             sub = ok[ok.category == k]
             if len(sub):
@@ -406,7 +409,7 @@ def plot_qv_scatter(
                     sub.V,
                     sub.q_pct,
                     s=8,
-                    color=C.VOLTVAR_CATEGORY[k],
+                    color=C.VVAR_INTERVAL[k],
                     alpha=0.5,
                     lw=0,
                     zorder=3,
@@ -417,9 +420,19 @@ def plot_qv_scatter(
                         [],
                         ls="",
                         marker="o",
-                        color=C.VOLTVAR_CATEGORY[k],
+                        color=C.VVAR_INTERVAL[k],
                         label=lab.capitalize(),
                     )
+                )
+    elif colour_by == "zone":
+        for z in ZONES:
+            sub = pts[pts.zone == z]
+            if len(sub):
+                ax.scatter(
+                    sub.V, sub.q_pct, s=8, color=C.ZONE_POINT[z], alpha=0.5, lw=0, zorder=3
+                )
+                handles.append(
+                    Line2D([], [], ls="", marker="o", color=C.ZONE_POINT[z], label=ZONE_LABELS[z])
                 )
     else:
         col, cmap, lab, lim = {
@@ -474,15 +487,17 @@ def plot_qv_scatter(
     return fig
 
 
-def plot_qv_curve(df, info: dict, show_meta: bool = True, min_n: int = 5):
+def plot_qv_curve(
+    df, info: dict, show_meta: bool = True, min_n: int = 5, tol: float | None = None
+):
     """
     B.2 One thin median curve per day (coloured by date) and the overall median with its
     interquartile range: is the response the same every day?
     """
     _print_meta(df, info, show_meta)
-    pts = qv_points(df, info["rating_kva"])
+    pts = qv_points(df, info["rating_kva"], tol)
     fig, ax = plt.subplots(figsize=(10, 8))
-    handles = qv_axes(ax)
+    handles = qv_axes(ax, tol=pts.attrs["tol"])
     days = sorted(pts.date.unique())
     cmap = plt.get_cmap(C.CMAP["year"])
     drawn = 0

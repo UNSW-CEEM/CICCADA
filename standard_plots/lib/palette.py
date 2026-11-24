@@ -85,17 +85,45 @@ STATUS = {
 }
 
 # Volt-VAr Q_impact categories, worst -> best -> not judged.
-# The Ausgrid slope classes map onto the same scale.
 VOLTVAR_CATEGORY = {
     "Q_adverse": "#67001F",
-    "Q_inactive": "#B2182B",  # = Ausgrid "flat"
-    "Q_significant_shortfall": "#EF8A62",  # = Ausgrid "shallow"
+    "Q_inactive": "#B2182B",  
+    "Q_significant_shortfall": "#EF8A62",  
     "Q_near_conformant": "#92C5DE",
-    "Q_conformant": "#2166AC",  # = Ausgrid "conformant"
-    "Q_major_surplus": "#762A83",  # = Ausgrid "steep"
+    "Q_conformant": "#2166AC", 
+    "Q_major_surplus": "#762A83", 
     "Q_not_exposed": "#D9D9D9",
     "Q_not_assessable": "#999999",
 }
+# Volt-VAr interval categories under the shared rules (bms_sa_review/shared),
+# worst -> best. Same ordered scale as above; new: voltage deadband violation
+# (orange-brown) and over-response (purple, as major surplus).
+VVAR_INTERVAL = {
+    "adverse": VOLTVAR_CATEGORY["Q_adverse"],
+    "inactive": VOLTVAR_CATEGORY["Q_inactive"],
+    "significant_shortfall": VOLTVAR_CATEGORY["Q_significant_shortfall"],
+    "voltage_deadband_violation": "#B35806",
+    "near_conformant": VOLTVAR_CATEGORY["Q_near_conformant"],
+    "pass": VOLTVAR_CATEGORY["Q_conformant"],
+    "over_response": VOLTVAR_CATEGORY["Q_major_surplus"],
+}
+
+# Volt-VAr zones (light tints, for context strips and shading only).
+ZONE = {
+    "A": "#FDD9B5",  # A - response required
+    "B": "#E5E5E5",  # B - sufficient power, voltage deadband
+    "C": "#FBE9D7",  # C - low power, voltage exposed
+    "D": "#F4F4F4",  # D - low power, voltage deadband
+}
+# Stronger zone colours for points (Q-V scatter coloured by zone).
+ZONE_POINT = {
+    "A": "#E66101",
+    "B": "#7F7F7F",
+    "C": "#FDB863",
+    "D": "#C7C7C7",
+}
+NOT_COUNTED = "#BDBDBD"  # intervals left out of the selected metric (hatched)
+
 SLOPE_CLASS = {
     "flat": VOLTVAR_CATEGORY["Q_inactive"],
     "shallow": VOLTVAR_CATEGORY["Q_significant_shortfall"],
