@@ -29,15 +29,22 @@ Three-phase:  one thin line per phase (palette.PHASE) plus one thick line in the
               P, Q: per-phase lines and the thick SUM of the phases, all as %
                     of the site rating (each phase sits near a third of the sum).
 
-Conformance is assessed on the thick line (mean V, total P, total Q against the
-total rating), using bms_sa_review/shared/as4777_curves.py -- the same
-functions the Stage 2 conformance tables use (capability profile
-"review_corrected"):
-  - |P| < 20% S_rated : no quantified minimum (Figure 2.1) -> not assessable,
-                        drawn grey, left out of every total
-  - 20-60%            : absorbing requirement capped at 44% S_rated
-  - 60-80%            : capped at PF 0.8
-  - > 80%             : no relaxation (reactive power priority)
+Volt-VAr is assessed on the thick line (mean V, total P, total Q against the
+total rating) with bms_sa_review/shared (as4777_curves zones, band and
+categories; vvar_metrics for the day's metrics) -- the same rules as the
+Stage 2 and OEM pipelines:
+  - |P| < 20% S_rated : no minimum; fails only on wrong direction or going
+                        beyond the curve, each by more than tol (wide band)
+  - 20-60%            : accepted from min(curve, 44%) up to the curve
+  - 60-80%            : from min(curve, 0.75 P) up to the curve
+  - > 80%             : full curve (reactive power priority)
+  - 220-240 V         : voltage deadband, Q within +/-tol
+Zones: A response required | B sufficient power, voltage deadband |
+C low power, voltage exposed | D low power, voltage deadband.
+`metric=` picks which intervals count (the band never changes):
+  remote_conformance_rate (default)  zone A + failing zone C
+  nonconformance_frequency           every valid interval
+  legacy_conformance_rate            P >= 20% at any voltage (pre-rework headline)
 """
 
 from __future__ import annotations
@@ -60,11 +67,21 @@ for _p in (_REPO, _REPO / "bms_sa_review"):
         sys.path.insert(0, str(_p))
 
 from shared.as4777_curves import (  # noqa: E402
-    q_conformance_floor_absorbing,
-    vvar_required_q,
+    ZONE_LABELS,
+    ZONES,
+    vvar_band,
+    vvar_required_q_np,
     vw_max_p,
 )
-from shared.ciccada_config import AS4777  # noqa: E402
+from shared.ciccada_config import AS4777, CONFORMANCE  # noqa: E402
+from shared.vvar_metrics import (  # noqa: E402
+    LEGACY_FAILURES,
+    conformance_metrics,
+    failure_categories,
+    metric_columns,
+    score_intervals,
+    zone_counts,
+)
 
 from . import palette as C  # noqa: E402
 
@@ -172,43 +189,143 @@ def prepare(df: pd.DataFrame, rating_kva: float, meta: dict | None = None) -> Si
 
 
 # =============================================================================
-# 2. Assessment (same rules as the Stage 2 tables)
+# 2. Assessment (shared rules: bms_sa_review/shared)
 # =============================================================================
-def assess_voltvar(day: SiteDay) -> pd.DataFrame:
-    """Required Q, unclamped and Figure-2.1-clamped bands, assessability, signed NC. All in % of rating."""
-    S, tol = day.rating_kva, TOL * day.rating_kva
-    rows = []
-    for v, p, q in zip(day.v, day.p_kw, day.q_kvar):
-        if np.isnan(v) or np.isnan(p):
-            rows.append((np.nan,) * 6 + (False,))
-            continue
-        q_req = vvar_required_q(v, S)
-        vmax, vmin = q_req + tol, q_req - tol
-        cap = q_conformance_floor_absorbing(p, S)  # <= 0 (absorbing floor)
-        qmax = max(vmax, cap + tol) if vmax < 0 else vmax
-        qmin = min(vmin, -cap - tol) if vmin > 0 else vmin
-        rows.append((q_req, vmin, vmax, qmin, qmax, q, abs(p) >= QCAP["P_MIN"] * S))
-    a = pd.DataFrame(
-        rows,
+#: Display names of the three metrics (explicit, as in ciccada_config.CONFORMANCE).
+METRIC_LABELS = {
+    "nonconformance_frequency": "Non-conformance frequency",
+    "remote_conformance_rate": "Remote conformance rate",
+    "legacy_conformance_rate": "Legacy conformance rate",
+}
+#: What each metric leaves out (shaded "not counted" in the Q panel).
+NOT_COUNTED_REASON = {
+    "nonconformance_frequency": None,
+    "remote_conformance_rate": "voltage deadband (zones B, D) and low-power passes (zone C)",
+    "legacy_conformance_rate": "low power, P < 20% (zones C, D)",
+}
+
+
+def _options(metric=None, tol=None, failure_definition=None):
+    metric = metric or CONFORMANCE["METRIC_DEFAULT"]
+    if metric not in METRIC_LABELS:
+        raise ValueError(
+            f"metric must be one of {sorted(METRIC_LABELS)}, got {metric!r}"
+        )
+    tol = CONFORMANCE["TOL_DEFAULT"] if tol is None else tol
+    fdef = failure_definition or CONFORMANCE["FAILURE_DEFINITION_DEFAULT"]
+    return metric, tol, fdef
+
+
+def assess_voltvar(
+    day: SiteDay,
+    metric: str | None = None,
+    tol: float | None = None,
+    failure_definition: str | None = None,
+) -> pd.DataFrame:
+    """
+    Per interval, with the shared rules (bms_sa_review/shared): required Q, the
+    accepted band, zone, category, the legacy category, whether the interval is
+    counted by `metric`, whether it is a counted failure, and the distance
+    outside the band (nc_pct). Q values in % of rating. The day's metric values
+    (all three, from shared.vvar_metrics) are in .attrs["metrics"].
+
+    metric: 'remote_conformance_rate' (default), 'nonconformance_frequency' or
+    'legacy_conformance_rate'. The band drawn is the same for every metric; the
+    metric only decides which intervals count.
+    """
+    metric, tol, fdef = _options(metric, tol, failure_definition)
+    S = day.rating_kva
+    frame = pd.DataFrame(
+        {
+            "V": day.v.to_numpy(),
+            "P_kW": day.p_kw.to_numpy(),
+            "Q_kvar": day.q_kvar.to_numpy(),
+            "s_rated": S,
+            "day": str(day.meta.get("date", "day")),
+            "site": "site",
+        },
         index=day.t,
-        columns=[
-            "q_req",
-            "q_min_raw",
-            "q_max_raw",
-            "q_min_final",
-            "q_max_final",
-            "q",
-            "assessable",
-        ],
     )
-    for c in ["q_req", "q_min_raw", "q_max_raw", "q_min_final", "q_max_final", "q"]:
-        a[c] = a[c] / S * 100
+    sc = score_intervals(frame, tol=tol)
+    q_lo, q_hi = vvar_band(sc.V, sc.P_kW, S, tol=tol)
+    a = pd.DataFrame(index=day.t)
+    a["q_req"] = vvar_required_q_np(sc.V, S) / S * 100
+    a["q_min_final"] = q_lo / S * 100
+    a["q_max_final"] = q_hi / S * 100
+    a["q"] = sc.Q_kvar / S * 100
+    for c in ("valid", "zone", "category", "legacy_category", "legacy_assessable"):
+        a[c] = sc[c].to_numpy()
+    new_fail = a.category.isin(failure_categories(fdef)).to_numpy()
+    legacy_fail = a.legacy_category.isin(LEGACY_FAILURES).to_numpy()
+    valid = a.valid.to_numpy(bool)
+    zone = a.zone.to_numpy(object)
+    if metric == "nonconformance_frequency":
+        counted, fail = valid, new_fail
+    elif metric == "remote_conformance_rate":
+        counted = valid & ((zone == "A") | ((zone == "C") & new_fail))
+        fail = new_fail
+    else:
+        counted, fail = valid & a.legacy_assessable.to_numpy(bool), legacy_fail
+    a["counted"] = counted
+    a["failure"] = counted & fail
     above, below = a.q > a.q_max_final, a.q < a.q_min_final
     a["nc_pct"] = np.where(
         above, a.q - a.q_max_final, np.where(below, a.q - a.q_min_final, 0.0)
     )
     a["nc_kvar"] = a.nc_pct.abs() / 100 * S
+    counts = zone_counts(sc, by=["site"], day_col="day")
+    a.attrs.update(
+        metric=metric,
+        tol=tol,
+        failure_definition=fdef,
+        metrics=conformance_metrics(counts, failure_definition=fdef).iloc[0],
+    )
     return a
+
+
+def metric_summary(vv: pd.DataFrame) -> str:
+    """One line for the selected metric, one for voltage exposure and zone counts."""
+    m, metric = vv.attrs["metrics"], vv.attrs["metric"]
+    pct = lambda x: "–" if pd.isna(x) else f"{100 * x:.1f}%"
+    if metric == "nonconformance_frequency":
+        fails = int(sum(m[f"fail_{z}"] for z in ZONES))
+        line = (
+            f"{METRIC_LABELS[metric]} {pct(m.nonconformance_frequency)} "
+            f"({fails} of {int(m.n_valid)} valid intervals fail; by zone "
+            + "  ".join(f"{z} {int(m[f'fail_{z}'])}" for z in ZONES)
+            + ")"
+        )
+    elif metric == "remote_conformance_rate":
+        if not m.remote_conformance_rate_assessable:
+            line = (
+                f"{METRIC_LABELS[metric]}: not assessable "
+                f"({int(m.n_A)} zone A intervals on {int(m.n_days_A)} day(s); "
+                f"minimum {int(m.min_zone_a_intervals)} on {int(m.min_zone_a_days)})"
+            )
+        else:
+            passes = int(m.remote_denominator - m.fail_A - m.fail_C)
+            line = (
+                f"{METRIC_LABELS[metric]} {pct(m.remote_conformance_rate)} "
+                f"({passes} of {int(m.remote_denominator)} pass: zone A {int(m.n_A)} "
+                f"+ failing zone C {int(m.fail_C)})"
+            )
+    else:
+        line = (
+            f"{METRIC_LABELS[metric]} {pct(m.legacy_conformance_rate)} "
+            f"({int(m.n_legacy_total - m.n_legacy_fail)} of {int(m.n_legacy_total)} "
+            f"intervals with P ≥ 20% pass)"
+        )
+    verdict = m[metric_columns(metric)["verdict"]]
+    line2 = (
+        f"site tag (10% rule): {verdict}  ·  voltage exposure {pct(m.voltage_exposure)} "
+        f"(zone A {int(m.n_A)} of {int(m.n_valid)})  ·  tol ±{100 * vv.attrs['tol']:.0f}%  ·  "
+        + (
+            "failures: legacy (adverse + inactive + significant shortfall)"
+            if metric == "legacy_conformance_rate"
+            else f"failures: {vv.attrs['failure_definition']}"
+        )
+    )
+    return line + "\n" + line2
 
 
 def assess_voltwatt(day: SiteDay) -> pd.DataFrame:
@@ -467,8 +584,32 @@ def panel_active_power(
     _legend(ax, handles=h + handles)
 
 
+def _zone_strip(ax, day: SiteDay, vv: pd.DataFrame):
+    """Thin strip along the top of the panel: the zone of every interval."""
+    for z in ZONES:
+        ax.fill_between(
+            day.t,
+            0.965,
+            1.0,
+            where=(vv.zone == z).to_numpy(),
+            step="mid",
+            transform=ax.get_xaxis_transform(),
+            facecolor=C.ZONE[z],
+            lw=0,
+            zorder=5,
+        )
+    return [
+        Patch(facecolor=C.ZONE[z], label=ZONE_LABELS[z])
+        for z in ZONES
+        if (vv.zone == z).any()
+    ]
+
+
 def panel_reactive_power(ax, day: SiteDay, vv: pd.DataFrame):
-    _shade(ax, day.t, ~vv.assessable, C.STATUS["not_assessable"], 0.18, hatch="///")
+    metric, tol = vv.attrs["metric"], vv.attrs["tol"]
+    not_counted = vv.valid & ~vv.counted
+    if NOT_COUNTED_REASON[metric]:
+        _shade(ax, day.t, not_counted, C.NOT_COUNTED, 0.22, hatch="///")
     ax.fill_between(
         day.t,
         vv.q_min_final,
@@ -502,56 +643,56 @@ def panel_reactive_power(ax, day: SiteDay, vv: pd.DataFrame):
         C.QUANTITY["Q"],
         "Sum of phases" if day.three_phase else "Q",
     )
+    zone_handles = _zone_strip(ax, day, vv)
     ax.set_ylim(
         min(Q_RANGE[0], np.nanmin(day.q_phase_pct.to_numpy()) - 5),
-        max(Q_RANGE[1], np.nanmax(day.q_phase_pct.to_numpy()) + 5),
+        max(Q_RANGE[1], np.nanmax(day.q_phase_pct.to_numpy()) + 8),
     )
     ax.set_ylabel("Reactive power\n(% of rating, + supply / − absorb)")
     _pct_axis(ax, day, "kvar", "Q")
     h, _ = ax.get_legend_handles_labels()
-    _legend(
-        ax,
-        handles=h
-        + [
+    extra = [
+        Patch(
+            facecolor=C.REFERENCE["band"],
+            alpha=0.25,
+            edgecolor=C.REFERENCE["required"],
+            ls="--",
+            label=f"Accepted band (curve ±{tol*100:.0f}%; Fig. 2.1 at measured P; "
+            "wide band below 20% P)",
+        ),
+        Line2D(
+            [],
+            [],
+            color=C.REFERENCE["required"],
+            ls=":",
+            alpha=0.6,
+            label="Volt-VAr curve",
+        ),
+    ]
+    if NOT_COUNTED_REASON[metric]:
+        extra.append(
             Patch(
-                facecolor=C.REFERENCE["band"],
-                alpha=0.25,
-                edgecolor=C.REFERENCE["required"],
-                ls="--",
-                label=f"Permitted band (±{TOL*100:.0f}%, Fig. 2.1 capped)",
-            ),
-            Line2D(
-                [],
-                [],
-                color=C.REFERENCE["required"],
-                ls=":",
-                alpha=0.6,
-                label="Volt-VAr curve (uncapped)",
-            ),
-            Patch(
-                facecolor=C.STATUS["not_assessable"],
-                alpha=0.3,
+                facecolor=C.NOT_COUNTED,
+                alpha=0.4,
                 hatch="///",
-                label=f"Not assessable (|P| < {QCAP['P_MIN']*100:.0f}%)",
-            ),
-        ],
-    )
+                label=f"Not counted in {METRIC_LABELS[metric].lower()}: {NOT_COUNTED_REASON[metric]}",
+            )
+        )
+    _legend(ax, handles=h + extra + zone_handles, fontsize=7, loc="lower left", ncol=2)
 
 
 def panel_nc_voltvar(ax, day: SiteDay, vv: pd.DataFrame):
-    colors = np.where(
-        vv.assessable, C.STATUS["nonconformant"], C.STATUS["not_assessable"]
+    outside = vv.nc_pct != 0
+    colors = np.where(vv.failure, C.STATUS["nonconformant"], C.NOT_COUNTED)
+    ax.bar(
+        day.t, vv.nc_pct.where(outside), width=_bar_width(day), color=colors, zorder=3
     )
-    ax.bar(day.t, vv.nc_pct, width=_bar_width(day), color=colors, zorder=3)
     ax.axhline(0, color=C.REFERENCE["zero"], lw=0.5)
-    ax.set_ylabel("Volt-VAr NC\n(pp outside band)")
-    ok = vv.assessable
-    kvarh = float(vv.nc_kvar[ok].sum() * day.interval_h)
-    n_nc = int(((vv.nc_pct != 0) & ok).sum())
+    ax.set_ylabel("Volt-VAr\n(pp outside band)")
     ax.text(
         0.99,
         0.95,
-        f"Assessable {int(ok.sum())}/{len(vv)} intervals  ·  NC {n_nc}  ·  {kvarh:.2f} kvarh",
+        metric_summary(vv),
         transform=ax.transAxes,
         ha="right",
         va="top",
@@ -561,14 +702,19 @@ def panel_nc_voltvar(ax, day: SiteDay, vv: pd.DataFrame):
     _legend(
         ax,
         handles=[
-            Patch(color=C.STATUS["nonconformant"], label="Outside band (assessable)"),
             Patch(
-                color=C.STATUS["not_assessable"], label="Outside band, not assessable"
+                color=C.STATUS["nonconformant"], label="Outside band: counted failure"
+            ),
+            Patch(
+                color=C.NOT_COUNTED,
+                label="Outside band: not a failure under this metric / definition",
             ),
         ],
         ncol=2,
+        fontsize=7,
+        loc="lower left",
     )
-    lim = max(2.0, float(np.nanmax(np.abs(vv.nc_pct))) * 1.15)
+    lim = max(2.0, float(np.nanmax(np.abs(vv.nc_pct))) * 1.6)
     ax.set_ylim(-lim, lim)
 
 
@@ -723,13 +869,28 @@ def _as_day(df_or_day, rating_kva, meta) -> SiteDay:
 
 
 def plot_voltvar_day(
-    df, rating_kva=None, meta: dict | None = None, show_meta: bool = True
+    df,
+    rating_kva=None,
+    meta: dict | None = None,
+    show_meta: bool = True,
+    metric: str | None = None,
+    tol: float | None = None,
+    failure_definition: str | None = None,
 ):
-    """A.1 Volt-VAr: V -> P (20% gate) -> Q vs permitted band -> Volt-VAr NC."""
+    """
+    A.1 Volt-VAr: V -> P (20% gate) -> Q vs accepted band -> outside-band bars.
+    metric: 'remote_conformance_rate' (default), 'nonconformance_frequency' or
+    'legacy_conformance_rate'; it changes only which intervals count (shading
+    and summary), not the band. tol / failure_definition: ciccada_config defaults.
+    """
     day = _as_day(df, rating_kva, meta)
-    vv = assess_voltvar(day)
+    vv = assess_voltvar(day, metric, tol, failure_definition)
     fig, (a_v, a_p, a_q, a_nc) = _figure(
-        day, [1.6, 1.6, 2.2, 0.9], "Volt-VAr response", 12, show_meta
+        day,
+        [1.6, 1.6, 2.4, 1.0],
+        f"Volt-VAr response  ·  {METRIC_LABELS[vv.attrs['metric']]}",
+        12.5,
+        show_meta,
     )
     panel_voltage(a_v, day, "voltvar")
     panel_active_power(a_p, day, gate=True)
@@ -754,16 +915,22 @@ def plot_voltwatt_day(
 
 
 def plot_operational_day(
-    df, rating_kva=None, meta: dict | None = None, show_meta: bool = True
+    df,
+    rating_kva=None,
+    meta: dict | None = None,
+    show_meta: bool = True,
+    metric: str | None = None,
+    tol: float | None = None,
+    failure_definition: str | None = None,
 ):
-    """A.0 Both operational modes: V -> P vs ceiling -> Volt-Watt NC -> Q vs band -> Volt-VAr NC."""
+    """A.0 Both operational modes: V -> P vs ceiling -> Volt-Watt NC -> Q vs band -> Volt-VAr bars."""
     day = _as_day(df, rating_kva, meta)
-    vv, vw = assess_voltvar(day), assess_voltwatt(day)
+    vv, vw = assess_voltvar(day, metric, tol, failure_definition), assess_voltwatt(day)
     fig, (a_v, a_p, a_pnc, a_q, a_qnc) = _figure(
         day,
-        [1.6, 2.0, 0.8, 2.2, 0.8],
-        "Operational modes: Volt-Watt and Volt-VAr",
-        15,
+        [1.6, 2.0, 0.8, 2.4, 1.0],
+        f"Operational modes: Volt-Watt and Volt-VAr  ·  {METRIC_LABELS[vv.attrs['metric']]}",
+        15.5,
         show_meta,
     )
     panel_voltage(a_v, day, "operational")

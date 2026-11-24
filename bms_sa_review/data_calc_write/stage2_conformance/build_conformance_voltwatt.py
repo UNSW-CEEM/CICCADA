@@ -175,7 +175,7 @@ def _insert_sql_basic(
     scored AS (
         SELECT site_id, P_kW, V,
                {temporal_cols('t_stamp')},
-               CASE WHEN V {vw_exposed}
+               CASE WHEN {vw_exposed}
                     THEN greatest(0, P_kW - max_P_volt_watt)
                     ELSE NULL END AS nonconformance_voltwatt
         FROM limits
