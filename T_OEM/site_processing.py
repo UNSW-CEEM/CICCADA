@@ -91,7 +91,7 @@ def _process_site_conformance(
     )
     site_telemetry = pl.read_parquet(telemetry_path).sort("timestamp")
 
-    csip_export_limit_usable = True
+    csip_export_limit_usable = False
     if site_metadata["solar_coupling"] == "dc_only":
         csip_export_limit_usable = has_usable_csip_export_limit(site_telemetry)
         site_telemetry = site_telemetry.with_columns(

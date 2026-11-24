@@ -522,7 +522,7 @@ def combined_conformance(
     system_apparent_power_kva: float,
     solar_coupling: str,
     v_nom_max: float = 258.0,
-    csip_export_limit_usable: bool = True,
+    csip_export_limit_usable: bool = False,
     volt_var_method: str = "standard",
 ) -> pl.DataFrame:
     """Return timestamp-level results for coordinated conformance checks.
@@ -536,8 +536,9 @@ def combined_conformance(
     are assessed independently of those two checks.
     ``volt_var_method`` selects either the ``"standard"`` Volt-VAr assessment
     or the assessment limited by the ``"min_cap_curve"``.
-    Set ``csip_export_limit_usable`` false when the raw CSIP signal has no
-    finite, positive export limit; CSIP results will then remain null.
+    ``csip_export_limit_usable`` indicates whether a usable CSIP export-limit
+    signal is available. For DC-only sites, it is calculated by
+    ``has_usable_csip_export_limit``. For AC-coupled sites it is false.
 
     A nullable Boolean is returned for each check:
     true or false when the check applies, and null when it does not.
@@ -731,7 +732,7 @@ def combined_conformance_with_voltage_tolerance(
     system_apparent_power_kva: float,
     solar_coupling: str,
     v_nom_max: float = 258.0,
-    csip_export_limit_usable: bool = True,
+    csip_export_limit_usable: bool = False,
     voltage_tolerance_v: float = 2.3,
     vw_require_measured_above_threshold: bool = False,
 ) -> pl.DataFrame:
@@ -748,6 +749,10 @@ def combined_conformance_with_voltage_tolerance(
 
     When ``vw_require_measured_above_threshold`` is true, Volt-Watt is
     assessed only when the measured voltage is above 253 V.
+
+    ``csip_export_limit_usable`` indicates whether a usable CSIP export-limit
+    signal is available. For DC-only sites, it is calculated by
+    ``has_usable_csip_export_limit``. For AC-coupled sites it is false.
 
     Passive anti-islanding is assessed first. Limit for sustained operation
     is assessed only when passive anti-islanding is inconclusive or does not
