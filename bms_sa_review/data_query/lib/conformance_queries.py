@@ -213,6 +213,81 @@ def fetch_vvar_site_year(aq, config):
     )
 
 
+def fetch_vvar_zone_counts(aq, config, tol=None, by=("site_id", "year")):
+    """
+    Volt-VAr zone x category counts summed per `by` (default site-year) from
+    the Stage 2 zone table, at one tolerance: a fraction of the rating,
+    default CONFORMANCE["TOL_DEFAULT"] (4%), or 0.0 for the literal reading.
+
+    Columns match shared.vvar_metrics.zone_counts, with n_days_A counted here
+    (distinct AEST dates with zone A intervals) and
+    n_expected = AEST dates the site reports x intervals per day (x 1/2 when
+    config.day_night is 'day' or 'night'), so coverage = completeness of the
+    days reported. Feed to conformance_metrics.prepare_vvar_metrics.
+    """
+    from bms_sa_review.shared.ciccada_config import CONFORMANCE
+    from bms_sa_review.shared.vvar_sql import zone_count_names
+
+    tol = CONFORMANCE["TOL_DEFAULT"] if tol is None else float(tol)
+    if tol not in tuple(CONFORMANCE["TOL_OPTIONS"]):
+        raise ValueError(f"tol must be one of {CONFORMANCE['TOL_OPTIONS']}, got {tol!r}")
+    by = list(by)
+    table = config.tables["conformance_voltvar_zones"]
+    cols = zone_count_names(with_days=False) + [
+        "n_missing_p",
+        "n_missing_q",
+        "n_missing_rating",
+    ]
+    sums = ",\n               ".join(f"sum({c}) AS {c}" for c in cols)
+    per_day = 24 * 60 // CONFORMANCE["INTERVAL_MINUTES"]
+    if config.day_night != "all":
+        per_day //= 2  # 'day' is 06:00-17:59 AEST, half of the intervals
+    date_key = "year * 10000 + month * 100 + day"
+    keys = ", ".join(by)
+    out = aq(
+        f"""
+        SELECT {keys},
+               {sums},
+               count(DISTINCT CASE WHEN n_A > 0 THEN {date_key} END) AS n_days_A,
+               count(DISTINCT {date_key}) * {per_day} AS n_expected
+        FROM {table}
+        WHERE {years_sql(config.years)}
+          AND {day_night_sql(config.day_night)}
+          AND tol = {tol!r}
+        GROUP BY {keys}
+    """,
+        database=config.database,
+    )
+    out["tol"] = tol
+    out["p_tol_vvar"] = 0.0
+    return out
+
+
+def fetch_vvar_site_days(aq, config, site_id, tol=None):
+    """
+    One site, one row per AEST date: zone counts from the Stage 2 zone table
+    (n_A = zone A response required ... n_D), for picking a day to plot.
+    Small query (the zone table only).
+    """
+    from bms_sa_review.shared.ciccada_config import CONFORMANCE
+
+    tol = CONFORMANCE["TOL_DEFAULT"] if tol is None else float(tol)
+    table = config.tables["conformance_voltvar_zones"]
+    return aq(
+        f"""
+        SELECT year, month, day,
+               sum(n_valid) AS n_valid, sum(n_A) AS n_A, sum(n_B) AS n_B,
+               sum(n_C) AS n_C, sum(n_D) AS n_D
+        FROM {table}
+        WHERE site_id = {int(site_id)} AND tol = {tol!r}
+          AND {years_sql(config.years)}
+        GROUP BY year, month, day
+        ORDER BY n_A DESC, n_valid DESC
+    """,
+        database=config.database,
+    )
+
+
 def fetch_monthly_fleet(aq, config, mechanism):
     if mechanism == "vw":
         table = config.tables["conformance_voltwatt"]

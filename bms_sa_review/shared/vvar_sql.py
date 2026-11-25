@@ -86,11 +86,14 @@ def vvar_sql_categories(q="Q", s="S", tol=0.04) -> str:
             {legacy} AS legacy_category"""
 
 
-def zone_count_sql(valid="valid", day="day") -> str:
+def zone_count_sql(valid="valid", day="day", with_days=True) -> str:
     """
     Aggregate SELECT-list (per GROUP BY) giving the shared.vvar_metrics.zone_counts
     columns from rows carrying `valid`, `zone`, `category`, `legacy_category`,
     `legacy_assessable` and a local-date column `day`.
+
+    with_days=False leaves out n_days_A, for tables stored at day grain or finer
+    (Stage 2), where distinct days are counted when the rows are summed.
     """
     from shared.as4777_curves import VVAR_CATEGORIES, ZONES
 
@@ -105,8 +108,11 @@ def zone_count_sql(valid="valid", day="day") -> str:
         for z in ZONES
         for c in VVAR_CATEGORIES
     ]
+    if with_days:
+        parts.append(
+            f"count(DISTINCT {day}) FILTER (WHERE {valid} AND zone = 'A') AS n_days_A"
+        )
     parts += [
-        f"count(DISTINCT {day}) FILTER (WHERE {valid} AND zone = 'A') AS n_days_A",
         f"count(*) FILTER (WHERE {valid} AND legacy_assessable) AS n_legacy_total",
         f"count(*) FILTER (WHERE {valid} AND legacy_category IN ({lf})) AS n_legacy_fail",
     ]
@@ -115,3 +121,11 @@ def zone_count_sql(valid="valid", day="day") -> str:
         for c in LEGACY_CATEGORIES
     ]
     return ",\n           ".join(parts)
+
+
+def zone_count_names(with_days=True) -> list:
+    """Column names produced by zone_count_sql, in order."""
+    return [
+        part.strip().rsplit(" AS ", 1)[1]
+        for part in zone_count_sql(with_days=with_days).split(",\n")
+    ]

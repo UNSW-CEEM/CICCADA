@@ -299,13 +299,14 @@ def voltvar_site_day(
 # cohort filters. 
 #############################################################################
 # DATA LIMITATION (read before comparing with Solar Analytics): 
-# OEM telemetry often stops when the inverter sleeps. 
-# The median site reports ~150 of 288 intervals a day, 
-# almost none between 20:00 and 05:00 AEST
-# only ~33 of 1,602 sites # report most nights. 
-# 
-# So the non-conformance frequency and the voltage exposure # are taken over (mostly daylight) reported intervals: 
-# both read HIGHER than they # would with night data, and night failures (e.g. voltage deadband offsets) are not seen. 
+# OEM telemetry often stops when the inverter sleeps.
+# The median site reports about half of the day's intervals, almost none at
+# night (roughly 20:00 to 05:00 AEST); only a small share of sites report
+# most nights.
+#
+# So the non-conformance frequency and the voltage exposure are taken over
+# (mostly daylight) reported intervals: both read HIGHER than they would with
+# night data, and night failures (e.g. voltage deadband offsets) are not seen.
 # The remote and legacy conformance rates use daytime intervals anyway and are not affected. 
 # `coverage` (= valid / calendar intervals) is reported for every site-month so the limitation stays visible.
 

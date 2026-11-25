@@ -166,6 +166,11 @@ TABLES = {
     "conformance_voltvar": "conformance_voltvar_v2_flex_included",
     "conformance_voltwatt": "conformance_voltwatt_v2_flex_included",
     "conformance_voltwattghi": "conformance_voltwattghi_v2_flex_included",
+    # Stage 2 new (phase 5): Volt-VAr zone x category counts for the three
+    # metrics, both tolerances (build_conformance_voltvar_zones.py)
+    # Flex-export sites REMOVED here (flex_selection="exclude"), unlike the
+    # *_flex_included tables above; the original Volt-VAr build kept them.
+    "conformance_voltvar_zones": "conformance_voltvar_zones_v2",
     # NOT rebuilt. legacy, use with care
     "conformance_sust_op_3w": "conformance_sust_op_3w",
     "conformance_antiisland": "conformance_antiisland",
@@ -178,6 +183,7 @@ REBUILT = {
     "conformance_voltvar",
     "conformance_voltwatt",
     "conformance_voltwattghi",
+    "conformance_voltvar_zones",
 }
 
 # Flip the whole analysis back to originals for an A/B comparison.

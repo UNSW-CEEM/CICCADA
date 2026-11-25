@@ -68,6 +68,170 @@ def prepare_vvar_conformance(vvar_site_year, config, min_intervals=None):
     )
 
 
+def vvar_site_metrics(zone_counts, failure_definition=None, by=("site_id",), **metric_options):
+    """
+    All three Volt-VAr metrics, tags, voltage exposure, coverage and the zone
+    counts, one row per `by` group (default: one row per site over the selected
+    years), from fetch_vvar_zone_counts. Nothing is dropped: each metric has its
+    own `<metric>_assessable` and `<metric>_verdict` column.
+
+    Zones: A response required, B sufficient power + voltage deadband,
+    C low power + voltage exposed, D low power + voltage deadband.
+    """
+    from bms_sa_review.shared.ciccada_config import CONFORMANCE
+    from bms_sa_review.shared.vvar_metrics import conformance_metrics, sum_counts
+
+    failure_definition = failure_definition or CONFORMANCE["FAILURE_DEFINITION_DEFAULT"]
+    counts = sum_counts(zone_counts, by=list(by))
+    out = conformance_metrics(counts, failure_definition=failure_definition, **metric_options)
+    out["tol"] = float(zone_counts["tol"].iloc[0]) if len(zone_counts) else np.nan
+    return out
+
+
+def prepare_vvar_metrics(
+    zone_counts,
+    metric=None,
+    failure_definition=None,
+    by=("site_id",),
+    **metric_options,
+):
+    """
+    One Volt-VAr metric in the generic columns used by fleet_result and
+    group_breakdown (nonconf_count, denominator_count, nonconf_frac,
+    conformant, nonconformant, any_nonconformance), from fetch_vvar_zone_counts.
+    All three metrics stay in the output (vvar_site_metrics columns).
+
+    metric: 'remote_conformance_rate' (default), 'nonconformance_frequency' or
+        'legacy_conformance_rate'.
+    failure_definition: 'reduced' (default) or 'strict'.
+    by: rows are summed to these keys first (default one row per site).
+    metric_options: thresholds and minimums for conformance_metrics.
+
+    Sites 'not assessable' under the chosen metric (remote: fewer than 10 zone A
+    intervals or no zone A day) are dropped, as min_intervals does in
+    aggregate_sites; their number is in attrs['n_not_assessable'].
+    """
+    from bms_sa_review.shared.ciccada_config import CONFORMANCE
+    from bms_sa_review.shared.vvar_metrics import failure_categories, metric_columns
+
+    metric = metric or CONFORMANCE["METRIC_DEFAULT"]
+    cols = metric_columns(metric)
+    failure_definition = failure_definition or CONFORMANCE["FAILURE_DEFINITION_DEFAULT"]
+    d = vvar_site_metrics(zone_counts, failure_definition, by=by, **metric_options)
+
+    if metric == "nonconformance_frequency":
+        num = sum(d[f"fail_{z}"] for z in "ABCD")
+        den = d["n_valid"]
+    elif metric == "remote_conformance_rate":
+        num = d["fail_A"] + d["fail_C"]
+        den = d["remote_denominator"]
+    else:
+        num = d["n_legacy_fail"]
+        den = d["n_legacy_total"]
+    d["metric"] = metric
+    d["nonconf_count"] = num
+    d["denominator_count"] = den
+    d["nonconf_frac"] = d[cols["share"]]
+    d["verdict"] = d[cols["verdict"]]
+    assessable = d[cols["assessable"]].astype(bool)
+    n_not = int((~assessable).sum())
+    d = d.loc[assessable].copy()
+    d["conformant"] = d["verdict"] == "conformant"
+    d["nonconformant"] = d["verdict"] == "non-conformant"
+    d["any_nonconformance"] = d["nonconf_count"] > 0
+    d.attrs["n_not_assessable"] = n_not
+    d.attrs["metric"] = metric
+    d.attrs["failure_definition"] = failure_definition
+    d.attrs["failure_categories"] = tuple(failure_categories(failure_definition))
+    d.attrs["tol"] = float(zone_counts["tol"].iloc[0]) if len(zone_counts) else None
+    return d
+
+
+def vvar_metric_overview(site_metrics):
+    """
+    One row per metric, from vvar_site_metrics: sites assessable / not
+    assessable, % of assessable sites tagged conformant, median and pooled
+    non-conforming share. All three metrics on the same site set.
+    """
+    from bms_sa_review.shared.vvar_metrics import metric_columns
+
+    pooled = {
+        "nonconformance_frequency": (
+            sum(site_metrics[f"fail_{z}"] for z in "ABCD"), site_metrics["n_valid"]),
+        "remote_conformance_rate": (
+            site_metrics["fail_A"] + site_metrics["fail_C"], site_metrics["remote_denominator"]),
+        "legacy_conformance_rate": (
+            site_metrics["n_legacy_fail"], site_metrics["n_legacy_total"]),
+    }
+    rows = []
+    for metric in ("legacy_conformance_rate", "nonconformance_frequency",
+                   "remote_conformance_rate"):
+        c = metric_columns(metric)
+        ok = site_metrics[c["assessable"]].astype(bool)
+        num, den = pooled[metric]
+        rows.append({
+            "metric": metric,
+            "n_assessable_sites": int(ok.sum()),
+            "n_not_assessable": int((~ok).sum()),
+            "sites_conformant_pct": 100 * float((site_metrics.loc[ok, c["verdict"]]
+                                                 == "conformant").mean()),
+            "median_site_share_pct": 100 * float(site_metrics.loc[ok, c["share"]].median()),
+            "pooled_share_pct": 100 * float(num[ok].sum() / den[ok].sum()) if den[ok].sum() else np.nan,
+        })
+    return pd.DataFrame(rows)
+
+
+def vvar_legacy_to_remote_steps(site_metrics, threshold=None):
+    """
+    Why the remote conformance rate tags fewer sites conformant than the legacy
+    conformance rate: change one thing at a time, on the SAME sites (assessable
+    under both), and report % of sites conformant and the pooled share.
+
+    1 legacy          legacy failures / P >= 20% intervals at any voltage
+                      (zone A response required + zone B sufficient power,
+                      voltage deadband). Legacy never fails zone B intervals.
+    2 drop zone B     the same legacy failures / zone A intervals only
+                      (the voltage deadband intervals no longer dilute)
+    3 new categories  zone A failures under the rework categories / zone A
+                      (e.g. wrong direction at 240-241.2 V is adverse)
+    4 add zone C      + low power, voltage exposed failures, in numerator and
+                      denominator = remote conformance rate
+    """
+    from bms_sa_review.shared.ciccada_config import CONFORMANCE
+
+    threshold = CONFORMANCE["REMOTE_THRESHOLD"] if threshold is None else threshold
+    d = site_metrics[
+        site_metrics["legacy_conformance_rate_assessable"].astype(bool)
+        & site_metrics["remote_conformance_rate_assessable"].astype(bool)
+    ]
+    steps = [
+        ("1 legacy", "legacy failures / zones A + B (P >= 20%, any voltage)",
+         d["n_legacy_fail"], d["n_legacy_total"]),
+        ("2 drop zone B", "legacy failures / zone A (response required) only",
+         d["n_legacy_fail"], d["n_A"]),
+        ("3 new categories", "zone A failures (rework categories) / zone A",
+         d["fail_A"], d["n_A"]),
+        ("4 add zone C = remote", "(zone A + zone C failures) / (zone A + zone C failures)",
+         d["fail_A"] + d["fail_C"], d["n_A"] + d["fail_C"]),
+    ]
+    rows = []
+    for step, what, num, den in steps:
+        share = num / den.where(den > 0)
+        rows.append({
+            "step": step,
+            "what changes": what,
+            "n_sites": int(len(d)),
+            "sites_conformant_pct": 100 * float((share <= threshold).mean()),
+            "median_site_share_pct": 100 * float(share.median()),
+            "pooled_share_pct": 100 * float(num.sum() / den.sum()) if den.sum() else np.nan,
+        })
+    out = pd.DataFrame(rows)
+    out.attrs["zone_B_share_of_legacy_denominator_median_pct"] = 100 * float(
+        (d["n_B"] / d["n_legacy_total"].where(d["n_legacy_total"] > 0)).median()
+    )
+    return out
+
+
 def fleet_result(
     site_df,
     label,

@@ -23,22 +23,21 @@ Nothing here writes to disk.
 
 from __future__ import annotations
 
-import textwrap
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
 
 from oem_analysis.config import se_config as C
 from oem_analysis.lib import se_contract as contract
 from oem_analysis.lib import se_params
 
 C.bootstrap_sys_path()
-from standard_plots.lib import a_site_day as A  # noqa: E402
-from standard_plots.lib import b_qv_response as B  # noqa: E402
 from standard_plots.lib import palette as PAL  # noqa: E402
+from standard_plots.lib.g_metric_compare import (  # noqa: E402,F401
+    _wrapped_summary,
+    plot_metric_comparison_day,
+    plot_qv_metric_comparison,
+)
 
 __all__ = [
     "METRICS",
@@ -61,13 +60,6 @@ SHORT = {
     "remote_conformance_rate": "remote",
 }
 ZONES = ("A", "B", "C", "D")
-
-
-def _wrapped_summary(vv, width: int = 78) -> str:
-    """standard_plots metric summary, wrapped to fit a narrow panel."""
-    return "\n".join(
-        textwrap.fill(line.replace("  ·  ", " · "), width) for line in A.metric_summary(vv).split("\n")
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -194,93 +186,8 @@ def best_day(con, config, site_alias: str, month: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 # Side-by-side figures (standard_plots building blocks)
 # ═══════════════════════════════════════════════════════════════════════════
-def plot_metric_comparison_day(df, info, metrics=METRICS, tol=None, failure_definition=None):
-    """
-    One site-day, one column per metric. Top (shared): voltage and active
-    power. Per column: the Q panel (accepted band; hatched = not counted by
-    that metric; zone strip) and the outside-band bars with that metric's
-    count, rate and site tag. The band is identical in every column; only the
-    counting changes.
-    """
-    day = A.prepare(df, info["rating_kva"], info)
-    vvs = [A.assess_voltvar(day, m, tol, failure_definition) for m in metrics]
-    n = len(metrics)
-    fig = plt.figure(figsize=(6.2 * n, 13))
-    gs = fig.add_gridspec(4, n, height_ratios=[1.3, 1.3, 2.4, 1.2], hspace=0.12, wspace=0.28)
-    a_v = fig.add_subplot(gs[0, :])
-    a_p = fig.add_subplot(gs[1, :], sharex=a_v)
-    A.panel_voltage(a_v, day, "voltvar")
-    A.panel_active_power(a_p, day, gate=True)
-    for ax in (a_v, a_p):
-        ax.tick_params(labelbottom=False)
-    for j, (m, vv) in enumerate(zip(metrics, vvs)):
-        a_q = fig.add_subplot(gs[2, j], sharex=a_v)
-        a_nc = fig.add_subplot(gs[3, j], sharex=a_v)
-        A.panel_reactive_power(a_q, day, vv)
-        A.panel_nc_voltvar(a_nc, day, vv)
-        a_q.set_title(A.METRIC_LABELS[m], fontsize=10, loc="left")
-        a_q.tick_params(labelbottom=False)
-        A._time_axis(a_nc)
-        if j > 0:  # one legend per row is enough
-            for ax in (a_q, a_nc):
-                if ax.get_legend():
-                    ax.get_legend().remove()
-                ax.set_ylabel("")
-        for t in a_nc.texts:  # summary box: wrapped to the column width
-            t.set_text(_wrapped_summary(vv))
-            t.set_fontsize(6.8)
-    fig.suptitle(
-        f"Same intervals, three ways of counting\n{info.get('label', '')}  ·  {info.get('date', '')}"
-        f"  ·  rating {info['rating_kva']:g} kVA ({info.get('rating_basis', '')})",
-        x=0.06, ha="left", y=0.995, fontsize=10.5,
-    )
-    fig.subplots_adjust(top=0.93, bottom=0.05, left=0.06, right=0.96)
-    return fig
-
-
-def plot_qv_metric_comparison(df, info, metrics=METRICS, tol=None, failure_definition=None):
-    """
-    One site, several days (e.g. a month), one Q-V panel per metric with the
-    standard_plots Q-V axes (curve, tolerance band, dashed 44% line). Points:
-    counted failure (non-conformant colour), counted pass (conformant colour),
-    not counted by that metric (grey ring). The box gives that metric's count.
-    """
-    day = A.prepare(df, info["rating_kva"], info)
-    n = len(metrics)
-    fig, axes = plt.subplots(1, n, figsize=(6.2 * n, 6.6), sharey=True)
-    for ax, m in zip(np.atleast_1d(axes), metrics):
-        vv = A.assess_voltvar(day, m, tol, failure_definition)
-        tol_used = vv.attrs["tol"]
-        B.qv_axes(ax, window=False, cap=True, tol=tol_used)
-        V, Q = day.v.to_numpy(), vv.q.to_numpy()
-        valid, counted, fail = (vv[c].to_numpy(bool) for c in ("valid", "counted", "failure"))
-        nc = valid & ~counted
-        ax.scatter(V[nc], Q[nc], s=7, facecolors="none", edgecolors=PAL.NOT_COUNTED, lw=0.5, alpha=0.5, zorder=2)
-        ok = counted & ~fail
-        ax.scatter(V[ok], Q[ok], s=8, color=PAL.STATUS["conformant"], alpha=0.45, lw=0, zorder=3)
-        ax.scatter(V[fail], Q[fail], s=8, color=PAL.STATUS["nonconformant"], alpha=0.55, lw=0, zorder=4)
-        ax.set_title(A.METRIC_LABELS[m], fontsize=10, loc="left")
-        ax.text(
-            0.02, 0.02, _wrapped_summary(vv), transform=ax.transAxes, fontsize=6.8,
-            va="bottom", ha="left", bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#CCCCCC"),
-        )
-        if ax is not np.atleast_1d(axes)[0]:
-            ax.set_ylabel("")
-    handles = [
-        Line2D([], [], ls="", marker="o", color=PAL.STATUS["nonconformant"], label="Counted: failure"),
-        Line2D([], [], ls="", marker="o", color=PAL.STATUS["conformant"], label="Counted: pass"),
-        Line2D([], [], ls="", marker="o", mfc="none", mec=PAL.NOT_COUNTED, label="Not counted by this metric"),
-        Line2D([], [], color=PAL.REFERENCE["required"], ls="--", label="Volt-VAr curve"),
-        Patch(facecolor=PAL.REFERENCE["band"], alpha=0.25, label="± tolerance"),
-        Line2D([], [], color=PAL.REFERENCE["threshold"], ls="--", label="Fig. 2.1 minimum, 20–60% P (−44%)"),
-    ]
-    fig.legend(handles=handles, loc="upper right", ncol=3, fontsize=8, frameon=False)
-    fig.suptitle(
-        f"Q–V, every interval, three ways of counting\n{info.get('label', '')}  ·  {info.get('date', '')}",
-        x=0.04, ha="left", y=0.995, fontsize=10.5,
-    )
-    fig.subplots_adjust(top=0.84, bottom=0.1, left=0.05, right=0.98, wspace=0.08)
-    return fig
+# plot_metric_comparison_day and plot_qv_metric_comparison now live in
+# standard_plots/lib/g_metric_compare.py (shared with Solar Analytics); imported above.
 
 
 # ═══════════════════════════════════════════════════════════════════════════
