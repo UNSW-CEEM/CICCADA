@@ -560,64 +560,23 @@ def _finish(df, site, site_id, date, source):
 # =============================================================================
 # 5. Finding example site-days (local store)
 # =============================================================================
-# ---- shared Volt-VAr SQL used by find_examples and category_counts ---------
+# ---- shared Volt-VAr SQL (bms_sa_review/shared/vvar_sql.py) -----------------
 def _vvar_sql_columns(tol: float, p_tol_vvar: float = 0.0) -> str:
-    """
-    SELECT-list fragment for a CTE with columns V, P, Q, S (site total, kW / kvar):
-    curve, accepted band, zone and category from bms_sa_review/shared (the same
-    rules as the Stage 2 and OEM pipelines), plus the LEGACY category (P >= 20%,
-    nearest-edge Q_impact) for back-comparison.
-    """
-    from shared.as4777_curves import (
-        q_conformance_floor_absorbing_sql,
-        vvar_band_sql,
-        vvar_required_q_sql,
-        vvar_zone_sql,
-    )
-    from shared.ciccada_config import AS4777
+    """Shared SELECT fragment on a relation with V, P, Q, S (see shared.vvar_sql)."""
+    from shared.vvar_sql import vvar_sql_columns
 
-    q_min, q_max = vvar_band_sql("V", "P", "S", tol=tol, p_tol=p_tol_vvar)
-    pmin = AS4777["QCAP"]["P_MIN"]
-    return f"""
-            {vvar_required_q_sql('V', 'S')} AS q_req,
-            {q_min} AS q_lo,
-            {q_max} AS q_hi,
-            {vvar_zone_sql('V', 'P', 'S', p_tol_vvar)} AS zone,
-            {q_conformance_floor_absorbing_sql('P', 'S')} AS q_cap_legacy,
-            abs(P) >= {pmin} * S AS legacy_assessable"""
+    return vvar_sql_columns("V", "P", "Q", "S", tol, p_tol_vvar)
 
 
 def _vvar_sql_categories(tol: float) -> str:
-    """SELECT-list fragment on top of _vvar_sql_columns: category and legacy_category."""
-    from shared.as4777_curves import vvar_category_sql
-    from shared.ciccada_config import AS4777
+    """Shared SELECT fragment: category and legacy_category (see shared.vvar_sql)."""
+    from shared.vvar_sql import vvar_sql_categories
 
-    qi = AS4777["QIMP"]
-    # Legacy band (Stage 2 'review_corrected' clamp) and nearest-edge Q_impact.
-    l_hi = f"""CASE WHEN q_req + {tol} * S < 0
-                    THEN greatest(q_req + {tol} * S, q_cap_legacy + {tol} * S)
-                    ELSE q_req + {tol} * S END"""
-    l_lo = f"""CASE WHEN q_req - {tol} * S > 0
-                    THEN least(q_req - {tol} * S, -q_cap_legacy - {tol} * S)
-                    ELSE q_req - {tol} * S END"""
-    edge = f"(CASE WHEN abs(Q - ({l_hi})) <= abs(Q - ({l_lo})) THEN ({l_hi}) ELSE ({l_lo}) END)"
-    impact = f"""((CASE WHEN abs(({l_hi}) + ({l_lo})) <= 1e-9 THEN 1 ELSE sign({edge}) * sign(Q) END)
-                  * abs(Q) / (abs({edge}) + 1e-9))"""
-    legacy = f"""
-            CASE WHEN NOT legacy_assessable THEN 'not_assessable'
-                 WHEN Q >= ({l_lo}) AND Q <= ({l_hi}) THEN 'inside_band'
-                 WHEN {impact} <  {qi['thr1']} THEN 'adverse'
-                 WHEN {impact} <= {qi['thr2']} THEN 'inactive'
-                 WHEN {impact} <  {qi['thr3']} THEN 'significant_shortfall'
-                 WHEN {impact} <= {qi['thr4']} THEN 'near_conformant'
-                 ELSE 'major_surplus' END"""
-    return f"""
-            {vvar_category_sql('Q', 'q_req', 'q_lo', 'q_hi')} AS category,
-            {legacy} AS legacy_category"""
+    return vvar_sql_categories("Q", "S", tol)
 
 
-#: Legacy categories (outside the band, P >= 20%) counted as failures.
-LEGACY_FAILURES = ("adverse", "inactive", "significant_shortfall")
+from shared.vvar_sql import LEGACY_FAILURES  # noqa: E402
+
 
 
 def find_examples(
@@ -943,6 +902,7 @@ def category_counts(
     threads: int = 4,
     temp_dir: str | None = None,
     with_metadata: bool = True,
+    keep_intervals: str | None = None,
     _intervals: bool = False,
 ) -> pd.DataFrame:
     """
@@ -955,11 +915,17 @@ def category_counts(
     and the site tags directly:
       n_rows, n_valid, n_incomplete (a PV circuit missing, or V/P/Q invalid),
       n_A..n_D, n_<zone>_<category>, n_days_A, n_legacy_total, n_legacy_fail,
-      legacy_<category> (legacy breakdown), tol, p_tol_vvar.
+      legacy_<category> (legacy breakdown), n_expected (calendar days x 288, so
+      conformance_metrics adds `coverage`), tol, p_tol_vvar.
     Valid interval: every PV circuit present with 0 < V < 300 V and P, Q not null.
 
     Volt-Watt  vw_not_exposed (V <= 253), vw_conformant / vw_nonconformant
                (P above the curve + p_tol).
+    keep_intervals: optional SQL predicate on site-level columns (V, P, Q, S,
+    t_aest) that drops intervals BEFORE counting. A diagnostic only, e.g.
+    "P > 0.01 * S" keeps the intervals an inverter's own telemetry would report
+    (inverter awake), to measure how a daylight-only dataset shifts the metrics.
+    The metric definitions are unchanged.
     tol / p_tol default to ciccada_config.CONFORMANCE. Plus site metadata
     (state, dnsp_name, manufacturer, pv_install_date, ac_capacity_kw) if
     with_metadata. Reads every interval of the month: about a minute.
@@ -967,6 +933,7 @@ def category_counts(
     import duckdb
     from shared.as4777_curves import vw_max_p_sql
     from shared.ciccada_config import CONFORMANCE
+    from shared.vvar_metrics import expected_intervals
 
     tol = CONFORMANCE["TOL_DEFAULT"] if tol is None else tol
     p_tol = CONFORMANCE["P_TOL_DEFAULT"] if p_tol is None else p_tol
@@ -1038,7 +1005,7 @@ def category_counts(
         SELECT ts.*, c.n_pv, m.S, (ts.n_ok = c.n_pv AND m.S > 0) AS valid
         FROM ts JOIN ncirc c USING (site_id)
         JOIN (SELECT site_id, any_value(ac_capacity_kw) AS S FROM read_parquet('{meta}') GROUP BY 1) m USING (site_id)
-        WHERE c.n_pv IN {n_pv}
+        WHERE c.n_pv IN {n_pv} {"AND (" + keep_intervals + ")" if keep_intervals else ""}
     ),
     a AS (SELECT *, {_vvar_sql_columns(tol)}, {vw_max_p_sql('V', 'S')} AS p_max FROM j),
     f AS (SELECT *, {_vvar_sql_categories(tol)}, {vw_case} AS vw_cat FROM a)
@@ -1071,6 +1038,7 @@ def category_counts(
         con.close()
     out.insert(1, "cohort", np.where(out.pop("n_pv") == 3, "3P", "1P"))
     out["month"] = month
+    out["n_expected"] = expected_intervals(*map(int, month.split("-")))
     out["tol"] = tol
     out["p_tol_vvar"] = 0.0
     print(f"{month}: {len(out):,} sites (tol {tol:.0%})")
@@ -1171,6 +1139,7 @@ def make_synthetic_category_counts(
                 "pv_install_date": pd.Timestamp(year, int(rng.integers(1, 13)), 1),
                 "ac_capacity_kw": 15.0 if cohort == "3P" else 5.0,
                 "month": "2025-01",
+                "n_expected": 8928,
                 "tol": 0.04,
                 "p_tol_vvar": 0.0,
             }

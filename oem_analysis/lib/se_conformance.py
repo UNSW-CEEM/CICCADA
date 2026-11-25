@@ -6,14 +6,12 @@ Every normative expression comes from ``bms_sa_review.shared.as4777_curves`` -- 
 ``q_conformance_floor_absorbing_sql``, ``q_impact_nearest_edge_sql``,
 ``vw_max_p_sql``, ``tol_kw_sql`` -- and runs unchanged in DuckDB.
 
-A latent bug in the original, deliberately not reproduced
----------------------------------------------------------
-``build_conformance_voltwatt.py`` (around line 160) builds the exposure predicate
-as ``vw_exposed = "round(V, 6) > 253.0"`` and then writes
-``CASE WHEN V > {vw_exposed} THEN ...``, which expands to
-``CASE WHEN V > round(V, 6) > 253.0``. That is a chained comparison, not the
-intended test. The GHI variant of the same file uses ``WHEN {vw_exposed}``
-correctly. Worth checking against the published Volt-Watt basic rates.
+Volt-VAr metrics (conformance rework)
+-------------------------------------
+``voltvar_zone_counts`` / ``voltvar_metrics`` give the shared zones, categories, three metrics and site tags (bms_sa_review/shared). 
+The functions below that (``voltvar_site_day`` and the measures) are the legacy path, 
+kept for back-comparison. 
+See the DATA LIMITATION note above voltvar_zone_counts.
 """
 
 from __future__ import annotations
@@ -37,6 +35,8 @@ from bms_sa_review.shared.as4777_curves import (  # noqa: E402
 )
 
 __all__ = [
+    "voltvar_zone_counts",
+    "voltvar_metrics",
     "voltvar_interval_sql",
     "voltvar_site_day",
     "voltvar_summary",
@@ -285,6 +285,143 @@ def voltvar_site_day(
         GROUP BY site_alias, CAST(ts_aest AS DATE)
         """
     ).df()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# VOLT-VAR: SHARED ZONES, CATEGORIES AND METRICS
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Same rules and metrics as Solar Analytics (bms_sa_review/shared: as4777_curves, # vvar_sql, vvar_metrics). 
+# The OEM conventions are applied unchanged: 
+# Q orientation (config.reactive_orientation), 
+# voltage aggregation, 
+# s_99 rating,
+# cohort filters. 
+#############################################################################
+# DATA LIMITATION (read before comparing with Solar Analytics): 
+# OEM telemetry often stops when the inverter sleeps. 
+# The median site reports ~150 of 288 intervals a day, 
+# almost none between 20:00 and 05:00 AEST
+# only ~33 of 1,602 sites # report most nights. 
+# 
+# So the non-conformance frequency and the voltage exposure # are taken over (mostly daylight) reported intervals: 
+# both read HIGHER than they # would with night data, and night failures (e.g. voltage deadband offsets) are not seen. 
+# The remote and legacy conformance rates use daytime intervals anyway and are not affected. 
+# `coverage` (= valid / calendar intervals) is reported for every site-month so the limitation stays visible.
+
+
+def voltvar_zone_counts(
+    con: duckdb.DuckDBPyConnection,
+    config=None,
+    tol: float | None = None,
+) -> pd.DataFrame:
+    """
+    Per (site, month): Volt-VAr interval counts per zone x category, with the
+    same column names as bms_sa_review.shared.vvar_metrics.zone_counts, so
+    ``vvar_metrics.conformance_metrics(counts)`` gives all three metrics and the
+    site tags. Also n_missing_*, n_expected (calendar days x 288), state,
+    is_three_phase, tol, p_tol_vvar.
+
+    tol: fraction of the rating basis (default config.tolerance_fraction, 4%;
+    0.0 for the literal reading).
+    """
+    from bms_sa_review.shared.ciccada_config import CONFORMANCE
+    from bms_sa_review.shared.vvar_sql import (
+        vvar_sql_categories,
+        vvar_sql_columns,
+        zone_count_sql,
+    )
+
+    config = config.validate() if config else se_params.CONFIG.validate()
+    tol = config.tolerance_fraction if tol is None else tol
+    if config.tolerance_basis != config.rating_basis:
+        raise ValueError(
+            "voltvar_zone_counts takes the tolerance as a fraction of the rating "
+            f"basis; got tolerance_basis={config.tolerance_basis!r}, "
+            f"rating_basis={config.rating_basis!r}"
+        )
+    v_lo, v_hi = CONFORMANCE["VALID_V_OPEN"]
+    rating = contract.capacity_column(config.rating_basis)
+    v = contract.voltage_sql(config.voltage_aggregation, "i")
+    q = contract.q_expr(config, "i")
+
+    sql = f"""
+    WITH data AS (
+        SELECT i.site_alias,
+               i.dt_month                      AS month,
+               CAST(i.ts_aest AS DATE)         AS day,
+               i.P_kW                          AS P,
+               {q}                             AS Q,
+               {v}                             AS V,
+               {rating}                        AS S,
+               s.is_three_phase,
+               s.state
+        FROM se_interval i
+        {contract.cohort_join_sql('i')}
+        WHERE {contract.cohort_where_sql(config)}
+    ),
+    flagged AS (
+        SELECT *,
+               (P IS NOT NULL AND Q IS NOT NULL AND V > {v_lo} AND V < {v_hi}
+                AND S > 0) AS valid
+        FROM data
+    ),
+    a AS (SELECT *, {vvar_sql_columns('V', 'P', 'Q', 'S', tol)} FROM flagged),
+    b AS (SELECT *, {vvar_sql_categories('Q', 'S', tol)} FROM a)
+    SELECT site_alias, month,
+           any_value(state)                AS state,
+           any_value(is_three_phase)       AS is_three_phase,
+           {zone_count_sql('valid', 'day')},
+           count(*) FILTER (WHERE V IS NULL)                         AS n_missing_v,
+           count(*) FILTER (WHERE V IS NOT NULL AND NOT (V > {v_lo} AND V < {v_hi}))
+                                                                     AS n_v_out_of_range,
+           count(*) FILTER (WHERE P IS NULL)                         AS n_missing_p,
+           count(*) FILTER (WHERE Q IS NULL)                         AS n_missing_q,
+           count(*) FILTER (WHERE S IS NULL OR S <= 0)               AS n_missing_rating,
+           count(DISTINCT day)                                       AS n_days_reported
+    FROM b
+    GROUP BY site_alias, month
+    """
+    out = con.execute(sql).df()
+    days = pd.to_datetime(out["month"] + "-01").dt.days_in_month
+    out["n_expected"] = days * 24 * 60 // CONFORMANCE["INTERVAL_MINUTES"]
+    out["tol"] = tol
+    out["p_tol_vvar"] = 0.0
+    out["rating_basis"] = config.rating_basis
+    out["voltage_aggregation"] = config.voltage_aggregation
+    out["reactive_orientation"] = config.reactive_orientation
+    return out
+
+
+def voltvar_metrics(
+    con: duckdb.DuckDBPyConnection,
+    config=None,
+    tol: float | None = None,
+    by: str = "site",
+    failure_definition: str | None = None,
+    counts: pd.DataFrame | None = None,
+    **metric_options,
+) -> pd.DataFrame:
+    """
+    The three Volt-VAr metrics and site tags (non-conformance frequency with
+    voltage exposure, remote conformance rate, legacy conformance rate), from
+    voltvar_zone_counts via bms_sa_review.shared.vvar_metrics.
+
+    by: 'site' (whole study period per site) or 'site_month'.
+    metric_options go to conformance_metrics (thresholds, minimums).
+    Pass `counts` to reuse a voltvar_zone_counts result.
+    """
+    from bms_sa_review.shared.vvar_metrics import conformance_metrics, sum_counts
+
+    if counts is None:
+        counts = voltvar_zone_counts(con, config, tol)
+    if by == "site":
+        meta = counts.groupby("site_alias", as_index=False)[["state", "is_three_phase"]].first()
+        counts = sum_counts(counts, by=["site_alias"]).merge(meta, on="site_alias")
+    elif by != "site_month":
+        raise ValueError("by must be 'site' or 'site_month'")
+    kw = {"failure_definition": failure_definition} if failure_definition else {}
+    return conformance_metrics(counts, **kw, **metric_options)
 
 
 # Capacity bands used for every "by system size" breakdown, so the bins cannot drift between tables.
